@@ -8,10 +8,10 @@ Dalec builds use Docker Buildkit under the hood. Buildkit supports different dri
 
 Buildkit drivers are different backends that execute the build operations. Each driver has different capabilities and is suitable for different use cases:
 
-- **docker**: The default driver that runs builds in the Docker daemon
-- **docker-container**: Runs builds in an isolated container with more features
-- **kubernetes**: Runs builds as pods in a Kubernetes cluster
-- **remote**: Connects to a remote buildkit daemon
+- **[docker](https://docs.docker.com/build/builders/drivers/docker/)**: The default driver that runs builds in the Docker daemon
+- **[docker-container](https://docs.docker.com/build/builders/drivers/docker-container/)**: Runs builds in an isolated container with more features
+- **[kubernetes](https://docs.docker.com/build/builders/drivers/kubernetes/)**: Runs builds as pods in a Kubernetes cluster
+- **[remote](https://docs.docker.com/build/builders/drivers/remote/)**: Connects to a remote buildkit daemon
 
 For a complete list of available drivers, see the [official Docker documentation on buildkit drivers](https://docs.docker.com/build/builders/drivers/).
 
