@@ -380,7 +380,7 @@ sources:
 
 The `gomod` generator also supports generating multiple modules in a single source. The `paths` field is a list of paths where the generator should fetch the dependencies. Assuming `src` looks like this:
 
-```
+```text
 .
 ├── module1
 │   ├── go.mod
@@ -391,6 +391,11 @@ The `gomod` generator also supports generating multiple modules in a single sour
     ├── go.sum
     └── main.go
 ```
+
+Within a gomod generator you can also rewrite dependencies before Dalec downloads anything:
+
+- Use `replace` to redirect a module (optionally scoped to a particular version) to an alternate module path or local checkout, mirroring `go mod edit -replace`.
+- Use `require` to add or pin entries in `go.mod`, mirroring `go mod edit -require`. The left-hand side is the module name recorded in `go.mod`, while the right-hand side (`target@version`) can point to the same module or a forked module path and must include the version.
 
 The dalec spec will look like this:
 
@@ -404,7 +409,15 @@ sources:
           paths:
             - module1
             - module2
+
+          replace:
+            - github.com/example/library@v1.2.3:overrides/library
+          require:
+            - github.com/example/library:github.com/example/library@v1.2.3
+            - github.com/example/cli:github.com/another/cli@v2.5.0
 ```
+
+In the example above, Dalec will run `go mod edit -replace` to point `github.com/example/library` at the `overrides/library` checkout, and `go mod edit -require` to make sure the `github.com/example/library` entry is pinned at `v1.2.3` and to add a second dependency on `github.com/another/cli@v2.5.0`. Combine the directives as needed—`replace` changes *where* a module resolves from, while `require` changes *what* appears in `go.mod`.
 
 The `gomod` generator supports private go modules. The following example illustrates this:
 
@@ -528,7 +541,7 @@ sources:
 
 The `nodemod` generator also supports generating dependencies for multiple package.json files in a single source. The `paths` field is a list of paths where the generator should run `npm install`. Assuming `src` looks like this:
 
-```
+```text
 .
 ├── frontend
 │   ├── package.json
@@ -575,7 +588,7 @@ sources:
   md2man:
     git:
       url: https://github.com/cpuguy83/go-md2man.git
-        commit: v2.0.3
+        commit: v2.1.0
     generate:
       gomod: {} # Generates a go module cache to cache dependencies
   md2man-patch:
@@ -604,8 +617,8 @@ example we'll also sow using multiple patch files from the same source.
 sources:
   md2man:
     git:
-      url: https://github.com/cpuguy83/go-md2man.git
-      commit: v2.0.3
+  url: https://github.com/cpuguy83/go-md2man.git
+  commit: v2.1.0
   localPatches:
     context: {}
 
@@ -626,8 +639,8 @@ the build.
 sources:
   md2man:
     git:
-      url: https://github.com/cpuguy83/go-md2man.git
-      commit: v2.0.3
+  url: https://github.com/cpuguy83/go-md2man.git
+  commit: v2.1.0
   localPatches:
     context: {}
     includes:
@@ -651,8 +664,8 @@ in the patch spec.
 sources:
   md2man:
     git:
-      url: https://github.com/cpuguy83/go-md2man.git
-      commit: v2.0.3
+  url: https://github.com/cpuguy83/go-md2man.git
+  commit: v2.1.0
   localPatches:
     context: {}
     path: patches/some0.patch

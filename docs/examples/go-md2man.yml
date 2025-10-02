@@ -9,7 +9,6 @@ license: MIT
 description: A tool to convert markdown into man pages (roff).
 website: https://github.com/cpuguy83/go-md2man
 
-
 sources:
   src:
     generate:

@@ -1064,18 +1064,61 @@ func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
 }
 
 func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, expectedNumSecrets, expectedNumSSH int) {
-	const (
-		scriptExecOpIdx = 4
-	)
-
 	var (
 		actualNumSecrets int
 		actualNumSSH     int
+		scriptOp         *pb.ExecOp
+		scriptInputs     []*pb.Input
 	)
 
-	// Check that the requests for secrets are there for when the script runs.
-	scriptOp := ops[scriptExecOpIdx].GetExec()
-	assert.Assert(t, scriptOp != nil, "expected script exec op")
+	validBasenames := map[string]struct{}{
+		"go_mod_download.sh": {},
+		"authconfig.yml":     {},
+	}
+
+	for _, op := range ops {
+		execOp := op.GetExec()
+		if execOp == nil {
+			continue
+		}
+
+		var mkfileFound bool
+		for i := range op.Inputs {
+			inpDigest := op.Inputs[i].Digest
+			mf, hasMkFileDigest := m[inpDigest]
+			if !hasMkFileDigest {
+				continue
+			}
+			mkFileOp := mf.GetFile()
+			if mkFileOp == nil {
+				continue
+			}
+
+			assert.Check(t, cmp.Len(mkFileOp.Actions, 1), mkFileOp)
+			famf, ok := mkFileOp.Actions[0].Action.(*pb.FileAction_Mkfile)
+			if !ok {
+				continue
+			}
+
+			basename := strings.TrimPrefix(filepath.Base(famf.Mkfile.Path), "/")
+			if basename == "frontend" {
+				continue
+			}
+
+			if _, hasValid := validBasenames[basename]; hasValid {
+				mkfileFound = true
+				break
+			}
+		}
+
+		if mkfileFound {
+			scriptOp = execOp
+			scriptInputs = op.Inputs
+			break
+		}
+	}
+
+	assert.Assert(t, scriptOp != nil, "expected to find gomod script exec op")
 
 	secrets := map[string]struct{}{}
 	for _, mnt := range scriptOp.Mounts {
@@ -1118,42 +1161,33 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 	// check that the gomod git credential helper will be mounted
 	assert.Check(t, hasCredentialHelperMount(scriptOp), scriptOp)
 
-	validBasenames := map[string]struct{}{
-		"go_mod_download.sh": {},
-		"authconfig.yml":     {},
-	}
-
-	// check that the inputs are mounted
 	var mkfileFound bool
-	for i := range ops[scriptExecOpIdx].Inputs {
-		inpDigest := ops[scriptExecOpIdx].Inputs[i].Digest
+	for i := range scriptInputs {
+		inpDigest := scriptInputs[i].Digest
 		mf, hasMkFileDigest := m[inpDigest]
-		assert.Check(t, hasMkFileDigest)
+		if !hasMkFileDigest {
+			continue
+		}
 		mkFileOp := mf.GetFile()
-
 		if mkFileOp == nil {
 			continue
 		}
 
-		// Check that it depends on the `mkfile` op which generates the script.
 		assert.Check(t, cmp.Len(mkFileOp.Actions, 1), mkFileOp)
 		famf, ok := mkFileOp.Actions[0].Action.(*pb.FileAction_Mkfile)
 		if !ok {
 			continue
 		}
 
-		assert.Assert(t, ok, "expected mkfile action, got %T:\n%s", mkFileOp.Actions[0].Action, mkFileOp.String())
-
 		basename := strings.TrimPrefix(filepath.Base(famf.Mkfile.Path), "/")
-		// This is from the way the test is set up, but will not be the case during actual runtime
 		if basename == "frontend" {
 			continue
 		}
 
-		mkfileFound = true
-		_, hasValidFilename := validBasenames[basename]
-		assert.Check(t, hasValidFilename, basename)
-		break
+		if _, hasValid := validBasenames[basename]; hasValid {
+			mkfileFound = true
+			break
+		}
 	}
 
 	assert.Check(t, mkfileFound)

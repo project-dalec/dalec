@@ -64,6 +64,9 @@ func PatchedSources(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 		}
 
 		pc := dalec.Platform(platform)
+		if err := spec.EnsureGomodPatches(sOpt, worker, pc); err != nil {
+			return nil, nil, err
+		}
 		sources, err := dalec.Sources(spec, sOpt, pc)
 		if err != nil {
 			return nil, nil, err

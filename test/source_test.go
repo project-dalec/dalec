@@ -471,7 +471,7 @@ func main() {
 
 const gomodFixtureMod = `module testgomodsource
 
-go 1.20
+go 1.18
 
 require github.com/cpuguy83/tar2go v0.3.1
 `
@@ -498,7 +498,7 @@ func main() {
 
 const alternativeGomodFixtureMod = `module example.com/module2
 
-go 1.20
+go 1.18
 
 require github.com/stretchr/testify v1.7.0
 
@@ -698,6 +698,36 @@ index ea874f5..ba38f84 100644
 
 				checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
 			})
+		})
+	})
+
+	t.Run("require directive", func(t *testing.T) {
+		t.Parallel()
+		testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+			spec := baseSpec()
+
+			src := spec.Sources[srcName]
+			src.Generate[0].Gomod.Require = []dalec.GomodRequire{
+				"github.com/cpuguy83/tar2go:github.com/cpuguy83/tar2go@v0.3.0",
+			}
+			spec.Sources[srcName] = src
+
+			checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+		})
+	})
+
+	t.Run("replace directive", func(t *testing.T) {
+		t.Parallel()
+		testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+			spec := baseSpec()
+
+			src := spec.Sources[srcName]
+			src.Generate[0].Gomod.Replace = []dalec.GomodReplace{
+				"github.com/cpuguy83/tar2go:github.com/cpuguy83/tar2go@v0.3.0",
+			}
+			spec.Sources[srcName] = src
+
+			checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
 		})
 	})
 
@@ -1190,6 +1220,60 @@ func TestPatchSources_ConflictingPatches(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error, got none")
 		}
+	})
+}
+
+func TestPatchSources_GomodPatchApplied(t *testing.T) {
+	t.Parallel()
+
+	contextSt := llb.Scratch()
+
+	const (
+		sourceName = "src"
+		patchName  = "gomod.patch"
+	)
+
+	goModOriginal := "module example.com/test\n\ngo 1.21\n\nrequire github.com/russross/blackfriday/v2 v2.0.1\n"
+	goModPatched := "module example.com/test\n\ngo 1.21\n\nrequire github.com/russross/blackfriday/v2 v2.1.0\n"
+	patchContent := "diff --git a/go.mod b/go.mod\nindex 1111111..2222222 100644\n--- a/go.mod\n+++ b/go.mod\n@@ -3,4 +3,4 @@ module example.com/test\n go 1.21\n \n-require github.com/russross/blackfriday/v2 v2.0.1\n+require github.com/russross/blackfriday/v2 v2.1.0\n"
+
+	testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+		spec := &dalec.Spec{
+			Name:        "test-gomod-patch",
+			License:     "MIT",
+			Version:     "1.0.0",
+			Revision:    "1",
+			Description: "This is a test package",
+			Website:     "https://example.com",
+			Sources: map[string]dalec.Source{
+				sourceName: {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: goModOriginal},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		spec.AddGomodPatchForTesting(&dalec.GomodPatch{
+			SourceName: sourceName,
+			FileName:   patchName,
+			Strip:      1,
+			State:      llb.Scratch().File(llb.Mkfile(patchName, 0o644, []byte(patchContent))),
+			Contents:   []byte(patchContent),
+		})
+
+		req := newSolveRequest(
+			withBuildTarget("debug/patched-sources"),
+			withBuildContext(ctx, t, "context", contextSt),
+			withSpec(ctx, t, spec),
+		)
+
+		res := solveT(ctx, t, gwc, req)
+		checkFile(ctx, t, filepath.Join(sourceName, "go.mod"), res, []byte(goModPatched))
 	})
 }
 

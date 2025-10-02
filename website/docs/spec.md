@@ -13,6 +13,10 @@ All Dalec spec YAMLs must start with `# syntax=ghcr.io/project-dalec/dalec/front
 Dalec spec YAMLs are composed of the following sections:
 - [Args section](#args-section)
 - [Metadata section](#metadata-section)
+  - [Additional metadata](#additional-metadata)
+    - [conflicts](#conflicts)
+    - [provides](#provides)
+    - [replaces](#replaces)
 - [Targets section](#targets-section)
   - [Image section](#image-section)
   - [Package Config section](#package-config-section)
@@ -21,7 +25,7 @@ Dalec spec YAMLs are composed of the following sections:
 - [Build section](#build-section)
 - [Artifacts section](#artifacts-section)
 - [Tests section](#tests-section)
-- [ Changelog section](#changelog-section)
+- [Changelog section](#changelog-section)
 
 ## Args section
 
@@ -209,6 +213,28 @@ sources:
 ```
 
 For more information, please see [Sources](sources.md).
+
+Use the `replace` field within the gomod generator when you need to point a module to an alternate location (for example, a locally checked-out fork) before Dalec downloads dependencies:
+
+```yaml
+sources:
+  foo:
+    git:
+      url: https://github.com/foo/bar.git
+      commit: ${COMMIT}
+    generate:
+      - gomod:
+          replace:
+            - github.com/foo/bar@v1.2.3:../overrides/bar
+          require:
+            - github.com/example/cli:github.com/example/cli@v2.3.0
+```
+
+Use `replace` to redirect an existing module (optionally scoped to a specific version) to a different module path or local checkout before Dalec downloads dependencies. Each entry follows the same shorthand as `go mod edit -replace`: `module[@version]:replacement[@version]`. Both sides support argument substitution.
+
+Use `require` when you need to add a new dependency or pin an existing one to a specific module path and version. Entries follow the shorthand accepted by `go mod edit -require`: `module:target@version`. The `module` portion is the entry that will appear in `go.mod`, while `target@version` can point to a different module path (for example, to depend on a fork that keeps the original module path) or simply specify the version you want.
+
+`replace` updates how Go resolves a module, whereas `require` changes which module/version is listed in `go.mod`. Combine them when you need to pin a module to a specific fork *and* ensure it is listed at the desired version; otherwise use whichever directive matches your goal.
 
 ## Dependencies section
 

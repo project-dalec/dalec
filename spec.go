@@ -105,6 +105,8 @@ type Spec struct {
 	decodeOpts []yaml.DecodeOption `yaml:"-" json:"-"`
 
 	// (previously used for side-table source maps) removed - per-object constraints stored on objects
+	gomodPatches          map[string][]*GomodPatch `yaml:"-" json:"-"`
+	gomodPatchesGenerated bool                     `yaml:"-" json:"-"`
 }
 
 // extensionFields is a map for storing extension fields in the spec.
@@ -210,8 +212,143 @@ type GeneratorGomod struct {
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	// Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host.
 	Auth map[string]GomodGitAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// Replace applies go.mod replace directives before downloading module dependencies.
+	// Each entry must be of the form "old:new" where "old" and "new" match the syntax accepted by
+	// `go mod edit -replace`.
+	Replace []GomodReplace `yaml:"replace,omitempty" json:"replace,omitempty"`
+	// Require applies go.mod require directives before downloading module dependencies.
+	// Each entry must be of the form "module:target@version" to match the syntax accepted by
+	// `go mod edit -require`.
+	Require []GomodRequire `yaml:"require,omitempty" json:"require,omitempty"`
 
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
+}
+
+// GomodReplace represents a go.mod replace directive in the shorthand "old:new" form.
+type GomodReplace string
+
+func (r GomodReplace) String() string {
+	return string(r)
+}
+
+func parseGomodReplace(value string) (string, string, error) {
+	parts := strings.SplitN(value, ":", 2)
+	if len(parts) != 2 {
+		return "", "", errors.Errorf("invalid gomod replace %q, expected format old:new", value)
+	}
+	old := strings.TrimSpace(parts[0])
+	new := strings.TrimSpace(parts[1])
+	if old == "" || new == "" {
+		return "", "", errors.Errorf("invalid gomod replace %q, entries must be non-empty", value)
+	}
+	return old, new, nil
+}
+
+func normalizeGomodReplace(old, new string) GomodReplace {
+	return GomodReplace(strings.TrimSpace(old) + ":" + strings.TrimSpace(new))
+}
+
+func (r GomodReplace) parts() (string, string, error) {
+	return parseGomodReplace(string(r))
+}
+
+func (r GomodReplace) goModEditArg() (string, error) {
+	old, new, err := r.parts()
+	if err != nil {
+		return "", err
+	}
+	return old + "=" + new, nil
+}
+
+func (r *GomodReplace) UnmarshalYAML(b []byte) error {
+	var raw string
+	if err := yaml.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	old, new, err := parseGomodReplace(raw)
+	if err != nil {
+		return err
+	}
+	*r = normalizeGomodReplace(old, new)
+	return nil
+}
+
+func (r *GomodReplace) UnmarshalJSON(b []byte) error {
+	var raw string
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	old, new, err := parseGomodReplace(raw)
+	if err != nil {
+		return err
+	}
+	*r = normalizeGomodReplace(old, new)
+	return nil
+}
+
+// GomodRequire represents a go.mod require directive in the shorthand "module:target@version" form.
+type GomodRequire string
+
+func (r GomodRequire) String() string {
+	return string(r)
+}
+
+func parseGomodRequire(value string) (string, string, error) {
+	parts := strings.SplitN(value, ":", 2)
+	if len(parts) != 2 {
+		return "", "", errors.Errorf("invalid gomod require %q, expected format module:target@version", value)
+	}
+	module := strings.TrimSpace(parts[0])
+	target := strings.TrimSpace(parts[1])
+	if module == "" || target == "" {
+		return "", "", errors.Errorf("invalid gomod require %q, entries must be non-empty", value)
+	}
+	return module, target, nil
+}
+
+func normalizeGomodRequire(module, target string) GomodRequire {
+	return GomodRequire(strings.TrimSpace(module) + ":" + strings.TrimSpace(target))
+}
+
+func (r GomodRequire) parts() (string, string, error) {
+	return parseGomodRequire(string(r))
+}
+
+func (r GomodRequire) goModEditArg() (string, error) {
+	_, target, err := r.parts()
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(target, "@") {
+		return "", errors.Errorf("invalid gomod require %q, target must include @version", target)
+	}
+	return target, nil
+}
+
+func (r *GomodRequire) UnmarshalYAML(b []byte) error {
+	var raw string
+	if err := yaml.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	module, target, err := parseGomodRequire(raw)
+	if err != nil {
+		return err
+	}
+	*r = normalizeGomodRequire(module, target)
+	return nil
+}
+
+func (r *GomodRequire) UnmarshalJSON(b []byte) error {
+	var raw string
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	module, target, err := parseGomodRequire(raw)
+	if err != nil {
+		return err
+	}
+	*r = normalizeGomodRequire(module, target)
+	return nil
 }
 
 // GeneratorCargohome is used to generate a cargo home from cargo sources

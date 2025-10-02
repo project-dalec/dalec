@@ -40,6 +40,8 @@ func buildScript(spec *dalec.Spec) string {
 		fmt.Fprint(b, "\n")
 
 		fmt.Fprintln(b, "export GOMODCACHE=\"$(pwd)/"+gomodsName+"\"")
+		fmt.Fprintln(b, "export GOPROXY=\"file://$(pwd)/"+gomodsName+"/cache/download\"")
+		fmt.Fprintln(b, "export GOSUMDB=off")
 	}
 
 	if spec.HasCargohomes() {
@@ -67,6 +69,11 @@ func buildScript(spec *dalec.Spec) string {
 		fmt.Fprintln(b, "")
 	}
 
+	if script := dalec.GomodEditScript(spec); script != "" {
+		fmt.Fprintln(b)
+		fmt.Fprint(b, script)
+	}
+
 	envKeys := dalec.SortMapKeys(t.Env)
 	for _, k := range envKeys {
 		v := t.Env[k]
@@ -87,6 +94,10 @@ func ToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opt
 		return nil, err
 	}
 	out := make([]llb.State, 0, len(sources))
+
+	if err := spec.EnsureGomodPatches(sOpt, worker, opts...); err != nil {
+		return nil, errors.Wrap(err, "error preparing gomod patches")
+	}
 
 	withPG := func(s string) []llb.ConstraintsOpt {
 		return append(opts, dalec.ProgressGroup(s))
@@ -117,6 +128,16 @@ func ToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opt
 
 	if pipDepsSt != nil {
 		out = append(out, pipDepsSt.With(sourceTar(worker, pipDepsName, withPG("Tar pip deps")...)))
+	}
+
+	patchOpts := append([]llb.ConstraintsOpt{}, opts...)
+	patchOpts = append(patchOpts, dalec.ProgressGroup("Tar gomod patches"))
+	gomodPatchArchive, err := spec.GomodPatchArchive(worker, patchOpts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "error packaging gomod patches")
+	}
+	if gomodPatchArchive != nil {
+		out = append(out, *gomodPatchArchive)
 	}
 
 	srcsWithNodeMods, err := spec.NodeModDeps(sOpt, worker, opts...)

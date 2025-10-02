@@ -3,10 +3,12 @@ package rpm
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/project-dalec/dalec"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -266,6 +268,72 @@ func TestTemplateSources(t *testing.T) {
 			t.Fatalf("unexpected trailing sources: %q", s)
 		}
 	})
+
+	t.Run("includes gomod patches", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{Dir: &dalec.SourceInlineDir{}},
+				},
+			},
+		}
+		patch := llb.Scratch().File(llb.Mkfile("gomod.patch", 0o644, []byte("patch")))
+		spec.AddGomodPatchForTesting(&dalec.GomodPatch{
+			SourceName: "src",
+			FileName:   "gomod.patch",
+			Strip:      1,
+			State:      patch,
+			Contents:   []byte("patch"),
+		})
+
+		w := &specWrapper{Spec: spec}
+		out, err := w.Sources()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		s := out.String()
+		expectedSource := "Source1: " + dalec.GomodPatchArchiveFilename
+		if !strings.Contains(s, expectedSource) {
+			t.Fatalf("expected gomod patch archive source entry, got: %q", s)
+		}
+	})
+}
+
+func TestPrepareSourcesIncludesGomodPatches(t *testing.T) {
+	spec := &dalec.Spec{
+		Sources: map[string]dalec.Source{
+			"src": {
+				Inline: &dalec.SourceInline{Dir: &dalec.SourceInlineDir{}},
+			},
+		},
+	}
+
+	patch := llb.Scratch().File(llb.Mkfile("gomod.patch", 0o644, []byte("patch")))
+	spec.AddGomodPatchForTesting(&dalec.GomodPatch{
+		SourceName: "src",
+		FileName:   "gomod.patch",
+		Strip:      1,
+		State:      patch,
+		Contents:   []byte("patch"),
+	})
+
+	w := &specWrapper{Spec: spec}
+	out, err := w.PrepareSources()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := out.String()
+	tarLine := fmt.Sprintf("tar -C \"%%{_builddir}/%s\" -xzf \"%%{_sourcedir}/%s\"", dalec.GomodPatchArchiveName, dalec.GomodPatchArchiveFilename)
+	if !strings.Contains(got, tarLine) {
+		t.Fatalf("expected gomod patch archive extraction, got: %s", got)
+	}
+	patchPath := fmt.Sprintf("%%{_builddir}/%s/src/gomod.patch", dalec.GomodPatchArchiveName)
+	patchLine := fmt.Sprintf("if [ -s \"%s\" ]; then patch -N -d \"src\" -p1 -s --input \"%s\"; fi", patchPath, patchPath)
+	if !strings.Contains(got, patchLine) {
+		t.Fatalf("expected gomod patch application in prepare script, got: %s", got)
+	}
 }
 
 func TestTemplate_Artifacts(t *testing.T) {
@@ -281,7 +349,7 @@ func TestTemplate_Artifacts(t *testing.T) {
 						},
 						"test3.service": {
 							Enable: true,
-							Start: true,
+							Start:  true,
 						},
 					},
 				},
@@ -330,7 +398,7 @@ fi
 						},
 						"test3.service": {
 							Enable: true,
-							Start: true,
+							Start:  true,
 						},
 					},
 				},

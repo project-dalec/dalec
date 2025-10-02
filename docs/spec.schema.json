@@ -910,6 +910,28 @@
 						"array"
 					],
 					"description": "Paths is the list of paths to run the generator on. Used to generate multi-module in a single source."
+				},
+				"replace": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Replace applies go.mod replace directives before downloading module dependencies.\nEach entry must be of the form \"old:new\" where \"old\" and \"new\" match the syntax accepted by\n`go mod edit -replace`."
+				},
+				"require": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Require applies go.mod require directives before downloading module dependencies.\nEach entry must be of the form \"module:target@version\" to match the syntax accepted by\n`go mod edit -require`."
 				}
 			},
 			"additionalProperties": {
@@ -1532,7 +1554,7 @@
 					"type": [
 						"array"
 					],
-					"description": "Includes is a list of paths underneath `Path` to include, everything else is execluded\nIf empty, everything is included (minus the excludes)"
+					"description": "Includes is a list of paths underneath `Path` to include, everything else is excluded\nIf empty, everything is included (minus the excludes)"
 				},
 				"inline": {
 					"$ref": "#/$defs/SourceInline"
