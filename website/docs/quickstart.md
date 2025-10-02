@@ -12,13 +12,15 @@ Dalec is a [Docker Buildkit frontend](https://docs.docker.com/build/buildkit/fro
 All Dalec spec files must start with `# syntax=ghcr.io/project-dalec/dalec/frontend:latest` to tell buildkit which frontend to use.
 :::
 
+
 ## How it Works
 
 Dalec builds happen in stages:
 
 1. **Package Build** - Check out sources and build packages using your defined build steps
-2. **Package Test** - Install and test the package in a clean environment
-3. **Create Container** (optional) - Install the package(s) into a scratch image to create a container
+1. **Package Test** - Install and test the package in a clean environment
+1. **Create Container** (optional) - Install the package(s) into a scratch image to create a container
+
 
 ## Example: Building go-md2man
 
@@ -33,7 +35,7 @@ Here's the complete Dalec spec file:
 ```yaml
 # syntax=ghcr.io/project-dalec/dalec/frontend:latest
 name: go-md2man
-version: 2.0.3
+version: 2.1.0
 revision: "1"
 packager: Dalec Example
 vendor: Dalec Example
@@ -47,7 +49,7 @@ sources:
       - gomod: {}  # Pre-downloads Go modules since network is disabled during build
     git:
       url: https://github.com/cpuguy83/go-md2man.git
-      commit: "v2.0.3"
+      commit: "v2.1.0"
 
 dependencies:
   build:
@@ -76,10 +78,29 @@ tests:
         permissions: 0755
 ```
 
+:::tip
+Need to swap in a fork or update to a newer dependency? Add a `replace` or `require` entry under the `gomod` generator to rewrite `go.mod` before Dalec downloads modules:
+
+- **`replace`** mirrors `go mod edit -replace` and redirects a module (optionally tied to a version) to an alternate module path or local checkout.
+- **`require`** mirrors `go mod edit -require` and adds or pins the dependency that appears in `go.mod`. The shorthand `module:target@version` lets you keep the original module name while sourcing a forked `target` path.
+
+```yaml
+sources:
+  src:
+    generate:
+      - gomod:
+          replace:
+            - github.com/example/mod@v1.1.0:../patched/mod
+          require:
+            - github.com/example/mod:github.com/example/mod@v1.2.3
+```
+
+:::
+
 Key sections explained:
 
 - **Metadata**: Package name, version, license, and description (see [spec](spec.md))
-- **Sources**: Git qrepository to clone, with `generate` to pre-download Go modules (see [sources](sources.md))
+- **Sources**: Git repository to clone, with `generate` to pre-download Go modules (see [sources](sources.md))
 - **Dependencies**: Build-time dependencies (golang) (see [spec](spec.md#dependencies-section))
 - **Build**: Environment variables and build commands (see [spec](spec.md#build-section))
 - **Artifacts**: Files to include in the package (see [artifacts](artifacts.md))
@@ -91,7 +112,7 @@ Key sections explained:
 ### Build an RPM package
 
 ```shell
-docker build -t go-md2man:2.0.3 -f docs/examples/go-md2man.yml --target=azlinux3/rpm --output=_output .
+docker build -t go-md2man:2.1.0 -f docs/examples/go-md2man.yml --target=azlinux3/rpm --output=_output .
 ```
 
 This creates `RPM` and `SRPM` directories in `_output/` with the built packages.
@@ -99,10 +120,10 @@ This creates `RPM` and `SRPM` directories in `_output/` with the built packages.
 ### Build a container image
 
 ```shell
-docker build -t go-md2man:2.0.3 -f docs/examples/go-md2man.yml --target=azlinux3 .
+docker build -t go-md2man:2.1.0 -f docs/examples/go-md2man.yml --target=azlinux3 .
 ```
 
-This produces a container image named `go-md2man:2.0.3`.
+This produces a container image named `go-md2man:2.1.0`.
 
 :::note
 See the [targets](targets.md) section for all available build targets.

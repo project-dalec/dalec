@@ -288,6 +288,11 @@ func createBuildScript(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
 		fmt.Fprintln(buf, "")
 	}
 
+	if script := dalec.GomodEditScript(spec); script != "" {
+		fmt.Fprintln(buf)
+		fmt.Fprint(buf, script)
+	}
+
 	for i, step := range spec.Build.Steps {
 		fmt.Fprintln(buf, "(")
 
