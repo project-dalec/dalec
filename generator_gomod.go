@@ -26,11 +26,12 @@ const (
 const (
 	// GomodPatchArchiveName is the directory extracted from the archive containing gomod patches.
 	GomodPatchArchiveName = "__internal_dalec_gomod_generator_deps"
-	// GomodPatchArchiveFilename is the tarball added to SRPMs that stores gomod patches.
+	// GomodPatchArchiveFilename is the tarball added to source packages that stores gomod patches.
+	// This ensures the patches are included in SRPMs/debian.tar.xz for build reproducibility.
 	GomodPatchArchiveFilename = GomodPatchArchiveName + ".tar.gz"
 )
 
-// GomodPatch represents an auto-generated git patch that captures go.mod/go.sum
+// GomodPatch represents an auto-generated patch that captures go.mod/go.sum
 // edits requested via GeneratorGomod directives. The patch will be applied to
 // the associated source during packaging and is shipped inside the source
 // artifact (e.g. SRPM) to preserve provenance.
@@ -55,6 +56,9 @@ func (p *GomodPatch) ArchivePath() string {
 	return path.Join(GomodPatchArchiveName, p.SourceName, p.FileName)
 }
 
+// EnsureGomodPatches generates gomod patches for all sources with replace/require directives
+// if they haven't been generated yet. This is called early in the build process to ensure
+// patches are available for packaging.
 func (s *Spec) EnsureGomodPatches(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) error {
 	if !s.HasGomods() {
 		return nil
@@ -214,6 +218,8 @@ func (s *Spec) generateGomodPatches(sOpt SourceOpts, worker llb.State, opts ...l
 	return patches, nil
 }
 
+// buildGomodPatchesForGenerator creates patches for a single generator's gomod directives.
+// It processes all paths specified in the generator configuration.
 func buildGomodPatchesForGenerator(sourceName string, generatorIndex int, gen *SourceGenerator, base llb.State, worker llb.State, credHelper llb.RunOption, opts ...llb.ConstraintsOpt) ([]*GomodPatch, error) {
 	commands, err := gomodEditCommandLines(gen.Gomod)
 	if err != nil {
@@ -239,6 +245,10 @@ func buildGomodPatchesForGenerator(sourceName string, generatorIndex int, gen *S
 	return patches, nil
 }
 
+// generateGomodPatchForPath generates a patch for a single go module path by:
+// 1. Capturing the original go.mod/go.sum
+// 2. Applying replace/require directives and running go mod tidy
+// 3. Diffing the changes to create a unified patch
 func generateGomodPatchForPath(sourceName string, generatorIndex, pathIndex int, relPath string, gen *SourceGenerator, base llb.State, worker llb.State, credHelper llb.RunOption, commands []string, opts ...llb.ConstraintsOpt) (*GomodPatch, error) {
 	const (
 		workDir         = "/work/src"
@@ -409,6 +419,8 @@ func gomodEditCommandLines(g *GeneratorGomod) ([]string, error) {
 	return cmds, nil
 }
 
+// sanitizeForFilename converts a string into a safe filename by replacing
+// non-alphanumeric characters with underscores.
 func sanitizeForFilename(s string) string {
 	if s == "" || s == "." {
 		return "root"
@@ -650,10 +662,10 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 		script.WriteRune('\n')
 		fmt.Fprintln(&script, "if [ -f go.mod ]; then")
 		for _, replace := range g.Gomod.Replace {
-			arg, err := replace.goModEditArg()
-			if err != nil {
-				panic(errors.Wrap(err, "invalid gomod replace configuration"))
-			}
+			// Note: validation happens during spec loading via validateGomodDirectives()
+			// so this should never error in practice. The validation ensures all directives
+			// are well-formed before we reach this point.
+			arg, _ := replace.goModEditArg()
 			fmt.Fprintf(&script, "  go mod edit -replace=%q\n", arg)
 		}
 		fmt.Fprintln(&script, "fi")
@@ -663,10 +675,10 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 		script.WriteRune('\n')
 		fmt.Fprintln(&script, "if [ -f go.mod ]; then")
 		for _, require := range g.Gomod.Require {
-			arg, err := require.goModEditArg()
-			if err != nil {
-				panic(errors.Wrap(err, "invalid gomod require configuration"))
-			}
+			// Note: validation happens during spec loading via validateGomodDirectives()
+			// so this should never error in practice. The validation ensures all directives
+			// are well-formed before we reach this point.
+			arg, _ := require.goModEditArg()
 			fmt.Fprintf(&script, "  go mod edit -require=%q\n", arg)
 		}
 		fmt.Fprintln(&script, "fi")
@@ -723,6 +735,57 @@ func (s *Spec) gomodSources() map[string]Source {
 	return sources
 }
 
+// sourceHasGomodDirectives returns true if the source has any gomod replace or require directives.
+// that would modify the go.mod file and potentially change dependencies.
+func (s *Source) sourceHasGomodDirectives() bool {
+	for _, gen := range s.Generate {
+		if gen != nil && gen.Gomod != nil {
+			if len(gen.Gomod.Replace) > 0 || len(gen.Gomod.Require) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateGomodDirectives validates that all gomod replace and require directives
+// are well-formed. This should be called during spec loading to catch errors early.
+func (g *GeneratorGomod) validateGomodDirectives() error {
+	if g == nil {
+		return nil
+	}
+
+	for i, replace := range g.Replace {
+		if _, err := replace.goModEditArg(); err != nil {
+			return fmt.Errorf("invalid gomod replace[%d]: %w", i, err)
+		}
+	}
+
+	for i, require := range g.Require {
+		if _, err := require.goModEditArg(); err != nil {
+			return fmt.Errorf("invalid gomod require[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// validateGomodDirectives validates all gomod directives in the spec.
+// This is called during spec loading to catch configuration errors early,
+// before they would cause panics during build execution.
+func (s *Spec) validateGomodDirectives() error {
+	for sourceName, src := range s.Sources {
+		for genIdx, gen := range src.Generate {
+			if gen != nil && gen.Gomod != nil {
+				if err := gen.Gomod.validateGomodDirectives(); err != nil {
+					return fmt.Errorf("source %q generator[%d]: %w", sourceName, genIdx, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // GomodDeps returns an [llb.State] containing all the go module dependencies for the spec
 // for any sources that have a gomod generator specified.
 // If there are no sources with a gomod generator, this will return a nil state.
@@ -739,15 +802,28 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 	// Capture the original (pre-patch) source states so we can pre-populate the
 	// shared gomod cache with modules referenced by the upstream go.sum before
 	// our gomod edits/tidy steps potentially prune them away.
+	//
+	// Performance optimization: Only fetch base states for sources that have
+	// replace/require directives. Sources without these directives don't need
+	// the dual-download approach since their dependencies won't change.
 	baseSourceStates := map[string]llb.State{}
-	if allSources, err := Sources(s, sOpt, opts...); err == nil {
-		for name := range sources {
-			if st, ok := allSources[name]; ok {
-				baseSourceStates[name] = st
-			}
+	sourcesNeedingBaseline := []string{}
+	for name, src := range sources {
+		if src.sourceHasGomodDirectives() {
+			sourcesNeedingBaseline = append(sourcesNeedingBaseline, name)
 		}
-	} else {
-		return nil, errors.Wrap(err, "failed to prepare gomod sources")
+	}
+
+	if len(sourcesNeedingBaseline) > 0 {
+		if allSources, err := Sources(s, sOpt, opts...); err == nil {
+			for _, name := range sourcesNeedingBaseline {
+				if st, ok := allSources[name]; ok {
+					baseSourceStates[name] = st
+				}
+			}
+		} else {
+			return nil, errors.Wrap(err, "failed to prepare gomod sources")
+		}
 	}
 
 	deps := llb.Scratch()
@@ -772,8 +848,6 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 	for _, key := range sorted {
 		src := s.Sources[key]
 
-		pgOpts := append(opts, ProgressGroup("Fetch go module dependencies for source: "+key))
-
 		baseState, hasBase := baseSourceStates[key]
 		patchedState := patched[key]
 
@@ -784,11 +858,18 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 				}
 				// First run against the unpatched tree to mirror any dependencies
 				// that exist prior to our go.mod/go.sum modifications.
+				// This is only needed when replace/require directives are present.
 				if hasBase {
+					pgOpts := append(opts, ProgressGroup("Fetch baseline go module dependencies for source: "+key))
 					in = in.With(withGomod(gen, baseState, worker, key, credHelperRunOpt, pgOpts...))
 				}
-				// Then re-run with the patched sources so the cache also reflects the
-				// updated module graph after go mod tidy and other edits.
+				// Then run with the patched sources (or just once if no replace/require).
+				// The cache reflects the final module graph after any go mod edits.
+				progressMsg := "Fetch go module dependencies for source: " + key
+				if hasBase {
+					progressMsg = "Fetch updated go module dependencies for source: " + key
+				}
+				pgOpts := append(opts, ProgressGroup(progressMsg))
 				in = in.With(withGomod(gen, patchedState, worker, key, credHelperRunOpt, pgOpts...))
 			}
 			return in

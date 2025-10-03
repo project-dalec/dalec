@@ -1,3 +1,4 @@
+// Package rpm provides RPM package building functionality for dalec.
 package rpm
 
 import (
@@ -69,7 +70,13 @@ func buildScript(spec *dalec.Spec) string {
 		fmt.Fprintln(b, "")
 	}
 
-	if script := dalec.GomodEditScript(spec); script != "" {
+	script, err := dalec.GomodEditScript(spec)
+	if err != nil {
+		// This should never happen due to early validation in LoadSpec,
+		// but if it does, we want to fail the build with a clear error.
+		panic(errors.Wrap(err, "error generating gomod edit script"))
+	}
+	if script != "" {
 		fmt.Fprintln(b)
 		fmt.Fprint(b, script)
 	}

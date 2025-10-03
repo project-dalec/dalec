@@ -421,7 +421,9 @@ func (w *specWrapper) PrepareSources() (fmt.Stringer, error) {
 		patches := w.Spec.GomodPatchesForSource(srcName)
 		for _, patch := range patches {
 			patchPath := fmt.Sprintf("%%{_builddir}/%s", patch.ArchivePath())
-			fmt.Fprintf(b, "if [ -s %q ]; then patch -N -d %q -p%d -s --input %q; fi\n", patchPath, srcName, patch.Strip, patchPath)
+			// RPM uses --input flag instead of stdin redirect
+			cmd := dalec.FormatGomodPatchCommand(patchPath, srcName, patch.Strip, &dalec.GomodPatchCommandOptions{UseInputFlag: true})
+			fmt.Fprintln(b, cmd)
 		}
 	}
 

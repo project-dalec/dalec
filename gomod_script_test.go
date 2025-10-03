@@ -23,7 +23,10 @@ func TestGomodEditScriptIncludesGoModTidy(t *testing.T) {
 		},
 	}
 
-	script := GomodEditScript(spec)
+	script, err := GomodEditScript(spec)
+	if err != nil {
+		t.Fatalf("unexpected error generating gomod edit script: %v", err)
+	}
 
 	if script == "" {
 		t.Fatalf("expected gomod edit script to be generated")
@@ -41,7 +44,11 @@ func TestGomodEditScriptIncludesGoModTidy(t *testing.T) {
 func TestGomodEditScriptEmptyWhenNoGomod(t *testing.T) {
 	spec := &Spec{}
 
-	if script := GomodEditScript(spec); script != "" {
+	script, err := GomodEditScript(spec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if script != "" {
 		t.Fatalf("expected empty script when spec has no gomod generators, got: %s", script)
 	}
 }
