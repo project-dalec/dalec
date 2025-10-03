@@ -5,8 +5,11 @@ import (
 	"github.com/pkg/errors"
 )
 
+// gomodPatchExtensionKey is the extension field key used to store gomod patch metadata
+// in the spec. This allows patches generated during build to be persisted in the spec.
 const gomodPatchExtensionKey = "x-dalec-gomod-patches"
 
+// gomodPatchExtensionEntry represents a single gomod patch stored in spec extensions.
 type gomodPatchExtensionEntry struct {
 	Source   string `yaml:"source" json:"source"`
 	FileName string `yaml:"filename" json:"filename"`
@@ -14,6 +17,7 @@ type gomodPatchExtensionEntry struct {
 	Contents string `yaml:"contents" json:"contents"`
 }
 
+// registerGomodPatch adds a gomod patch to the spec's internal tracking map.
 func (s *Spec) registerGomodPatch(patch *GomodPatch) {
 	if patch == nil {
 		return
@@ -27,6 +31,8 @@ func (s *Spec) registerGomodPatch(patch *GomodPatch) {
 	s.gomodPatchesGenerated = true
 }
 
+// appendGomodPatchExtensionEntry serializes a gomod patch into the spec's extension data
+// for persistence across spec marshal/unmarshal cycles.
 func (s *Spec) appendGomodPatchExtensionEntry(patch *GomodPatch) error {
 	if patch == nil || len(patch.Contents) == 0 {
 		return nil
@@ -47,6 +53,7 @@ func (s *Spec) appendGomodPatchExtensionEntry(patch *GomodPatch) error {
 	return s.WithExtension(gomodPatchExtensionKey, entries)
 }
 
+// gomodPatchExtensionEntries retrieves all gomod patch entries from the spec's extensions.
 func (s *Spec) gomodPatchExtensionEntries() ([]gomodPatchExtensionEntry, error) {
 	if s.extensions == nil {
 		return nil, nil

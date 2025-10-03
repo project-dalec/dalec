@@ -694,3 +694,47 @@ func ErrorStateOption(err error) llb.StateOption {
 		return asyncState(in, err)
 	}
 }
+
+// GomodPatchCommandOptions configures platform-specific formatting for patch commands.
+type GomodPatchCommandOptions struct {
+	// UseInputFlag indicates whether to use --input flag (RPM style) instead of stdin redirect (DEB style).
+	// RPM uses: patch --input file
+	// DEB uses: patch < file
+	UseInputFlag bool
+}
+
+// FormatGomodPatchCommand formats a shell command to apply a gomod patch.
+// This centralizes the patch application logic used across RPM, DEB, and Windows targets.
+//
+// Parameters:
+//   - patchPath: the filesystem path to the patch file
+//   - targetDir: the directory to apply the patch in (source name)
+//   - strip: the -p value to pass to patch
+//   - opts: optional configuration (nil uses defaults: stdin redirect)
+//
+// The command includes a check to skip empty patches, which can occur when
+// the replace/require directives result in no actual changes.
+func FormatGomodPatchCommand(patchPath, targetDir string, strip int, opts *GomodPatchCommandOptions) string {
+	if opts != nil && opts.UseInputFlag {
+		// RPM style with --input flag
+		return fmt.Sprintf("if [ -s %q ]; then patch -N -d %q -p%d -s --input %q; fi",
+			patchPath, targetDir, strip, patchPath)
+	}
+	// DEB/default style with stdin redirect
+	return fmt.Sprintf("if [ -s %q ]; then patch -N -d %q -p%d -s < %q; fi",
+		patchPath, targetDir, strip, patchPath)
+}
+
+// GomodPatchSourceSet returns a merged set of source names that have either
+// manual patches or gomod-generated patches. This is useful for iterating over
+// all sources that need patch application.
+func GomodPatchSourceSet(spec *Spec) map[string]struct{} {
+	sources := make(map[string]struct{})
+	for name := range spec.Patches {
+		sources[name] = struct{}{}
+	}
+	for _, name := range spec.GomodPatchSources() {
+		sources[name] = struct{}{}
+	}
+	return sources
+}

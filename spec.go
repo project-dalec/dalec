@@ -224,7 +224,9 @@ type GeneratorGomod struct {
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
-// GomodReplace represents a go.mod replace directive in the shorthand "old:new" form.
+// GomodReplace represents a go.mod replace directive in shorthand "old:new" form.
+// This allows users to substitute module dependencies before go mod download runs,
+// useful for pointing to local forks or alternate versions.
 type GomodReplace string
 
 func (r GomodReplace) String() string {
@@ -286,7 +288,9 @@ func (r *GomodReplace) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// GomodRequire represents a go.mod require directive in the shorthand "module:target@version" form.
+// GomodRequire represents a go.mod require directive in shorthand "module:target@version" form.
+// This allows changing the resolved version of a dependency, including sourcing from a fork
+// while maintaining the original module path in go.mod.
 type GomodRequire string
 
 func (r GomodRequire) String() string {

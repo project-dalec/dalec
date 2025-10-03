@@ -302,6 +302,9 @@ func loadSpec(ctx context.Context, dt []byte) (*Spec, error) {
 	if err := spec.populateGomodPatchesFromExtensions(); err != nil {
 		return nil, err
 	}
+	if err := spec.validateGomodDirectives(); err != nil {
+		return nil, errors.Wrap(err, "invalid gomod configuration")
+	}
 	return &spec, nil
 }
 
@@ -319,6 +322,10 @@ func LoadSpecWithSourceMap(filename string, dt []byte) (*Spec, error) {
 	}
 	return spec, nil
 }
+
+// populateGomodPatchesFromExtensions reconstructs gomod patches from extension data
+// stored in the spec. This allows patches generated during the build to be persisted
+// and rehydrated when the spec is loaded later.
 func (s *Spec) populateGomodPatchesFromExtensions() error {
 	entries, err := s.gomodPatchExtensionEntries()
 	if err != nil {

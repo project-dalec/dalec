@@ -244,3 +244,106 @@ func TestGitconfigGeneratorScriptConfiguresGoEnvForAuth(t *testing.T) {
 		t.Fatalf("expected script to configure GOINSECURE, script:\n%s", script)
 	}
 }
+
+func TestSourceHasGomodDirectives(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   Source
+		expected bool
+	}{
+		{
+			name: "no generators",
+			source: Source{
+				Inline: &SourceInline{Dir: &SourceInlineDir{}},
+			},
+			expected: false,
+		},
+		{
+			name: "gomod without directives",
+			source: Source{
+				Inline: &SourceInline{Dir: &SourceInlineDir{}},
+				Generate: []*SourceGenerator{
+					{Gomod: &GeneratorGomod{}},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "gomod with replace directive",
+			source: Source{
+				Inline: &SourceInline{Dir: &SourceInlineDir{}},
+				Generate: []*SourceGenerator{
+					{
+						Gomod: &GeneratorGomod{
+							Replace: []GomodReplace{
+								"github.com/example/mod@v1.2.3:../mod",
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "gomod with require directive",
+			source: Source{
+				Inline: &SourceInline{Dir: &SourceInlineDir{}},
+				Generate: []*SourceGenerator{
+					{
+						Gomod: &GeneratorGomod{
+							Require: []GomodRequire{
+								"github.com/example/mod:github.com/example/mod@v1.2.3",
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "gomod with both directives",
+			source: Source{
+				Inline: &SourceInline{Dir: &SourceInlineDir{}},
+				Generate: []*SourceGenerator{
+					{
+						Gomod: &GeneratorGomod{
+							Replace: []GomodReplace{
+								"github.com/example/mod@v1.2.3:../mod",
+							},
+							Require: []GomodRequire{
+								"github.com/example/mod:github.com/example/mod@v1.2.3",
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "multiple generators, one with directives",
+			source: Source{
+				Inline: &SourceInline{Dir: &SourceInlineDir{}},
+				Generate: []*SourceGenerator{
+					{Gomod: &GeneratorGomod{}},
+					{
+						Gomod: &GeneratorGomod{
+							Replace: []GomodReplace{
+								"github.com/example/mod@v1.2.3:../mod",
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.source.sourceHasGomodDirectives()
+			if result != tt.expected {
+				t.Errorf("sourceHasGomodDirectives() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}

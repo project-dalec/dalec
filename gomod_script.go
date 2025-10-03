@@ -1,3 +1,5 @@
+// Package dalec provides BuildKit frontend functionality for building
+// system packages from declarative specifications.
 package dalec
 
 import (
@@ -10,9 +12,11 @@ import (
 // directives defined in the spec's gomod generators. The snippet is intended to be executed
 // from the root of the extracted source tree prior to running build steps so that the
 // modifications persist for the actual build.
-func GomodEditScript(spec *Spec) string {
+//
+// Returns an error if any replace or require directives are malformed.
+func GomodEditScript(spec *Spec) (string, error) {
 	if spec == nil || !spec.HasGomods() {
-		return ""
+		return "", nil
 	}
 
 	var builder strings.Builder
@@ -62,7 +66,7 @@ func GomodEditScript(spec *Spec) string {
 				for _, replace := range gomod.Replace {
 					arg, err := replace.goModEditArg()
 					if err != nil {
-						panic(fmt.Errorf("invalid gomod replace configuration: %w", err))
+						return "", fmt.Errorf("invalid gomod replace configuration in source %q: %w", sourceName, err)
 					}
 					fmt.Fprintf(&builder, "    go mod edit -replace=%q\n", arg)
 				}
@@ -70,7 +74,7 @@ func GomodEditScript(spec *Spec) string {
 				for _, require := range gomod.Require {
 					arg, err := require.goModEditArg()
 					if err != nil {
-						panic(fmt.Errorf("invalid gomod require configuration: %w", err))
+						return "", fmt.Errorf("invalid gomod require configuration in source %q: %w", sourceName, err)
 					}
 					fmt.Fprintf(&builder, "    go mod edit -require=%q\n", arg)
 				}
@@ -85,5 +89,5 @@ func GomodEditScript(spec *Spec) string {
 		}
 	}
 
-	return builder.String()
+	return builder.String(), nil
 }
