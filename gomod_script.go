@@ -34,7 +34,7 @@ func GomodEditScript(spec *Spec) (string, error) {
 				continue
 			}
 
-			if len(gomod.Replace) == 0 && len(gomod.Require) == 0 {
+			if !gomod.HasEdits() {
 				continue
 			}
 
@@ -63,7 +63,7 @@ func GomodEditScript(spec *Spec) (string, error) {
 				fmt.Fprintln(&builder, "  (")
 				fmt.Fprintf(&builder, "    cd %q\n", rel)
 
-				for _, replace := range gomod.Replace {
+				for _, replace := range gomod.GetReplace() {
 					arg, err := replace.goModEditArg()
 					if err != nil {
 						return "", fmt.Errorf("invalid gomod replace configuration in source %q: %w", sourceName, err)
@@ -71,7 +71,7 @@ func GomodEditScript(spec *Spec) (string, error) {
 					fmt.Fprintf(&builder, "    go mod edit -replace=%q\n", arg)
 				}
 
-				for _, require := range gomod.Require {
+				for _, require := range gomod.GetRequire() {
 					arg, err := require.goModEditArg()
 					if err != nil {
 						return "", fmt.Errorf("invalid gomod require configuration in source %q: %w", sourceName, err)

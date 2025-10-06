@@ -707,8 +707,10 @@ index ea874f5..ba38f84 100644
 			spec := baseSpec()
 
 			src := spec.Sources[srcName]
-			src.Generate[0].Gomod.Require = []dalec.GomodRequire{
-				"github.com/cpuguy83/tar2go:github.com/cpuguy83/tar2go@v0.3.0",
+			src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+				Require: []dalec.GomodRequire{
+					{Module: "github.com/cpuguy83/tar2go", Version: "github.com/cpuguy83/tar2go@v0.3.0"},
+				},
 			}
 			spec.Sources[srcName] = src
 
@@ -722,8 +724,10 @@ index ea874f5..ba38f84 100644
 			spec := baseSpec()
 
 			src := spec.Sources[srcName]
-			src.Generate[0].Gomod.Replace = []dalec.GomodReplace{
-				"github.com/cpuguy83/tar2go:github.com/cpuguy83/tar2go@v0.3.0",
+			src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+				Replace: []dalec.GomodReplace{
+					{Old: "github.com/cpuguy83/tar2go", New: "github.com/cpuguy83/tar2go@v0.3.0"},
+				},
 			}
 			spec.Sources[srcName] = src
 
