@@ -15,17 +15,12 @@ func TestGomodReplaceUnmarshalYAMLValid(t *testing.T) {
 		t.Fatalf("unexpected error unmarshalling gomod replace: %v", err)
 	}
 
-	old, new, err := replace.parts()
-	if err != nil {
-		t.Fatalf("unexpected error retrieving parts: %v", err)
+	if replace.Old != "github.com/example/mod@v1.2.3" {
+		t.Fatalf("unexpected old value: %s", replace.Old)
 	}
 
-	if old != "github.com/example/mod@v1.2.3" {
-		t.Fatalf("unexpected old value: %s", old)
-	}
-
-	if new != "../mod" {
-		t.Fatalf("unexpected new value: %s", new)
+	if replace.New != "../mod" {
+		t.Fatalf("unexpected new value: %s", replace.New)
 	}
 }
 
@@ -42,17 +37,12 @@ func TestGomodRequireUnmarshalYAMLValid(t *testing.T) {
 		t.Fatalf("unexpected error unmarshalling gomod require: %v", err)
 	}
 
-	module, target, err := require.parts()
-	if err != nil {
-		t.Fatalf("unexpected error retrieving parts: %v", err)
+	if require.Module != "github.com/example/mod" {
+		t.Fatalf("unexpected module value: %s", require.Module)
 	}
 
-	if module != "github.com/example/mod" {
-		t.Fatalf("unexpected module value: %s", module)
-	}
-
-	if target != "github.com/example/mod@v1.2.3" {
-		t.Fatalf("unexpected target value: %s", target)
+	if require.Version != "github.com/example/mod@v1.2.3" {
+		t.Fatalf("unexpected version value: %s", require.Version)
 	}
 }
 
@@ -65,11 +55,13 @@ func TestGomodRequireUnmarshalYAMLInvalid(t *testing.T) {
 
 func TestGeneratorGomodProcessBuildArgsReplace(t *testing.T) {
 	gen := &GeneratorGomod{
-		Replace: []GomodReplace{
-			normalizeGomodReplace("github.com/example/mod@${VERSION}", "../local/${VERSION}"),
-		},
-		Require: []GomodRequire{
-			normalizeGomodRequire("github.com/example/mod", "github.com/example/mod@${VERSION}"),
+		Edits: &GomodEdits{
+			Replace: []GomodReplace{
+				{Old: "github.com/example/mod@${VERSION}", New: "../local/${VERSION}"},
+			},
+			Require: []GomodRequire{
+				{Module: "github.com/example/mod", Version: "github.com/example/mod@${VERSION}"},
+			},
 		},
 	}
 
@@ -78,41 +70,33 @@ func TestGeneratorGomodProcessBuildArgsReplace(t *testing.T) {
 		t.Fatalf("unexpected error processing build args: %v", err)
 	}
 
-	old, new, err := gen.Replace[0].parts()
-	if err != nil {
-		t.Fatalf("unexpected error retrieving parsed parts: %v", err)
+	if gen.Edits.Replace[0].Old != "github.com/example/mod@v1.2.3" {
+		t.Fatalf("expected old value to include expanded version, got %s", gen.Edits.Replace[0].Old)
 	}
 
-	if old != "github.com/example/mod@v1.2.3" {
-		t.Fatalf("expected old value to include expanded version, got %s", old)
+	if gen.Edits.Replace[0].New != "../local/v1.2.3" {
+		t.Fatalf("expected new value to include expanded version, got %s", gen.Edits.Replace[0].New)
 	}
 
-	if new != "../local/v1.2.3" {
-		t.Fatalf("expected new value to include expanded version, got %s", new)
+	if gen.Edits.Require[0].Module != "github.com/example/mod" {
+		t.Fatalf("expected module to remain unchanged, got %s", gen.Edits.Require[0].Module)
 	}
 
-	module, target, err := gen.Require[0].parts()
-	if err != nil {
-		t.Fatalf("unexpected error retrieving parsed require parts: %v", err)
-	}
-
-	if module != "github.com/example/mod" {
-		t.Fatalf("expected module to remain unchanged, got %s", module)
-	}
-
-	if target != "github.com/example/mod@v1.2.3" {
-		t.Fatalf("expected target to include expanded version, got %s", target)
+	if gen.Edits.Require[0].Version != "github.com/example/mod@v1.2.3" {
+		t.Fatalf("expected version to include expanded version, got %s", gen.Edits.Require[0].Version)
 	}
 }
 
 func TestGitconfigGeneratorScriptIncludesReplace(t *testing.T) {
 	gen := &SourceGenerator{
 		Gomod: &GeneratorGomod{
-			Replace: []GomodReplace{
-				normalizeGomodReplace("github.com/example/mod@v1.2.3", "../mod"),
-			},
-			Require: []GomodRequire{
-				normalizeGomodRequire("github.com/example/mod", "github.com/example/mod@v1.2.3"),
+			Edits: &GomodEdits{
+				Replace: []GomodReplace{
+					{Old: "github.com/example/mod@v1.2.3", New: "../mod"},
+				},
+				Require: []GomodRequire{
+					{Module: "github.com/example/mod", Version: "github.com/example/mod@v1.2.3"},
+				},
 			},
 		},
 	}
@@ -275,8 +259,10 @@ func TestSourceHasGomodDirectives(t *testing.T) {
 				Generate: []*SourceGenerator{
 					{
 						Gomod: &GeneratorGomod{
-							Replace: []GomodReplace{
-								"github.com/example/mod@v1.2.3:../mod",
+							Edits: &GomodEdits{
+								Replace: []GomodReplace{
+									{Old: "github.com/example/mod@v1.2.3", New: "../mod"},
+								},
 							},
 						},
 					},
@@ -291,8 +277,10 @@ func TestSourceHasGomodDirectives(t *testing.T) {
 				Generate: []*SourceGenerator{
 					{
 						Gomod: &GeneratorGomod{
-							Require: []GomodRequire{
-								"github.com/example/mod:github.com/example/mod@v1.2.3",
+							Edits: &GomodEdits{
+								Require: []GomodRequire{
+									{Module: "github.com/example/mod", Version: "github.com/example/mod@v1.2.3"},
+								},
 							},
 						},
 					},
@@ -307,11 +295,13 @@ func TestSourceHasGomodDirectives(t *testing.T) {
 				Generate: []*SourceGenerator{
 					{
 						Gomod: &GeneratorGomod{
-							Replace: []GomodReplace{
-								"github.com/example/mod@v1.2.3:../mod",
-							},
-							Require: []GomodRequire{
-								"github.com/example/mod:github.com/example/mod@v1.2.3",
+							Edits: &GomodEdits{
+								Replace: []GomodReplace{
+									{Old: "github.com/example/mod@v1.2.3", New: "../mod"},
+								},
+								Require: []GomodRequire{
+									{Module: "github.com/example/mod", Version: "github.com/example/mod@v1.2.3"},
+								},
 							},
 						},
 					},
@@ -327,8 +317,10 @@ func TestSourceHasGomodDirectives(t *testing.T) {
 					{Gomod: &GeneratorGomod{}},
 					{
 						Gomod: &GeneratorGomod{
-							Replace: []GomodReplace{
-								"github.com/example/mod@v1.2.3:../mod",
+							Edits: &GomodEdits{
+								Replace: []GomodReplace{
+									{Old: "github.com/example/mod@v1.2.3", New: "../mod"},
+								},
 							},
 						},
 					},

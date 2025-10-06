@@ -212,146 +212,220 @@ type GeneratorGomod struct {
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	// Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host.
 	Auth map[string]GomodGitAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// Edits contains go.mod manipulation directives (replace, require) that are applied
+	// before downloading module dependencies.
+	Edits *GomodEdits `yaml:"edits,omitempty" json:"edits,omitempty"`
+}
+
+// GomodEdits groups the go.mod manipulation directives that can be applied
+// before downloading module dependencies.
+type GomodEdits struct {
 	// Replace applies go.mod replace directives before downloading module dependencies.
-	// Each entry must be of the form "old:new" where "old" and "new" match the syntax accepted by
-	// `go mod edit -replace`.
+	// Each entry can be either a string "old:new" or a struct with Old and New fields.
 	Replace []GomodReplace `yaml:"replace,omitempty" json:"replace,omitempty"`
 	// Require applies go.mod require directives before downloading module dependencies.
-	// Each entry must be of the form "module:target@version" to match the syntax accepted by
-	// `go mod edit -require`.
+	// Each entry can be either a string "module:version" or a struct with Module and Version fields.
 	Require []GomodRequire `yaml:"require,omitempty" json:"require,omitempty"`
 
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
-// GomodReplace represents a go.mod replace directive in shorthand "old:new" form.
+// GetReplace returns the replace directives, handling nil Edits.
+func (g *GeneratorGomod) GetReplace() []GomodReplace {
+	if g == nil || g.Edits == nil {
+		return nil
+	}
+	return g.Edits.Replace
+}
+
+// GetRequire returns the require directives, handling nil Edits.
+func (g *GeneratorGomod) GetRequire() []GomodRequire {
+	if g == nil || g.Edits == nil {
+		return nil
+	}
+	return g.Edits.Require
+}
+
+// HasEdits returns true if there are any replace or require directives.
+func (g *GeneratorGomod) HasEdits() bool {
+	if g == nil || g.Edits == nil {
+		return false
+	}
+	return len(g.Edits.Replace) > 0 || len(g.Edits.Require) > 0
+}
+
+// GomodReplace represents a go.mod replace directive.
+// It can be specified as a string "old:new" or as a struct with Old and New fields.
 // This allows users to substitute module dependencies before go mod download runs,
 // useful for pointing to local forks or alternate versions.
-type GomodReplace string
+type GomodReplace struct {
+	// Old is the module path to replace (can include @version)
+	Old string `yaml:"old" json:"old"`
+	// New is the replacement module path or local directory
+	New string `yaml:"new" json:"new"`
+}
 
 func (r GomodReplace) String() string {
-	return string(r)
-}
-
-func parseGomodReplace(value string) (string, string, error) {
-	parts := strings.SplitN(value, ":", 2)
-	if len(parts) != 2 {
-		return "", "", errors.Errorf("invalid gomod replace %q, expected format old:new", value)
-	}
-	old := strings.TrimSpace(parts[0])
-	new := strings.TrimSpace(parts[1])
-	if old == "" || new == "" {
-		return "", "", errors.Errorf("invalid gomod replace %q, entries must be non-empty", value)
-	}
-	return old, new, nil
-}
-
-func normalizeGomodReplace(old, new string) GomodReplace {
-	return GomodReplace(strings.TrimSpace(old) + ":" + strings.TrimSpace(new))
-}
-
-func (r GomodReplace) parts() (string, string, error) {
-	return parseGomodReplace(string(r))
+	return r.Old + ":" + r.New
 }
 
 func (r GomodReplace) goModEditArg() (string, error) {
-	old, new, err := r.parts()
-	if err != nil {
-		return "", err
+	if r.Old == "" || r.New == "" {
+		return "", errors.Errorf("invalid gomod replace, old and new must be non-empty")
 	}
-	return old + "=" + new, nil
+	return r.Old + "=" + r.New, nil
 }
 
 func (r *GomodReplace) UnmarshalYAML(b []byte) error {
+	// Try to unmarshal as a string first (shorthand format)
 	var raw string
-	if err := yaml.Unmarshal(b, &raw); err != nil {
+	if err := yaml.Unmarshal(b, &raw); err == nil {
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod replace %q, expected format old:new", raw)
+		}
+		r.Old = strings.TrimSpace(parts[0])
+		r.New = strings.TrimSpace(parts[1])
+		if r.Old == "" || r.New == "" {
+			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
+		}
+		return nil
+	}
+
+	// Otherwise, try to unmarshal as a struct
+	type gomodReplaceAlias GomodReplace
+	var alias gomodReplaceAlias
+	if err := yaml.Unmarshal(b, &alias); err != nil {
 		return err
 	}
-	old, new, err := parseGomodReplace(raw)
-	if err != nil {
-		return err
+	*r = GomodReplace(alias)
+	if r.Old == "" || r.New == "" {
+		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
 	}
-	*r = normalizeGomodReplace(old, new)
 	return nil
 }
 
 func (r *GomodReplace) UnmarshalJSON(b []byte) error {
+	// Try to unmarshal as a string first (shorthand format)
 	var raw string
-	if err := json.Unmarshal(b, &raw); err != nil {
+	if err := json.Unmarshal(b, &raw); err == nil {
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod replace %q, expected format old:new", raw)
+		}
+		r.Old = strings.TrimSpace(parts[0])
+		r.New = strings.TrimSpace(parts[1])
+		if r.Old == "" || r.New == "" {
+			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
+		}
+		return nil
+	}
+
+	// Otherwise, try to unmarshal as a struct
+	type gomodReplaceAlias GomodReplace
+	var alias gomodReplaceAlias
+	if err := json.Unmarshal(b, &alias); err != nil {
 		return err
 	}
-	old, new, err := parseGomodReplace(raw)
-	if err != nil {
-		return err
+	*r = GomodReplace(alias)
+	if r.Old == "" || r.New == "" {
+		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
 	}
-	*r = normalizeGomodReplace(old, new)
 	return nil
 }
 
-// GomodRequire represents a go.mod require directive in shorthand "module:target@version" form.
+// GomodRequire represents a go.mod require directive.
+// It can be specified as a string "module:version" or as a struct with Module and Version fields.
 // This allows changing the resolved version of a dependency, including sourcing from a fork
 // while maintaining the original module path in go.mod.
-type GomodRequire string
+type GomodRequire struct {
+	// Module is the module path that appears in go.mod
+	Module string `yaml:"module" json:"module"`
+	// Version is the target module and version (e.g., "module@version")
+	Version string `yaml:"version" json:"version"`
+}
 
 func (r GomodRequire) String() string {
-	return string(r)
-}
-
-func parseGomodRequire(value string) (string, string, error) {
-	parts := strings.SplitN(value, ":", 2)
-	if len(parts) != 2 {
-		return "", "", errors.Errorf("invalid gomod require %q, expected format module:target@version", value)
-	}
-	module := strings.TrimSpace(parts[0])
-	target := strings.TrimSpace(parts[1])
-	if module == "" || target == "" {
-		return "", "", errors.Errorf("invalid gomod require %q, entries must be non-empty", value)
-	}
-	return module, target, nil
-}
-
-func normalizeGomodRequire(module, target string) GomodRequire {
-	return GomodRequire(strings.TrimSpace(module) + ":" + strings.TrimSpace(target))
-}
-
-func (r GomodRequire) parts() (string, string, error) {
-	return parseGomodRequire(string(r))
+	return r.Module + ":" + r.Version
 }
 
 func (r GomodRequire) goModEditArg() (string, error) {
-	_, target, err := r.parts()
-	if err != nil {
-		return "", err
+	if r.Module == "" || r.Version == "" {
+		return "", errors.Errorf("invalid gomod require, module and version must be non-empty")
 	}
-	if !strings.Contains(target, "@") {
-		return "", errors.Errorf("invalid gomod require %q, target must include @version", target)
+	if !strings.Contains(r.Version, "@") {
+		return "", errors.Errorf("invalid gomod require %q, version must include @version", r.Version)
 	}
-	return target, nil
+	return r.Version, nil
 }
 
 func (r *GomodRequire) UnmarshalYAML(b []byte) error {
+	// Try to unmarshal as a string first (shorthand format)
 	var raw string
-	if err := yaml.Unmarshal(b, &raw); err != nil {
+	if err := yaml.Unmarshal(b, &raw); err == nil {
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod require %q, expected format module:version", raw)
+		}
+		r.Module = strings.TrimSpace(parts[0])
+		r.Version = strings.TrimSpace(parts[1])
+		if r.Module == "" || r.Version == "" {
+			return errors.Errorf("invalid gomod require %q, entries must be non-empty", raw)
+		}
+		if !strings.Contains(r.Version, "@") {
+			return errors.Errorf("invalid gomod require %q, version must include @version", raw)
+		}
+		return nil
+	}
+
+	// Otherwise, try to unmarshal as a struct
+	type gomodRequireAlias GomodRequire
+	var alias gomodRequireAlias
+	if err := yaml.Unmarshal(b, &alias); err != nil {
 		return err
 	}
-	module, target, err := parseGomodRequire(raw)
-	if err != nil {
-		return err
+	*r = GomodRequire(alias)
+	if r.Module == "" || r.Version == "" {
+		return errors.Errorf("invalid gomod require, module and version must be non-empty")
 	}
-	*r = normalizeGomodRequire(module, target)
+	if !strings.Contains(r.Version, "@") {
+		return errors.Errorf("invalid gomod require %q, version must include @version", r.Version)
+	}
 	return nil
 }
 
 func (r *GomodRequire) UnmarshalJSON(b []byte) error {
+	// Try to unmarshal as a string first (shorthand format)
 	var raw string
-	if err := json.Unmarshal(b, &raw); err != nil {
+	if err := json.Unmarshal(b, &raw); err == nil {
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod require %q, expected format module:version", raw)
+		}
+		r.Module = strings.TrimSpace(parts[0])
+		r.Version = strings.TrimSpace(parts[1])
+		if r.Module == "" || r.Version == "" {
+			return errors.Errorf("invalid gomod require %q, entries must be non-empty", raw)
+		}
+		if !strings.Contains(r.Version, "@") {
+			return errors.Errorf("invalid gomod require %q, version must include @version", raw)
+		}
+		return nil
+	}
+
+	// Otherwise, try to unmarshal as a struct
+	type gomodRequireAlias GomodRequire
+	var alias gomodRequireAlias
+	if err := json.Unmarshal(b, &alias); err != nil {
 		return err
 	}
-	module, target, err := parseGomodRequire(raw)
-	if err != nil {
-		return err
+	*r = GomodRequire(alias)
+	if r.Module == "" || r.Version == "" {
+		return errors.Errorf("invalid gomod require, module and version must be non-empty")
 	}
-	*r = normalizeGomodRequire(module, target)
+	if !strings.Contains(r.Version, "@") {
+		return errors.Errorf("invalid gomod require %q, version must include @version", r.Version)
+	}
 	return nil
 }
 

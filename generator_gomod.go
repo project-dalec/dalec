@@ -400,7 +400,7 @@ fi
 
 func gomodEditCommandLines(g *GeneratorGomod) ([]string, error) {
 	var cmds []string
-	for _, replace := range g.Replace {
+	for _, replace := range g.GetReplace() {
 		arg, err := replace.goModEditArg()
 		if err != nil {
 			return nil, errors.Wrap(err, "invalid gomod replace configuration")
@@ -408,7 +408,7 @@ func gomodEditCommandLines(g *GeneratorGomod) ([]string, error) {
 		cmds = append(cmds, fmt.Sprintf("go mod edit -replace=%q", arg))
 	}
 
-	for _, require := range g.Require {
+	for _, require := range g.GetRequire() {
 		arg, err := require.goModEditArg()
 		if err != nil {
 			return nil, errors.Wrap(err, "invalid gomod require configuration")
@@ -463,62 +463,52 @@ func (g *GeneratorGomod) processBuildArgs(args map[string]string, allowArg func(
 		}
 	}
 
-	for i := range g.Replace {
-		old, new, err := g.Replace[i].parts()
-		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "gomod replace[%d]", i))
-			continue
+	if g.Edits != nil {
+		for i := range g.Edits.Replace {
+			updatedOld, err := expandArgs(lex, g.Edits.Replace[i].Old, args, allowArg)
+			if err != nil {
+				errs = append(errs, errors.Wrapf(err, "gomod replace[%d]", i))
+				continue
+			}
+
+			updatedNew, err := expandArgs(lex, g.Edits.Replace[i].New, args, allowArg)
+			if err != nil {
+				errs = append(errs, errors.Wrapf(err, "gomod replace[%d]", i))
+				continue
+			}
+
+			updatedOld = strings.TrimSpace(updatedOld)
+			updatedNew = strings.TrimSpace(updatedNew)
+			if updatedOld == "" || updatedNew == "" {
+				errs = append(errs, errors.Errorf("gomod replace[%d] resolved to an empty value", i))
+				continue
+			}
+
+			g.Edits.Replace[i] = GomodReplace{Old: updatedOld, New: updatedNew}
 		}
 
-		updatedOld, err := expandArgs(lex, old, args, allowArg)
-		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "gomod replace[%d]", i))
-			continue
+		for i := range g.Edits.Require {
+			updatedModule, err := expandArgs(lex, g.Edits.Require[i].Module, args, allowArg)
+			if err != nil {
+				errs = append(errs, errors.Wrapf(err, "gomod require[%d]", i))
+				continue
+			}
+
+			updatedVersion, err := expandArgs(lex, g.Edits.Require[i].Version, args, allowArg)
+			if err != nil {
+				errs = append(errs, errors.Wrapf(err, "gomod require[%d]", i))
+				continue
+			}
+
+			updatedModule = strings.TrimSpace(updatedModule)
+			updatedVersion = strings.TrimSpace(updatedVersion)
+			if updatedModule == "" || updatedVersion == "" {
+				errs = append(errs, errors.Wrapf(err, "gomod require[%d] resolved to an empty value", i))
+				continue
+			}
+
+			g.Edits.Require[i] = GomodRequire{Module: updatedModule, Version: updatedVersion}
 		}
-
-		updatedNew, err := expandArgs(lex, new, args, allowArg)
-		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "gomod replace[%d]", i))
-			continue
-		}
-
-		updatedOld = strings.TrimSpace(updatedOld)
-		updatedNew = strings.TrimSpace(updatedNew)
-		if updatedOld == "" || updatedNew == "" {
-			errs = append(errs, errors.Errorf("gomod replace[%d] resolved to an empty value", i))
-			continue
-		}
-
-		g.Replace[i] = normalizeGomodReplace(updatedOld, updatedNew)
-	}
-
-	for i := range g.Require {
-		module, target, err := g.Require[i].parts()
-		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "gomod require[%d]", i))
-			continue
-		}
-
-		updatedModule, err := expandArgs(lex, module, args, allowArg)
-		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "gomod require[%d]", i))
-			continue
-		}
-
-		updatedTarget, err := expandArgs(lex, target, args, allowArg)
-		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "gomod require[%d]", i))
-			continue
-		}
-
-		updatedModule = strings.TrimSpace(updatedModule)
-		updatedTarget = strings.TrimSpace(updatedTarget)
-		if updatedModule == "" || updatedTarget == "" {
-			errs = append(errs, errors.Errorf("gomod require[%d] resolved to an empty value", i))
-			continue
-		}
-
-		g.Require[i] = normalizeGomodRequire(updatedModule, updatedTarget)
 	}
 
 	return goerrors.Join(errs...)
@@ -658,10 +648,10 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 		fmt.Fprintf(&script, "go env -w GOINSECURE=%s\n", joined)
 	}
 
-	if len(g.Gomod.Replace) > 0 {
+	if len(g.Gomod.GetReplace()) > 0 {
 		script.WriteRune('\n')
 		fmt.Fprintln(&script, "if [ -f go.mod ]; then")
-		for _, replace := range g.Gomod.Replace {
+		for _, replace := range g.Gomod.GetReplace() {
 			// Note: validation happens during spec loading via validateGomodDirectives()
 			// so this should never error in practice. The validation ensures all directives
 			// are well-formed before we reach this point.
@@ -671,10 +661,10 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 		fmt.Fprintln(&script, "fi")
 	}
 
-	if len(g.Gomod.Require) > 0 {
+	if len(g.Gomod.GetRequire()) > 0 {
 		script.WriteRune('\n')
 		fmt.Fprintln(&script, "if [ -f go.mod ]; then")
-		for _, require := range g.Gomod.Require {
+		for _, require := range g.Gomod.GetRequire() {
 			// Note: validation happens during spec loading via validateGomodDirectives()
 			// so this should never error in practice. The validation ensures all directives
 			// are well-formed before we reach this point.
@@ -739,10 +729,8 @@ func (s *Spec) gomodSources() map[string]Source {
 // that would modify the go.mod file and potentially change dependencies.
 func (s *Source) sourceHasGomodDirectives() bool {
 	for _, gen := range s.Generate {
-		if gen != nil && gen.Gomod != nil {
-			if len(gen.Gomod.Replace) > 0 || len(gen.Gomod.Require) > 0 {
-				return true
-			}
+		if gen != nil && gen.Gomod != nil && gen.Gomod.HasEdits() {
+			return true
 		}
 	}
 	return false
@@ -755,13 +743,13 @@ func (g *GeneratorGomod) validateGomodDirectives() error {
 		return nil
 	}
 
-	for i, replace := range g.Replace {
+	for i, replace := range g.GetReplace() {
 		if _, err := replace.goModEditArg(); err != nil {
 			return fmt.Errorf("invalid gomod replace[%d]: %w", i, err)
 		}
 	}
 
-	for i, require := range g.Require {
+	for i, require := range g.GetRequire() {
 		if _, err := require.goModEditArg(); err != nil {
 			return fmt.Errorf("invalid gomod require[%d]: %w", i, err)
 		}

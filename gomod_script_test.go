@@ -13,8 +13,10 @@ func TestGomodEditScriptIncludesGoModTidy(t *testing.T) {
 				Generate: []*SourceGenerator{
 					{
 						Gomod: &GeneratorGomod{
-							Require: []GomodRequire{
-								normalizeGomodRequire("github.com/example/mod", "github.com/example/mod@v1.0.0"),
+							Edits: &GomodEdits{
+								Require: []GomodRequire{
+									{Module: "github.com/example/mod", Version: "github.com/example/mod@v1.0.0"},
+								},
 							},
 						},
 					},

@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+// mustParseGomodReplace is a helper function that attempts to parse a string into a GomodReplace.
+// It returns a Go struct with Old and New fields based on parsing the string.
+func mustParseGomodReplace(s string) GomodReplace {
+	var r GomodReplace
+	_ = r.UnmarshalYAML([]byte(s))
+	return r
+}
+
+// mustParseGomodRequire is a helper function that attempts to parse a string into a GomodRequire.
+// It returns a Go struct with Module and Version fields based on parsing the string.
+func mustParseGomodRequire(s string) GomodRequire {
+	var r GomodRequire
+	_ = r.UnmarshalYAML([]byte(s))
+	return r
+}
+
 // TestGomodReplaceValidation verifies that GomodReplace directives are properly validated
 // for format correctness, ensuring old:new syntax and non-empty components.
 func TestGomodReplaceValidation(t *testing.T) {
@@ -28,31 +44,31 @@ func TestGomodReplaceValidation(t *testing.T) {
 			name:        "missing separator",
 			replace:     "github.com/example/mod@v1.0.0",
 			expectError: true,
-			errorMsg:    "expected format old:new",
+			errorMsg:    "old and new must be non-empty",
 		},
 		{
 			name:        "empty old module",
 			replace:     ":../local",
 			expectError: true,
-			errorMsg:    "entries must be non-empty",
+			errorMsg:    "old and new must be non-empty",
 		},
 		{
 			name:        "empty new module",
 			replace:     "github.com/example/mod:",
 			expectError: true,
-			errorMsg:    "entries must be non-empty",
+			errorMsg:    "old and new must be non-empty",
 		},
 		{
 			name:        "empty string",
 			replace:     "",
 			expectError: true,
-			errorMsg:    "expected format old:new",
+			errorMsg:    "old and new must be non-empty",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			replace := GomodReplace(tt.replace)
+			replace := mustParseGomodReplace(tt.replace)
 			_, err := replace.goModEditArg()
 
 			if tt.expectError {
@@ -89,37 +105,37 @@ func TestGomodRequireValidation(t *testing.T) {
 			name:        "missing separator",
 			require:     "github.com/example/mod@v1.0.0",
 			expectError: true,
-			errorMsg:    "expected format module:target@version",
+			errorMsg:    "module and version must be non-empty",
 		},
 		{
 			name:        "empty module name",
 			require:     ":github.com/example/mod@v1.0.0",
 			expectError: true,
-			errorMsg:    "entries must be non-empty",
+			errorMsg:    "module and version must be non-empty",
 		},
 		{
 			name:        "empty target",
 			require:     "github.com/example/mod:",
 			expectError: true,
-			errorMsg:    "entries must be non-empty",
+			errorMsg:    "module and version must be non-empty",
 		},
 		{
 			name:        "empty string",
 			require:     "",
 			expectError: true,
-			errorMsg:    "expected format module:target@version",
+			errorMsg:    "module and version must be non-empty",
 		},
 		{
 			name:        "missing version in target",
 			require:     "github.com/example/mod:github.com/example/mod",
 			expectError: true,
-			errorMsg:    "target must include @version",
+			errorMsg:    "version must include @version",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := GomodRequire(tt.require)
+			require := mustParseGomodRequire(tt.require)
 			_, err := require.goModEditArg()
 
 			if tt.expectError {
@@ -150,11 +166,13 @@ func TestValidateGomodDirectivesGeneratorLevel(t *testing.T) {
 		{
 			name: "valid replace and require",
 			gen: &GeneratorGomod{
-				Replace: []GomodReplace{
-					"github.com/example/mod@v1.0.0:../local",
-				},
-				Require: []GomodRequire{
-					"github.com/other/mod:github.com/other/mod@v2.0.0",
+				Edits: &GomodEdits{
+					Replace: []GomodReplace{
+						mustParseGomodReplace("github.com/example/mod@v1.0.0:../local"),
+					},
+					Require: []GomodRequire{
+						mustParseGomodRequire("github.com/other/mod:github.com/other/mod@v2.0.0"),
+					},
 				},
 			},
 			expectError: false,
@@ -162,8 +180,10 @@ func TestValidateGomodDirectivesGeneratorLevel(t *testing.T) {
 		{
 			name: "invalid replace",
 			gen: &GeneratorGomod{
-				Replace: []GomodReplace{
-					"invalid-replace-missing-separator",
+				Edits: &GomodEdits{
+					Replace: []GomodReplace{
+						mustParseGomodReplace("invalid-replace-missing-separator"),
+					},
 				},
 			},
 			expectError: true,
@@ -172,8 +192,10 @@ func TestValidateGomodDirectivesGeneratorLevel(t *testing.T) {
 		{
 			name: "invalid require",
 			gen: &GeneratorGomod{
-				Require: []GomodRequire{
-					"invalid-require-missing-separator",
+				Edits: &GomodEdits{
+					Require: []GomodRequire{
+						mustParseGomodRequire("invalid-require-missing-separator"),
+					},
 				},
 			},
 			expectError: true,
@@ -182,12 +204,14 @@ func TestValidateGomodDirectivesGeneratorLevel(t *testing.T) {
 		{
 			name: "multiple invalid directives",
 			gen: &GeneratorGomod{
-				Replace: []GomodReplace{
-					"github.com/valid/mod@v1.0.0:../local",
-					"invalid-replace",
-				},
-				Require: []GomodRequire{
-					"invalid-require",
+				Edits: &GomodEdits{
+					Replace: []GomodReplace{
+						mustParseGomodReplace("github.com/valid/mod@v1.0.0:../local"),
+						mustParseGomodReplace("invalid-replace"),
+					},
+					Require: []GomodRequire{
+						mustParseGomodRequire("invalid-require"),
+					},
 				},
 			},
 			expectError: true,
@@ -237,8 +261,10 @@ func TestValidateGomodDirectivesSpecLevel(t *testing.T) {
 						Generate: []*SourceGenerator{
 							{
 								Gomod: &GeneratorGomod{
-									Replace: []GomodReplace{
-										"github.com/example/mod@v1.0.0:../local",
+									Edits: &GomodEdits{
+										Replace: []GomodReplace{
+											mustParseGomodReplace("github.com/example/mod@v1.0.0:../local"),
+										},
 									},
 								},
 							},
@@ -256,8 +282,10 @@ func TestValidateGomodDirectivesSpecLevel(t *testing.T) {
 						Generate: []*SourceGenerator{
 							{
 								Gomod: &GeneratorGomod{
-									Replace: []GomodReplace{
-										"invalid-replace",
+									Edits: &GomodEdits{
+										Replace: []GomodReplace{
+											mustParseGomodReplace("invalid-replace"),
+										},
 									},
 								},
 							},
@@ -276,8 +304,10 @@ func TestValidateGomodDirectivesSpecLevel(t *testing.T) {
 						Generate: []*SourceGenerator{
 							{
 								Gomod: &GeneratorGomod{
-									Replace: []GomodReplace{
-										"github.com/example/mod@v1.0.0:../local",
+									Edits: &GomodEdits{
+										Replace: []GomodReplace{
+											mustParseGomodReplace("github.com/example/mod@v1.0.0:../local"),
+										},
 									},
 								},
 							},
@@ -287,8 +317,10 @@ func TestValidateGomodDirectivesSpecLevel(t *testing.T) {
 						Generate: []*SourceGenerator{
 							{
 								Gomod: &GeneratorGomod{
-									Require: []GomodRequire{
-										"bad-require",
+									Edits: &GomodEdits{
+										Require: []GomodRequire{
+											mustParseGomodRequire("bad-require"),
+										},
 									},
 								},
 							},
@@ -346,8 +378,9 @@ sources:
       dir: {}
     generate:
       - gomod:
-          replace:
-            - "github.com/example/mod@v1.0.0:../local"
+          edits:
+            replace:
+              - "github.com/example/mod@v1.0.0:../local"
 `)
 
 	spec, err := LoadSpec(validYAML)
@@ -367,8 +400,9 @@ sources:
       dir: {}
     generate:
       - gomod:
-          replace:
-            - "invalid-replace-missing-separator"
+          edits:
+            replace:
+              - "invalid-replace-missing-separator"
 `)
 
 	_, err = LoadSpec(invalidYAML)
@@ -392,13 +426,15 @@ func TestGomodEditScriptCombinedReplaceAndRequire(t *testing.T) {
 				Generate: []*SourceGenerator{
 					{
 						Gomod: &GeneratorGomod{
-							Replace: []GomodReplace{
-								"github.com/example/mod@v1.0.0:../local",
-								"github.com/other/mod:../other",
-							},
-							Require: []GomodRequire{
-								"github.com/required/mod:github.com/required/mod@v2.0.0",
-								"github.com/another/mod:github.com/another/mod@v3.0.0",
+							Edits: &GomodEdits{
+								Replace: []GomodReplace{
+									mustParseGomodReplace("github.com/example/mod@v1.0.0:../local"),
+									mustParseGomodReplace("github.com/other/mod:../other"),
+								},
+								Require: []GomodRequire{
+									mustParseGomodRequire("github.com/required/mod:github.com/required/mod@v2.0.0"),
+									mustParseGomodRequire("github.com/another/mod:github.com/another/mod@v3.0.0"),
+								},
 							},
 						},
 					},
@@ -462,8 +498,10 @@ func TestGomodEditScriptMultipleSources(t *testing.T) {
 				Generate: []*SourceGenerator{
 					{
 						Gomod: &GeneratorGomod{
-							Replace: []GomodReplace{
-								"github.com/example/mod@v1.0.0:../local",
+							Edits: &GomodEdits{
+								Replace: []GomodReplace{
+									mustParseGomodReplace("github.com/example/mod@v1.0.0:../local"),
+								},
 							},
 						},
 					},
@@ -474,8 +512,10 @@ func TestGomodEditScriptMultipleSources(t *testing.T) {
 				Generate: []*SourceGenerator{
 					{
 						Gomod: &GeneratorGomod{
-							Require: []GomodRequire{
-								"github.com/required/mod:github.com/required/mod@v2.0.0",
+							Edits: &GomodEdits{
+								Require: []GomodRequire{
+									mustParseGomodRequire("github.com/required/mod:github.com/required/mod@v2.0.0"),
+								},
 							},
 						},
 					},
