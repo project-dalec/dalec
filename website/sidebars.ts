@@ -53,6 +53,7 @@ const sidebars: SidebarsConfig = {
       label: 'Contributing',
       collapsed: false,
       items: [
+        'architecture',
         'developers',
       ],
     },
