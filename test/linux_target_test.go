@@ -3912,6 +3912,28 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 }
 
 func testArtifactCapabilities(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	rpmTarget := dalec.Target{
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"libcap": {},
+			},
+			Build: map[string]dalec.PackageConstraints{
+				"libcap": {},
+			},
+		},
+	}
+
+	debTarget := dalec.Target{
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"libcap2-bin": {},
+			},
+			Build: map[string]dalec.PackageConstraints{
+				"libcap2-bin": {},
+			},
+		},
+	}
+
 	spec := &dalec.Spec{
 		Name:        "test-capabilities",
 		Version:     "0.0.1",
@@ -3945,16 +3967,30 @@ echo "This is a test binary"
 				},
 			},
 		},
-		Dependencies: &dalec.PackageDependencies{
-			Runtime: map[string]dalec.PackageConstraints{
-				"libcap": {},
-			},
+		Targets: map[string]dalec.Target{
+			"azlinux3":    rpmTarget,
+			"mariner2":    rpmTarget,
+			"almalinux8":  rpmTarget,
+			"almalinux9":  rpmTarget,
+			"rockylinux8": rpmTarget,
+			"rockylinux9": rpmTarget,
+			"bookworm":    debTarget,
+			"bullseye":    debTarget,
+			"bionic":      debTarget,
+			"focal":       debTarget,
+			"jammy":       debTarget,
+			"noble":       debTarget,
 		},
 		Tests: []*dalec.TestSpec{
 			{
 				Name: "Check binary capabilities",
 				Steps: []dalec.TestStep{
-					{Command: "/usr/sbin/getcap /usr/bin/ping | grep -q 'cap_net_raw=ep'"},
+					{
+						Command: "getcap /usr/bin/ping",
+						Stdout: dalec.CheckOutput{
+							Equals: "/usr/bin/ping cap_net_raw=ep",
+						},
+					},
 				},
 			},
 		},
