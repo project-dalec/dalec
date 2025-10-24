@@ -132,6 +132,8 @@ type ArtifactConfig struct {
 	User string `yaml:"user,omitempty" json:"user,omitempty"`
 	// Group is the group name that should own the artifact
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
+	// Capabilities is the set of POSIX capabilities to set on the artifact (e.g., "cap_net_bind_service=+ep")
+	Capabilities string `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
 }
 
 func (a *ArtifactConfig) ResolveName(path string) string {

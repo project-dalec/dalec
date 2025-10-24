@@ -2390,6 +2390,12 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		ctx := startTestSpan(baseCtx, t)
 		testDisableAutoRequire(ctx, t, testConfig.Target)
 	})
+
+	t.Run("artifact capabilities", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testArtifactCapabilities(ctx, t, testConfig)
+	})
 }
 
 func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetConfig, opts ...srOpt) {
@@ -3902,5 +3908,65 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			assert.Assert(t, contents == nil, "marker file should not be present in the container")
 			assert.ErrorContains(t, err, "open /etc/marker.txt: no such file or directory")
 		})
+	})
+}
+
+func testArtifactCapabilities(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	spec := &dalec.Spec{
+		Name:        "test-capabilities",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Description: "Testing file capabilities on artifacts",
+		Sources: map[string]dalec.Source{
+			"ping": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is a test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+		},
+		Build: dalec.ArtifactBuild{
+			Steps: []dalec.BuildStep{
+				{
+					Command: "cp ping /tmp/ping",
+				},
+			},
+		},
+		Artifacts: dalec.Artifacts{
+			Binaries: map[string]dalec.ArtifactConfig{
+				"/tmp/ping": {
+					Name:         "ping",
+					Capabilities: "cap_net_raw=+ep",
+				},
+			},
+		},
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"libcap": {},
+			},
+		},
+		Tests: []*dalec.TestSpec{
+			{
+				Name: "Check binary capabilities",
+				Steps: []dalec.TestStep{
+					{Command: "/usr/sbin/getcap /usr/bin/ping | grep -q 'cap_net_raw=ep'"},
+				},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+		res := solveT(ctx, t, client, req)
+
+		_, err := res.SingleRef()
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 }

@@ -509,8 +509,9 @@ func (w *specWrapper) Post() fmt.Stringer {
 	symlinkOwnership := w.getSymlinkOwnership()
 	artifactOwnership := w.getArtifactOwnership()
 	directoryOwnership := w.getDirectoryOwnership()
+	artifactCapabilities := w.getArtifactCapabilities()
 
-	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" && artifactOwnership == "" && directoryOwnership == "" {
+	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" && artifactOwnership == "" && directoryOwnership == "" && artifactCapabilities == "" {
 		return b
 	}
 
@@ -532,6 +533,9 @@ func (w *specWrapper) Post() fmt.Stringer {
 	}
 	if directoryOwnership != "" {
 		b.WriteString(directoryOwnership)
+	}
+	if artifactCapabilities != "" {
+		b.WriteString(artifactCapabilities)
 	}
 
 	b.WriteString("\n")
@@ -650,6 +654,52 @@ func (w *specWrapper) getArtifactOwnership() string {
 		for _, p := range binKeys {
 			cfg := artifacts.Binaries[p]
 			setArtifactOwnership(`/%{_bindir}`, p, &cfg)
+		}
+	}
+
+	return b.String()
+}
+
+func (w *specWrapper) getArtifactCapabilities() string {
+	artifacts := w.Spec.GetArtifacts(w.Target)
+	b := &strings.Builder{}
+
+	setArtifactCapabilities := func(root, p string, cfg *dalec.ArtifactConfig) {
+		if cfg == nil || cfg.Capabilities == "" {
+			return
+		}
+		targetDir := filepath.Join(root, cfg.SubPath)
+		file := cfg.ResolveName(p)
+		targetPath := filepath.Join(targetDir, file)
+		fmt.Fprintf(b, "setcap %s %s\n", cfg.Capabilities, targetPath)
+	}
+
+	if artifacts.ConfigFiles != nil {
+		configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
+		for _, c := range configKeys {
+			cfg := artifacts.ConfigFiles[c]
+			setArtifactCapabilities(`/%{_sysconfdir}`, c, &cfg)
+		}
+	}
+	if artifacts.DataDirs != nil {
+		dataFileKeys := dalec.SortMapKeys(artifacts.DataDirs)
+		for _, k := range dataFileKeys {
+			df := artifacts.DataDirs[k]
+			setArtifactCapabilities(`/%{_datadir}`, k, &df)
+		}
+	}
+	if artifacts.Libs != nil {
+		libs := dalec.SortMapKeys(artifacts.Libs)
+		for _, l := range libs {
+			cfg := artifacts.Libs[l]
+			setArtifactCapabilities(`/%{_libdir}`, l, &cfg)
+		}
+	}
+	if artifacts.Binaries != nil {
+		binKeys := dalec.SortMapKeys(artifacts.Binaries)
+		for _, p := range binKeys {
+			cfg := artifacts.Binaries[p]
+			setArtifactCapabilities(`/%{_bindir}`, p, &cfg)
 		}
 	}
 
