@@ -109,7 +109,7 @@
 						"string",
 						"null"
 					],
-					"description": "Capabilities is the set of capabilities to set on the artifact (e.g., \"cap_net_bind_service=+ep\")"
+					"description": "Capabilities is the set of POSIX capabilities to set on the artifact (e.g., \"cap_net_bind_service=+ep\")"
 				},
 				"group": {
 					"type": [
