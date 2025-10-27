@@ -102,14 +102,55 @@
 			],
 			"description": "ArtifactBuild configures a group of steps that are run sequentially along with their outputs to build the artifact(s)."
 		},
+		"ArtifactCapability": {
+			"required": [
+				"name"
+			],
+			"properties": {
+				"effective": {
+					"type": [
+						"boolean"
+					],
+					"description": "Effective grants the capability in the effective set"
+				},
+				"inheritable": {
+					"type": [
+						"boolean"
+					],
+					"description": "Inheritable grants the capability in the inheritable set"
+				},
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the capability name (e.g., \"cap_net_raw\", \"cap_net_bind_service\")"
+				},
+				"permitted": {
+					"type": [
+						"boolean"
+					],
+					"description": "Permitted grants the capability in the permitted set"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ArtifactCapability represents a POSIX capability to set on an artifact"
+		},
 		"ArtifactConfig": {
 			"properties": {
 				"capabilities": {
+					"items": {
+						"$ref": "#/$defs/ArtifactCapability"
+					},
 					"type": [
-						"string",
-						"null"
+						"array"
 					],
-					"description": "Capabilities is the set of POSIX capabilities to set on the artifact (e.g., \"cap_net_bind_service=+ep\")"
+					"description": "Capabilities is the list of POSIX capabilities to set on the artifact"
 				},
 				"group": {
 					"type": [

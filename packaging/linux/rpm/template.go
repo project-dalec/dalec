@@ -665,13 +665,17 @@ func (w *specWrapper) getArtifactCapabilities() string {
 	b := &strings.Builder{}
 
 	setArtifactCapabilities := func(root, p string, cfg *dalec.ArtifactConfig) {
-		if cfg == nil || cfg.Capabilities == "" {
+		if cfg == nil {
+			return
+		}
+		capString := dalec.CapabilitiesString(cfg.Capabilities)
+		if capString == "" {
 			return
 		}
 		targetDir := filepath.Join(root, cfg.SubPath)
 		file := cfg.ResolveName(p)
 		targetPath := filepath.Join(targetDir, file)
-		fmt.Fprintf(b, "setcap %s %s\n", cfg.Capabilities, targetPath)
+		fmt.Fprintf(b, "setcap %s %s\n", capString, targetPath)
 	}
 
 	if artifacts.ConfigFiles != nil {

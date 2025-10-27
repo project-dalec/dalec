@@ -741,12 +741,13 @@ func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target s
 		sorted := dalec.SortMapKeys(artifacts)
 		for _, key := range sorted {
 			cfg := artifacts[key]
-			if cfg.Capabilities == "" {
+			capString := dalec.CapabilitiesString(cfg.Capabilities)
+			if capString == "" {
 				continue
 			}
 			resolved := cfg.ResolveName(key)
 			p := filepath.Join(root, cfg.SubPath, resolved)
-			fmt.Fprintf(w, "setcap %s \"$DESTDIR%s\"\n", cfg.Capabilities, p)
+			fmt.Fprintf(w, "setcap %s \"$DESTDIR%s\"\n", capString, p)
 		}
 	}
 

@@ -3962,8 +3962,20 @@ echo "This is a test binary"
 		Artifacts: dalec.Artifacts{
 			Binaries: map[string]dalec.ArtifactConfig{
 				"/tmp/ping": {
-					Name:         "ping",
-					Capabilities: "cap_net_raw=+ep",
+					Name: "ping",
+					Capabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_raw",
+							Effective: true,
+							Permitted: true,
+						},
+						{
+							Name:      "cap_net_admin",
+							Effective: false,
+							Permitted: true,
+							Inheritble:  true,
+						},
+					},
 				},
 			},
 		},
@@ -3988,7 +4000,7 @@ echo "This is a test binary"
 					{
 						Command: "getcap /usr/bin/ping",
 						Stdout: dalec.CheckOutput{
-							Equals: "/usr/bin/ping cap_net_raw=ep",
+							Equals: "/usr/bin/ping cap_net_raw=ep, cap_net_admin=pi\n",
 						},
 					},
 				},
