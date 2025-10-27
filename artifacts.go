@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"maps"
 	"path/filepath"
+	"strings"
 )
 
 // Artifacts describes all the artifacts to include in the package.
@@ -132,8 +133,56 @@ type ArtifactConfig struct {
 	User string `yaml:"user,omitempty" json:"user,omitempty"`
 	// Group is the group name that should own the artifact
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
-	// Capabilities is the set of POSIX capabilities to set on the artifact (e.g., "cap_net_bind_service=+ep")
-	Capabilities string `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	// Capabilities is the list of POSIX capabilities to set on the artifact
+	Capabilities []ArtifactCapability `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+}
+
+// ArtifactCapability represents a POSIX capability to set on an artifact
+type ArtifactCapability struct {
+	// Name is the capability name (e.g., "cap_net_raw", "cap_net_bind_service")
+	Name string `yaml:"name" json:"name"`
+	// Effective grants the capability in the effective set
+	Effective bool `yaml:"effective,omitempty" json:"effective,omitempty"`
+	// Permitted grants the capability in the permitted set
+	Permitted bool `yaml:"permitted,omitempty" json:"permitted,omitempty"`
+	// Inheritable grants the capability in the inheritable set
+	Inheritable bool `yaml:"inheritable,omitempty" json:"inheritable,omitempty"`
+}
+
+// String converts the capability to setcap format (e.g., "cap_net_raw=ep")
+func (c ArtifactCapability) String() string {
+	var flags string
+	if c.Effective {
+		flags += "e"
+	}
+	if c.Inheritable {
+		flags += "i"
+	}
+	if c.Permitted {
+		flags += "p"
+	}
+	if flags == "" {
+		return ""
+	}
+	return c.Name + "=" + flags
+}
+
+// CapabilitiesString converts a list of capabilities to setcap format
+// Returns empty string if no capabilities or all capabilities have no flags set
+func CapabilitiesString(caps []ArtifactCapability) string {
+	if len(caps) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, cap := range caps {
+		if s := cap.String(); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ",")
 }
 
 func (a *ArtifactConfig) ResolveName(path string) string {
