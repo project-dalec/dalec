@@ -3973,7 +3973,7 @@ echo "This is a test binary"
 							Name:      "cap_net_admin",
 							Effective: false,
 							Permitted: true,
-							Inheritble:  true,
+							Inheritable:  true,
 						},
 					},
 				},
