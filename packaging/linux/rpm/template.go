@@ -675,7 +675,7 @@ func (w *specWrapper) getArtifactCapabilities() string {
 		targetDir := filepath.Join(root, cfg.SubPath)
 		file := cfg.ResolveName(p)
 		targetPath := filepath.Join(targetDir, file)
-		fmt.Fprintf(b, "setcap %s %s\n", capString, targetPath)
+		fmt.Fprintf(b, "setcap '%s' %s\n", capString, targetPath)
 	}
 
 	if artifacts.ConfigFiles != nil {

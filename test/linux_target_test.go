@@ -3936,7 +3936,7 @@ echo "This is a test binary"
 						},
 						{
 							Name:      "cap_net_admin",
-							Effective: false,
+							Effective: true,
 							Permitted: true,
 							Inheritable:  true,
 						},
@@ -3965,7 +3965,7 @@ echo "This is a test binary"
 					{
 						Command: "getcap /usr/bin/ping",
 						Stdout: dalec.CheckOutput{
-							Equals: "/usr/bin/ping cap_net_raw=ep,cap_net_admin=pi\n",
+							Equals: "/usr/bin/ping cap_net_raw=ep,cap_net_admin=eip\n",
 						},
 					},
 				},
