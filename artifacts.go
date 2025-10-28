@@ -182,7 +182,7 @@ func CapabilitiesString(caps []ArtifactCapability) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, ",")
+	return strings.Join(parts, " ")
 }
 
 func (a *ArtifactConfig) ResolveName(path string) string {
