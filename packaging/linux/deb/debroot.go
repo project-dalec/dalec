@@ -747,7 +747,7 @@ func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target s
 			}
 			resolved := cfg.ResolveName(key)
 			p := filepath.Join(root, cfg.SubPath, resolved)
-			fmt.Fprintf(w, "setcap %s \"$DESTDIR%s\"\n", capString, p)
+			fmt.Fprintf(w, "setcap '%s' \"$DESTDIR%s\"\n", capString, p)
 		}
 	}
 
