@@ -9,7 +9,7 @@ This guide shows you how to build packages and containers from source using Dale
 Dalec is a [Docker Buildkit frontend](https://docs.docker.com/build/buildkit/frontend/) that translates a YAML spec into build instructions for creating packages (RPMs, DEBs) and container images. It requires only Docker to run.
 
 :::note
-All Dalec spec files must start with `# syntax=ghcr.io/azure/dalec/frontend:latest` to tell buildkit which frontend to use.
+All Dalec spec files must start with `# syntax=ghcr.io/project-dalec/dalec/frontend:latest` to tell buildkit which frontend to use.
 :::
 
 ## How it Works
@@ -31,7 +31,7 @@ Let's build the `go-md2man` package from source. We need:
 Here's the complete Dalec spec file:
 
 ```yaml
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 name: go-md2man
 version: 2.0.3
 revision: "1"

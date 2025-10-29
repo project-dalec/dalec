@@ -1,4 +1,4 @@
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 
 # TODO: The spec is not currently setting the revision in the runc version
 # This should be fixed before this spec is used to build a real package.
@@ -118,4 +118,3 @@ tests:
             - "libseccomp: "
         stderr:
           empty: true
-
