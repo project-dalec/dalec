@@ -2,6 +2,10 @@ import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+const algoliaAppId = process.env.ALGOLIA_APP_ID ?? 'QB3RJK7I77';
+const algoliaApiKey = process.env.ALGOLIA_API_KEY;
+const algoliaIndexName = process.env.ALGOLIA_INDEX_NAME ?? 'projectdalec';
+
 const config: Config = {
   title: 'Dalec',
   tagline: 'Exterminate!',
@@ -94,11 +98,13 @@ const config: Config = {
       id: 'announcementBar-1', // Increment on change
       content: `⭐️ If you like Dalec, please give it a star on <a target="_blank" rel="noopener noreferrer" href="https://github.com/project-dalec/dalec">GitHub</a>!</a>`,
     },
-    algolia: {
-      appId: 'QB3RJK7I77',
-      apiKey: '2889aa0d888bd13d73eeb460f7b0f479',
-      indexName: 'azureio',
-    },
+    algolia: algoliaApiKey
+      ? {
+          appId: algoliaAppId,
+          apiKey: algoliaApiKey,
+          indexName: algoliaIndexName,
+        }
+      : undefined,
   } satisfies Preset.ThemeConfig,
 };
 

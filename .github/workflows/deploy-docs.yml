@@ -20,6 +20,7 @@ jobs:
   deploy:
     name: Generate docs website to GitHub Pages
     runs-on: ubuntu-latest
+    environment: deploy-docs
     permissions:
       contents: write
     defaults:
@@ -58,6 +59,8 @@ jobs:
 
       - run: yarn install --frozen-lockfile
       - run: yarn build
+        env:
+          ALGOLIA_API_KEY: ${{ secrets.ALGOLIA_API_KEY }}
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository == 'project-dalec/dalec'
