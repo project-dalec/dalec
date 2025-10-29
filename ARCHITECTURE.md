@@ -29,6 +29,20 @@ flowchart TB
   Core --> BKDaemon
 ```
 
+## Build Orchestration Flow
+- **Entry point:** BuildKit clients invoke the Dalec frontend using the registered BuildKit syntax. Requests arrive in `cmd/frontend/main.go`, which wires up the gRPC service via `grpcclient.RunFromEnvironment`.
+- **Routing:** `frontend/` initializes the `BuildMux` router. Targets register handlers that receive the request segments for their distro/platform, providing an HTTP-router-like dispatch pattern.
+- **Execution:** Target handlers under `targets/` and `packaging/` construct LLB graphs that assemble distro packages, derivative container images, optional sysext bundles, and invoke signing/test helpers when configured.
+- **Feedback:** The frontend streams status through BuildKit’s UI channels, persists intermediate artifacts with cache keys derived from the declarative spec, and surfaces test/signing results back to the client.
+
+Detailed sequence:
+1. **BuildKit invokes the frontend** with a build context containing a Dalec spec (the spec is the effective `Dockerfile` for the custom frontend).
+2. **`BuildMux` resolves the target**: exact match, default handler, or prefix routing (e.g. `mariner2/container`). The matched handler sees the shortened target and a `dalec.target` build option that identifies the active spec target stanza.
+3. **Specs load once per build** through `LoadSpec`, which reads the spec from the Docker build context, merges build-arg substitutions (including derived platform arguments), and returns a `*dalec.Spec`.
+4. **`BuildWithPlatform` fans out per platform** requested by the client, invoking a target handler for each architecture. Handler closures return an image reference and optional `dalec.DockerImageSpec` metadata.
+5. **Handlers construct LLB graphs** using helpers from the `dalec` package to fetch sources, apply patches, run build steps, and generate artifacts (packages, root filesystems, signatures).
+6. **Results finalize** via BuildKit: container images are pushed or exported, packages and auxiliary files are returned as BuildKit outputs, and metadata is attached for the client.
+
 ## Runtime Components
 - **BuildKit frontend (`cmd/frontend/main.go`)**  
   Runs inside BuildKit, exposes a gRPC service via `grpcclient.RunFromEnvironment`, and handles build requests. Subcommands handle credential helper and test utilities reused in integration flows.
@@ -44,14 +58,6 @@ flowchart TB
 
 - **Shared libraries (`dalec`, `internal`, `sessionutil`, `pkg`)**  
   The root Go module exposes the spec model, source handling, cache helpers, packaging utilities, and test support. Internal packages hide pluggable subsystems (`internal/plugins`, `internal/testrunner`) from external consumers.
-
-## Build Orchestration Flow
-1. **BuildKit invokes the frontend** with a build context containing a Dalec spec (the spec is the effective `Dockerfile` for the custom frontend).
-2. **`BuildMux` resolves the target**: exact match, default handler, or prefix routing (e.g. `mariner2/container`). The matched handler sees the shortened target and a `dalec.target` build option that identifies the active spec target stanza.
-3. **Specs load once per build** through `LoadSpec`, which reads the spec from the Docker build context, merges build-arg substitutions (including derived platform arguments), and returns a `*dalec.Spec`.
-4. **`BuildWithPlatform` fans out per platform** requested by the client, invoking a target handler for each architecture. Handler closures return an image reference and optional `dalec.DockerImageSpec` metadata.
-5. **Handlers construct LLB graphs** using helpers from the `dalec` package to fetch sources, apply patches, run build steps, and generate artifacts (packages, root filesystems, signatures).
-6. **Results finalize** via BuildKit: container images are pushed or exported, packages and auxiliary files are returned as BuildKit outputs, and metadata is attached for the client.
 
 ## Specification
 - **Spec model (`spec.go`)**  

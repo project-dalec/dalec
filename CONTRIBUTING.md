@@ -24,6 +24,7 @@ Dalec has adopted the CNCF Code of Conduct. Refer to our [Community Code of Cond
 3. Submit a pull request.
 
 When you submit a pull request all commits must include a [DCO signed-off](https://wiki.linuxfoundation.org/dco).
+The CNCF-operated `dco-2` GitHub App enforces this policy on every branch, blocking merges until the status check passes.
 
 ## Issue and pull request management
 
