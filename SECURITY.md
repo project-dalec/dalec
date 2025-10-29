@@ -36,3 +36,14 @@ We believe in [Coordinated Vulnerability Disclosure (CVD)](https://en.wikipedia.
 
 We prefer all communications to be in English.
 
+## Maintainer Authentication
+
+All members of the Project Dalec GitHub organization must authenticate using secure multi-factor mechanisms (for example, FIDO2 hardware security keys such as YubiKey devices). GitHub enforces this policy at the organization level and disallows SMS or email-based second factors for members; accounts without a compliant hardware or app-based (TOTP, WebAuthn) factor cannot access project resources.
+
+## Dependency Monitoring
+
+Automated scanners in GitHub monitor direct and transitive dependencies. Dependabot continuously proposes security updates based on `dependabot.yml`, and each pull request it opens is reviewed and merged by a maintainer once tests pass. The GitHub Dependency Review workflow annotates contributor pull requests with vulnerability findings so reviewers can block risky upgrades before merge. The Snyk GitHub App integration scans release branches and raises alerts in the repository security dashboard, where maintainers triage and remediate advisories.
+
+## Secret Management
+
+The project does not maintain long-lived shared secrets in source control or CI. Workflow automation relies only on the GitHub-provided `GITHUB_TOKEN`, which GitHub scopes automatically: in `ci.yml` it has minimal read/package permissions for pull-request and branch builds, and in release workflows it receives package-publish access only when a signed tag triggers the job. Maintainers monitor the default token permissions and avoid storing additional credentials in repository settings.

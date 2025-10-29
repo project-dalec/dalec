@@ -61,6 +61,10 @@ Maintainer responsibilities and other role descriptions can be found in the [con
 All code changes should go through the Pull Request (PR) process. PRs should only be merged after receiving approval (via GitHub) from at least one other maintainer.
 We do not vote formally on every code change, but we do expect that every code change merged has the same community support as if the change were approved by a formal vote. When a merge occurs without sufficient community support, the change should be reverted until the dispute is resolved through discussion. Any team member who feels that a technical decision cannot be reached can call for a formal vote following the rules outlined below in either the PR or a separate issue.
 
+## Branch Protection
+
+Repository settings in GitHub enforce protection on the `main` branch. Required rules include the `dco-2` status check and at least one approval from a maintainer who is not the author before merge. Force pushes are disabled, ensuring traceable, reviewable history for every release.
+
 ## Meetings
 
 Maintainers will have ad-hoc closed meetings in order to discuss security reports
