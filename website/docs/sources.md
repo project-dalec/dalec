@@ -430,7 +430,7 @@ sources:
                 username: william_james_spode
 ```
 
-In the above example, there are 4 hosts that have git authorization configured. The auth configuration for the host `github.com` (from the `git` source) will automatically be applied to the gomod auth configuration (no need to repeat it). In the `gomod` generator, `gitlab.com` is configured to use the build secret `GITLAB_GIT_AUTH_HEADER`, and `dev.azure.com` will use the build secret `AZURE_GIT_AUTH_TOKEN`. Finally, `anotherhost.com` is configured to use the ssh auth socket with id `default`, and ssh username `william_james_spode`. These build secrets and/or auth sockets must be supplied at build time. See [Git](#Git) for more information on git auth in general.
+In the above example, there are 4 hosts that have git authorization configured. The auth configuration for the host `github.com` (from the `git` source) will automatically be applied to the gomod auth configuration (no need to repeat it). In the `gomod` generator, `gitlab.com` is configured to use the build secret `GITLAB_GIT_AUTH_HEADER`, and `dev.azure.com` will use the build secret `AZURE_GIT_AUTH_TOKEN`. Finally, `anotherhost.com` is configured to use the ssh auth socket with id `default`, and ssh username `william_james_spode`. These build secrets and/or auth sockets must be supplied at build time. See [Git](#git) for more information on git auth in general.
 
 
 ### Cargohome

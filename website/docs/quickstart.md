@@ -80,7 +80,7 @@ Key sections explained:
 
 - **Metadata**: Package name, version, license, and description (see [spec](spec.md))
 - **Sources**: Git qrepository to clone, with `generate` to pre-download Go modules (see [sources](sources.md))
-- **Dependencies**: Build-time dependencies (golang) (see [spec](spec.md#dependencies))
+- **Dependencies**: Build-time dependencies (golang) (see [spec](spec.md#dependencies-section))
 - **Build**: Environment variables and build commands (see [spec](spec.md#build-section))
 - **Artifacts**: Files to include in the package (see [artifacts](artifacts.md))
 - **Image**: Container entrypoint and default command (see [spec](spec.md#image-section))
