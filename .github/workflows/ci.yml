@@ -24,6 +24,7 @@ on:
       - '.github/workflows/worker-images.yml'
       - '.github/workflows/dependabot.yml'
       - '.github/workflows/release.yml'
+      - '.github/workflows/deploy-docs.yml'
 
   push:
     branches:
