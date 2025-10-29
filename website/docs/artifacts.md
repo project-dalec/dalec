@@ -270,7 +270,7 @@ ownership of the symlink itself, not the target file.
 
 User and group SHOULD be specified as names and not as UID/GID numbers.
 The user/group must exist on the target system OR be created as part of the
-package installation via the [users](#Users) and/or [groups](#Groups) section(s).
+package installation via the [users](#users) and/or [groups](#groups) section(s).
 
 Example:
 
