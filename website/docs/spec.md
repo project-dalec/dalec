@@ -7,7 +7,7 @@ Dalec YAML specification is a declarative format for building system packages an
 This section provides a high level overview of the Dalec YAML specification. For more detailed information, please see the applicable sections.
 
 :::note
-All Dalec spec YAMLs must start with `# syntax=ghcr.io/azure/dalec/frontend:latest`.
+All Dalec spec YAMLs must start with `# syntax=ghcr.io/project-dalec/dalec/frontend:latest`.
 :::
 
 Dalec spec YAMLs are composed of the following sections:
@@ -331,7 +331,7 @@ For more information, please see [Testing](testing.md).
 ## Changelog section
 
 Changelog section is used to define the changelog for the spec. This changelog can be used to define the changes made to the package which may include patches,
-updating source versions, triggering rebuilds to update dependencies, or basically any change to the spec that will trigger a new revision of the package. 
+updating source versions, triggering rebuilds to update dependencies, or basically any change to the spec that will trigger a new revision of the package.
 
 The channgelog is stored in the package metadata, where supported, and as such can be viewed by the package manager tooling.
 

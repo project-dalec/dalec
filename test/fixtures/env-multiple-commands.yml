@@ -1,4 +1,4 @@
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 name: dalec-test-fixture-env-multi-command-step
 description: A test fixture for checking http sources
 website: https://www.github.com/project-dalec/dalec
@@ -19,7 +19,7 @@ build:
         echo "${FOO}_0" > foo0.txt
         echo "${FOO}_1" > foo1.txt
         echo "$BAR" > bar.txt
-      env: 
+      env:
         FOO: foo
         BAR: bar
 artifacts:
