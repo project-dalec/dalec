@@ -5,11 +5,24 @@ import type * as Preset from '@docusaurus/preset-classic';
 const algoliaAppId = process.env.ALGOLIA_APP_ID ?? 'QB3RJK7I77';
 const algoliaApiKey = process.env.ALGOLIA_API_KEY;
 const algoliaIndexName = process.env.ALGOLIA_INDEX_NAME ?? 'projectdalec';
+const algoliaSiteVerification = process.env.ALGOLIA_SITE_VERIFICATION ?? '1C1CBEF56CCCC1B2';
 
 const config: Config = {
   title: 'Dalec',
   tagline: 'Exterminate!',
   favicon: 'img/favicon.ico',
+
+  headTags: algoliaSiteVerification
+    ? [
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'algolia-site-verification',
+        content: algoliaSiteVerification,
+      }
+    },
+  ]
+  : undefined,
 
   // Set the production url of your site here
   url: 'https://project-dalec.github.io',
