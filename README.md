@@ -22,24 +22,13 @@ Our goal is to provide a secure way to build packages and containers, with a foc
 
 ## Contributing
 
-This project welcomes contributions and suggestions. Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+This project welcomes contributions and suggestions. Dalec uses the [Developer Certificate of Origin (DCO)](https://wiki.linuxfoundation.org/dco) to confirm authorship and licensing intent.
+Each commit must include a Signed-off-by line; run `git commit -s` to add it automatically.
+The CNCF-operated `dco-2` GitHub App enforces this requirement on every pull request.
+See [CONTRIBUTING.md](https://github.com/project-dalec/dalec/blob/main/CONTRIBUTING.md#contributing-a-patch) for additional guidance.
 
 Dalec has adopted the CNCF Code of Conduct. Refer to our [Community Code of Conduct](https://github.com/project-dalec/dalec/blob/main/CODE_OF_CONDUCT.md) for details.
 For more information, see the [CNCF Code of Conduct FAQ](https://github.com/cncf/foundation/blob/main/code-of-conduct-faq.md) or contact conduct@cncf.io with any additional questions or comments.
-
-## Trademarks
-
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
-trademarks or logos is subject to and must follow
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
 
 ### Badges
 

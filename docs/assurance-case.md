@@ -28,8 +28,8 @@ The remainder of this document decomposes G0 into supporting strategies, claims,
   *Evidence:* [GOVERNANCE.md#security-response-team](../GOVERNANCE.md#security-response-team).
 
 ### Strategy S2 – Secure Development Lifecycle Controls Prevent Unauthorized Changes
-- **Claim C2.1:** Legal and authorship attestation is required before code is accepted.  
-  *Evidence:* [README.md#contributing](../README.md#contributing) (CLA requirement), [CONTRIBUTING.md#contributing-a-patch](../CONTRIBUTING.md#contributing-a-patch) (DCO sign-off, CNCF `dco-2` status check).
+- **Claim C2.1:** Authorship attestation is required before code is accepted via DCO sign-off.  
+  *Evidence:* [README.md#contributing](../README.md#contributing) (DCO requirement), [CONTRIBUTING.md#contributing-a-patch](../CONTRIBUTING.md#contributing-a-patch) (CNCF `dco-2` status check).
 - **Claim C2.2:** Branch protection rules enforce at least one independent maintainer approval and block merges without passing required checks.  
   *Evidence:* [GOVERNANCE.md#branch-protection](../GOVERNANCE.md#branch-protection), [GOVERNANCE.md#code-changes](../GOVERNANCE.md#code-changes).
 - **Claim C2.3:** All organization members authenticate with secure multi-factor credentials (hardware FIDO2 keys or app-based TOTP/WebAuthn; SMS and email factors are not permitted).  
