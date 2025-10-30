@@ -5,13 +5,13 @@ on:
     branches:
       - main
     paths:
-      - '.github/workflows/deploy-docs.yaml'
+      - '.github/workflows/deploy-docs.yml'
       - 'website/**'
   pull_request:
     branches:
       - main
     paths:
-      - '.github/workflows/deploy-docs.yaml'
+      - '.github/workflows/deploy-docs.yml'
       - 'website/**'
 
 permissions:
@@ -62,6 +62,9 @@ jobs:
       - run: yarn build
         env:
           ALGOLIA_API_KEY: ${{ secrets.ALGOLIA_API_KEY }}
+          ALGOLIA_APP_ID: ${{ vars.ALGOLIA_APP_ID }}
+          ALGOLIA_INDEX_NAME: ${{ vars.ALGOLIA_INDEX_NAME }}
+          ALGOLIA_SITE_VERIFICATION: ${{ vars.ALGOLIA_SITE_VERIFICATION }}
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository == 'project-dalec/dalec'
