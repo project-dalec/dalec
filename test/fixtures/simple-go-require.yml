@@ -1,0 +1,76 @@
+#syntax=local/dalec/frontend:test
+args:
+  REVISION: 9
+  VERSION: 5.4.3
+  COMMIT: d4248b1213768c184f5ebbb8ee1a1422817478e4
+
+name: go-md2man
+version: ${VERSION}
+revision: ${REVISION}
+packager: Dalec Example
+vendor: Dalec Example
+license: MIT
+description: A tool to convert markdown into man pages (roff).
+website: https://github.com/cpuguy83/go-md2man
+
+sources:
+  src:
+    generate:
+      - gomod:
+          edits:
+            require:
+              - github.com/russross/blackfriday/v2:github.com/russross/blackfriday/v2@v2.0.1
+    git:
+      url: https://github.com/cpuguy83/go-md2man.git
+      commit: v2.0.0
+
+  kustomize:
+    generate:
+      - gomod:
+          paths:
+            - kustomize
+            - kyaml
+            - api
+            - cmd/config
+          edits:
+            require:
+              - github.com/spf13/cobra:github.com/spf13/cobra@v1.10.1
+    git:
+      url: https://github.com/kubernetes-sigs/kustomize.git
+      commit: ${COMMIT}
+
+dependencies:
+  build:
+    golang:
+
+build:
+  env:
+    CGO_ENABLED: "0"
+  steps:
+    - command: |
+        cd src
+        go build -o go-md2man .
+    - command: |
+        set -e
+
+        cd kustomize/kustomize
+
+        LDFLAGS="-X \"sigs.k8s.io/kustomize/api/provenance.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ')\" \
+          -X \"sigs.k8s.io/kustomize/api/provenance.version=kustomize/v$VERSION\""
+
+        mkdir -p ./dist
+        go build -ldflags "$LDFLAGS" -v -o ./dist/kustomize .
+
+artifacts:
+  binaries:
+    src/go-md2man:
+
+image:
+  entrypoint: go-md2man
+  cmd: --help
+
+tests:
+  - name: Check bin
+    files:
+      /usr/bin/go-md2man:
+        permissions: 0755

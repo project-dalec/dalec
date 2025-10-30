@@ -59,13 +59,13 @@ func (s *Spec) gomodPatchExtensionEntries() ([]gomodPatchExtensionEntry, error) 
 		return nil, nil
 	}
 
-	dt, ok := s.extensions[gomodPatchExtensionKey]
-	if !ok || len(dt) == 0 {
+	node, ok := s.extensions[gomodPatchExtensionKey]
+	if !ok || node == nil {
 		return nil, nil
 	}
 
 	var entries []gomodPatchExtensionEntry
-	if err := yaml.Unmarshal(dt, &entries); err != nil {
+	if err := yaml.NodeToValue(node, &entries); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal gomod patch extension")
 	}
 

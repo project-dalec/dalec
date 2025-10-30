@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/dalec"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/project-dalec/dalec"
 )
 
 func TestCreatePatchScriptIncludesGomodPatches(t *testing.T) {
