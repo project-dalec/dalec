@@ -2316,6 +2316,11 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		ctx := startTestSpan(baseCtx, t)
 		testLinuxSymlinkArtifacts(ctx, t, testConfig)
 	})
+	t.Run("test gomod edits", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testGomodEdits(ctx, t, testConfig)
+	})
 	t.Run("test image configs", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
@@ -3866,6 +3871,242 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			// as it was not part of the pre-built package.
 			assert.Assert(t, contents == nil, "marker file should not be present in the container")
 			assert.ErrorContains(t, err, "open /etc/marker.txt: no such file or directory")
+		})
+	})
+}
+
+func testGomodEdits(_ context.Context, t *testing.T, cfg testLinuxConfig) {
+	t.Run("require directive", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-require",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Test gomod require directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Require: []dalec.GomodRequire{
+										// Upgrade blackfriday to a specific version
+										{Module: "github.com/russross/blackfriday/v2", Version: "github.com/russross/blackfriday/v2@v2.1.0"},
+									},
+								},
+							},
+						},
+					},
+					Git: &dalec.SourceGit{
+						URL:    "https://github.com/cpuguy83/go-md2man.git",
+						Commit: "v2.0.0",
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					"golang": {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{
+						Command: "cd src && go build -o /tmp/go-md2man .",
+					},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"/tmp/go-md2man": {},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("replace directive", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-replace",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Test gomod replace directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										// Replace with a specific version
+										{Old: "github.com/russross/blackfriday/v2", New: "github.com/russross/blackfriday/v2@v2.1.0"},
+									},
+								},
+							},
+						},
+					},
+					Git: &dalec.SourceGit{
+						URL:    "https://github.com/cpuguy83/go-md2man.git",
+						Commit: "v2.0.0",
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					"golang": {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{
+						Command: "cd src && go build -o /tmp/go-md2man .",
+					},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"/tmp/go-md2man": {},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("combined require and replace", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-combined",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Test gomod combined require and replace directives",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Require: []dalec.GomodRequire{
+										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.4"},
+									},
+									Replace: []dalec.GomodReplace{
+										{Old: "github.com/russross/blackfriday/v2", New: "github.com/russross/blackfriday/v2@v2.1.0"},
+									},
+								},
+							},
+						},
+					},
+					Git: &dalec.SourceGit{
+						URL:    "https://github.com/cpuguy83/go-md2man.git",
+						Commit: "v2.0.0",
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					"golang": {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{
+						Command: "cd src && go build -o /tmp/go-md2man .",
+					},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"/tmp/go-md2man": {},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("multi-module with edits", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-multi-module",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "Apache-2.0",
+			Website:     "https://github.com/kubernetes-sigs/kustomize",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Test gomod edits with multi-module repo",
+			Sources: map[string]dalec.Source{
+				"kustomize": {
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Paths: []string{"kustomize", "kyaml", "api", "cmd/config"},
+								Edits: &dalec.GomodEdits{
+									Require: []dalec.GomodRequire{
+										{Module: "github.com/spf13/cobra", Version: "github.com/spf13/cobra@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+					Git: &dalec.SourceGit{
+						URL:    "https://github.com/kubernetes-sigs/kustomize.git",
+						Commit: "kustomize/v5.4.3",
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					"golang": {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{
+						Command: "cd kustomize/kustomize && go build -o /tmp/kustomize .",
+					},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"/tmp/kustomize": {},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
+			solveT(ctx, t, client, req)
 		})
 	})
 }
