@@ -1,6 +1,6 @@
 version: v1.25.0
 ignore:
-  go-.*:
-    - reason: "Go runtime CVEs not applicable; go.mod version sets the minimum version, not the version in use"
-      expires: 2099-01-01T00:00:00Z
-
+  go@1.24.0:
+    - '*':
+        reason: "Go runtime CVEs not applicable; go.mod version sets the minimum version, not the version in use"
+        expires: 2099-01-01T00:00:00Z
