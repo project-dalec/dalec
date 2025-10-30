@@ -43,7 +43,7 @@ type Source struct {
 	// Path is the path to the source after fetching it based on the identifier.
 	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 
-	// Includes is a list of paths underneath `Path` to include, everything else is execluded
+	// Includes is a list of paths underneath `Path` to include, everything else is excluded
 	// If empty, everything is included (minus the excludes)
 	Includes []string `yaml:"includes,omitempty" json:"includes,omitempty"`
 	// Excludes is a list of paths underneath `Path` to exclude, everything else is included

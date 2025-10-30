@@ -215,6 +215,8 @@ type GeneratorGomod struct {
 	// Edits contains go.mod manipulation directives (replace, require) that are applied
 	// before downloading module dependencies.
 	Edits *GomodEdits `yaml:"edits,omitempty" json:"edits,omitempty"`
+
+	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
 // GomodEdits groups the go.mod manipulation directives that can be applied
@@ -226,8 +228,6 @@ type GomodEdits struct {
 	// Require applies go.mod require directives before downloading module dependencies.
 	// Each entry can be either a string "module:version" or a struct with Module and Version fields.
 	Require []GomodRequire `yaml:"require,omitempty" json:"require,omitempty"`
-
-	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
 // GetReplace returns the replace directives, handling nil Edits.
