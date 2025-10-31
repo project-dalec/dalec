@@ -16,11 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/cli/cli/config"
+	"github.com/cpuguy83/dockercfg"
 	"github.com/moby/buildkit/client"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/session"
-	"github.com/moby/buildkit/session/auth/authprovider"
+	"github.com/moby/buildkit/session/auth"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
 	"github.com/moby/buildkit/session/sshforward/sshprovider"
 	"github.com/moby/buildkit/solver/pb"
@@ -28,6 +27,9 @@ import (
 	"github.com/opencontainers/go-digest"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"gotest.tools/v3/assert"
 )
@@ -373,7 +375,7 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	withProjectRoot(t, &so)
 	withResolveLocal(&so)
 	withSocketProxies(t, cfg.SocketProxies)(&so)
-	withDockerAuth(t, &so)
+	withDockerAuth(&so)
 
 	err = withSourcePolicy(&so)
 	assert.NilError(t, err)
@@ -526,31 +528,45 @@ func withSocketProxies(t *testing.T, proxies []socketprovider.ProxyConfig) func(
 	}
 }
 
-type bufErr struct {
-	fmt.Stringer
+func withDockerAuth(so *client.SolveOpt) {
+	so.Session = append(so.Session, &authProvider{})
 }
 
-func (b *bufErr) Error() string {
-	return b.String()
+type authProvider struct{}
+
+func (ap *authProvider) FetchToken(ctx context.Context, req *auth.FetchTokenRequest) (rr *auth.FetchTokenResponse, err error) {
+	return nil, status.Error(codes.Unimplemented, "token fetch not supported")
 }
 
-func getRegistryAuth() (session.Attachable, error) {
-	errBuf := bytes.NewBuffer(nil)
-	cfg := authprovider.DockerAuthProviderConfig{
-		ConfigFile: config.LoadDefaultConfigFile(errBuf),
+func (ap *authProvider) Credentials(ctx context.Context, req *auth.CredentialsRequest) (*auth.CredentialsResponse, error) {
+	host := strings.TrimSpace(req.GetHost())
+	if host == "" {
+		return &auth.CredentialsResponse{}, nil
 	}
 
-	auth := authprovider.NewDockerAuthProvider(cfg)
-	if errBuf.Len() > 0 {
-		return nil, &bufErr{errBuf}
+	resolved := dockercfg.ResolveRegistryHost(host)
+	username, secret, err := dockercfg.GetRegistryCredentials(resolved)
+	if err != nil {
+		if errors.Is(err, dockercfg.ErrCredentialsMissingServerURL) {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		return nil, status.Errorf(codes.Internal, "get credentials for %s: %v", resolved, err)
 	}
-	return auth, nil
+
+	return &auth.CredentialsResponse{
+		Username: username,
+		Secret:   secret,
+	}, nil
 }
 
-var registryAuthOnce = sync.OnceValues(getRegistryAuth)
+func (ap *authProvider) GetTokenAuthority(ctx context.Context, req *auth.GetTokenAuthorityRequest) (*auth.GetTokenAuthorityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "token authority not supported")
+}
 
-func withDockerAuth(t *testing.T, so *client.SolveOpt) {
-	auth, err := registryAuthOnce()
-	assert.NilError(t, err)
-	so.Session = append(so.Session, auth)
+func (ap *authProvider) VerifyTokenAuthority(ctx context.Context, req *auth.VerifyTokenAuthorityRequest) (*auth.VerifyTokenAuthorityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "token authority not supported")
+}
+
+func (ap *authProvider) Register(server *grpc.Server) {
+	auth.RegisterAuthServer(server, ap)
 }
