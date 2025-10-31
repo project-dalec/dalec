@@ -35,6 +35,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Update docker
         run: sudo apt update && sudo apt install -y docker-ce
       - name: Setup containerd snapshotter
