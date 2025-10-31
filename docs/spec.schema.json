@@ -900,6 +900,10 @@
 					],
 					"description": "Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host."
 				},
+				"edits": {
+					"$ref": "#/$defs/GomodEdits",
+					"description": "Edits contains go.mod manipulation directives (replace, require) that are applied\nbefore downloading module dependencies."
+				},
 				"paths": {
 					"items": {
 						"type": [
@@ -1048,6 +1052,36 @@
 			],
 			"description": "GoBuildCache is a cache for Go build artifacts."
 		},
+		"GomodEdits": {
+			"properties": {
+				"replace": {
+					"items": {
+						"$ref": "#/$defs/GomodReplace"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Replace applies go.mod replace directives before downloading module dependencies.\nEach entry can be either a string \"old:new\" or a struct with Old and New fields."
+				},
+				"require": {
+					"items": {
+						"$ref": "#/$defs/GomodRequire"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Require applies go.mod require directives before downloading module dependencies.\nEach entry can be either a string \"module:version\" or a struct with Module and Version fields."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GomodEdits groups the go.mod manipulation directives that can be applied before downloading module dependencies."
+		},
 		"GomodGitAuth": {
 			"properties": {
 				"header": {
@@ -1101,6 +1135,62 @@
 				"object",
 				"null"
 			]
+		},
+		"GomodReplace": {
+			"required": [
+				"old",
+				"new"
+			],
+			"properties": {
+				"new": {
+					"type": [
+						"string"
+					],
+					"description": "New is the replacement module path or local directory"
+				},
+				"old": {
+					"type": [
+						"string"
+					],
+					"description": "Old is the module path to replace (can include @version)"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GomodReplace represents a go.mod replace directive."
+		},
+		"GomodRequire": {
+			"required": [
+				"module",
+				"version"
+			],
+			"properties": {
+				"module": {
+					"type": [
+						"string"
+					],
+					"description": "Module is the module path that appears in go.mod"
+				},
+				"version": {
+					"type": [
+						"string"
+					],
+					"description": "Version is the target module and version (e.g., \"module@version\")"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GomodRequire represents a go.mod require directive."
 		},
 		"ImageConfig": {
 			"properties": {
@@ -1532,7 +1622,7 @@
 					"type": [
 						"array"
 					],
-					"description": "Includes is a list of paths underneath `Path` to include, everything else is execluded\nIf empty, everything is included (minus the excludes)"
+					"description": "Includes is a list of paths underneath `Path` to include, everything else is excluded\nIf empty, everything is included (minus the excludes)"
 				},
 				"inline": {
 					"$ref": "#/$defs/SourceInline"

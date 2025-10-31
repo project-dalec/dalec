@@ -55,14 +55,29 @@ func validateSpec(spec *dalec.Spec) error {
 // As an example, if patch adds a new file with mode +x, `diff` will not see the permissions for that new file.
 func createPatches(spec *dalec.Spec, sources map[string]llb.State, worker llb.State, dr llb.State, opts ...llb.ConstraintsOpt) llb.State {
 	patches := llb.Scratch()
-	if len(spec.Patches) > 0 {
+	if len(spec.Patches) > 0 || len(spec.GomodPatches()) > 0 {
+		patchCommand := `set -e
+git init .
+git add .
+git commit -m 'Initial commit'
+"${DEBIAN_DIR}/dalec/patch.sh"
+git add .
+if git diff --cached --quiet; then
+  rm -f /work/out/dalec-changes.patch
+  : > /work/out/series
+else
+  git commit -m 'With patch'
+  git diff HEAD~1 >> /work/out/dalec-changes.patch
+  echo 'dalec-changes.patch' > /work/out/series
+fi`
+
 		patchesMountInput := llb.Scratch().
 			File(llb.Mkfile("dalec-changes.patch", 0o600, patchHeader))
 
 		patches = worker.
 			Run(dalec.ShArgs("set -e; git config --global user.email phony; git config --global user.name Dalec")).
 			Run(
-				dalec.ShArgs("set -e; git init .; git add .; git commit -m 'Initial commit'; \"${DEBIAN_DIR}/dalec/patch.sh\"; git add .; git commit -m 'With patch'; git diff HEAD~1 >> /work/out/dalec-changes.patch; echo 'dalec-changes.patch' > /work/out/series"),
+				dalec.ShArgs(patchCommand),
 				llb.Dir("/work/sources"),
 				mountSources(sources, "/work/sources", nil),
 				// DEBIAN_DIR is used by the patch script to find the debian directory where we actually have the patches
@@ -89,6 +104,10 @@ func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State,
 	if err := validateSpec(spec); err != nil {
 		return llb.Scratch(), err
 	}
+
+	if err := spec.EnsureGomodPatches(sOpt, worker, opts...); err != nil {
+		return llb.Scratch(), errors.Wrap(err, "error preparing gomod patches")
+	}
 	dr, err := Debroot(ctx, sOpt, spec, worker, llb.Scratch(), targetKey, "", distroVersionID, cfg, opts...)
 	if err != nil {
 		return llb.Scratch(), err
@@ -97,6 +116,14 @@ func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State,
 	sources, err := dalec.Sources(spec, sOpt)
 	if err != nil {
 		return llb.Scratch(), err
+	}
+
+	gomodPatchArchive, err := spec.GomodPatchArchive(worker, opts...)
+	if err != nil {
+		return llb.Scratch(), errors.Wrap(err, "error packaging gomod patches")
+	}
+	if gomodPatchArchive != nil {
+		sources[dalec.GomodPatchArchiveFilename] = *gomodPatchArchive
 	}
 
 	gomodSt, err := spec.GomodDeps(sOpt, worker, opts...)

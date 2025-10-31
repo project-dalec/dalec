@@ -317,6 +317,13 @@ func (w *specWrapper) Sources() (fmt.Stringer, error) {
 
 	sourceIdx := len(keys)
 
+	gomodPatches := w.Spec.GomodPatches()
+	if len(gomodPatches) > 0 {
+		fmt.Fprintf(b, "# Auto-generated go.mod patch archive\n")
+		fmt.Fprintf(b, "Source%d: %s\n", sourceIdx, dalec.GomodPatchArchiveFilename)
+		sourceIdx++
+	}
+
 	if w.Spec.HasGomods() {
 		fmt.Fprintf(b, "Source%d: %s.tar.gz\n", sourceIdx, gomodsName)
 		sourceIdx += 1
@@ -360,6 +367,8 @@ func (w *specWrapper) PrepareSources() (fmt.Stringer, error) {
 		}
 	}
 
+	gomodPatches := w.Spec.GomodPatches()
+
 	// Sort keys for consistent output
 	keys := dalec.SortMapKeys(w.Spec.Sources)
 
@@ -399,6 +408,22 @@ func (w *specWrapper) PrepareSources() (fmt.Stringer, error) {
 	for _, key := range patchKeys {
 		for _, patch := range w.Spec.Patches[key] {
 			fmt.Fprintf(b, "patch -d %q -p%d -s --input \"%%{_builddir}/%s\"\n", key, *patch.Strip, filepath.Join(patch.Source, patch.Path))
+		}
+	}
+
+	if len(gomodPatches) > 0 {
+		fmt.Fprintf(b, "mkdir -p \"%%{_builddir}/%s\"\n", dalec.GomodPatchArchiveName)
+		fmt.Fprintf(b, "tar -C \"%%{_builddir}/%s\" -xzf \"%%{_sourcedir}/%s\"\n", dalec.GomodPatchArchiveName, dalec.GomodPatchArchiveFilename)
+	}
+
+	gomodPatchSources := w.Spec.GomodPatchSources()
+	for _, srcName := range gomodPatchSources {
+		patches := w.Spec.GomodPatchesForSource(srcName)
+		for _, patch := range patches {
+			patchPath := fmt.Sprintf("%%{_builddir}/%s", patch.ArchivePath())
+			// RPM uses --input flag instead of stdin redirect
+			cmd := dalec.FormatGomodPatchCommand(patchPath, srcName, patch.Strip, &dalec.GomodPatchCommandOptions{UseInputFlag: true})
+			fmt.Fprintln(b, cmd)
 		}
 	}
 

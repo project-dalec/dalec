@@ -471,7 +471,7 @@ func main() {
 
 const gomodFixtureMod = `module testgomodsource
 
-go 1.20
+go 1.18
 
 require github.com/cpuguy83/tar2go v0.3.1
 `
@@ -498,7 +498,7 @@ func main() {
 
 const alternativeGomodFixtureMod = `module example.com/module2
 
-go 1.20
+go 1.18
 
 require github.com/stretchr/testify v1.7.0
 
@@ -701,6 +701,40 @@ index ea874f5..ba38f84 100644
 		})
 	})
 
+	t.Run("require directive", func(t *testing.T) {
+		t.Parallel()
+		testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+			spec := baseSpec()
+
+			src := spec.Sources[srcName]
+			src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+				Require: []dalec.GomodRequire{
+					{Module: "github.com/cpuguy83/tar2go", Version: "github.com/cpuguy83/tar2go@v0.3.0"},
+				},
+			}
+			spec.Sources[srcName] = src
+
+			checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+		})
+	})
+
+	t.Run("replace directive", func(t *testing.T) {
+		t.Parallel()
+		testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+			spec := baseSpec()
+
+			src := spec.Sources[srcName]
+			src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+				Replace: []dalec.GomodReplace{
+					{Old: "github.com/cpuguy83/tar2go", New: "github.com/cpuguy83/tar2go@v0.3.0"},
+				},
+			}
+			spec.Sources[srcName] = src
+
+			checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+		})
+	})
+
 	t.Run("multi-module", func(t *testing.T) {
 		t.Parallel()
 		/*
@@ -769,6 +803,178 @@ index ea874f5..ba38f84 100644
 					t.Fatal("expected directory")
 				}
 			}
+		})
+	})
+
+	t.Run("edits section", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("multiple require directives", func(t *testing.T) {
+			t.Parallel()
+			testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+				spec := baseSpec()
+
+				src := spec.Sources[srcName]
+				src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+					Require: []dalec.GomodRequire{
+						{Module: "github.com/cpuguy83/tar2go", Version: "github.com/cpuguy83/tar2go@v0.3.0"},
+						{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.4"},
+					},
+				}
+				spec.Sources[srcName] = src
+
+				checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+				checkModule(ctx, gwc, "github.com/stretchr/testify@v1.8.4", spec)
+			})
+		})
+
+		t.Run("multiple replace directives", func(t *testing.T) {
+			t.Parallel()
+			testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+				spec := baseSpec()
+
+				src := spec.Sources[srcName]
+				src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+					Replace: []dalec.GomodReplace{
+						{Old: "github.com/cpuguy83/tar2go", New: "github.com/cpuguy83/tar2go@v0.3.0"},
+					},
+				}
+				spec.Sources[srcName] = src
+				checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+			})
+		})
+
+		t.Run("combined require and replace", func(t *testing.T) {
+			t.Parallel()
+			testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+				spec := baseSpec()
+
+				src := spec.Sources[srcName]
+				src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+					Require: []dalec.GomodRequire{
+						{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.4"},
+					},
+					Replace: []dalec.GomodReplace{
+						{Old: "github.com/cpuguy83/tar2go", New: "github.com/cpuguy83/tar2go@v0.3.0"},
+					},
+				}
+				spec.Sources[srcName] = src
+
+				// Verify both edits are applied
+				checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+				checkModule(ctx, gwc, "github.com/stretchr/testify@v1.8.4", spec)
+			})
+		})
+
+		t.Run("multi-module with edits", func(t *testing.T) {
+			t.Parallel()
+
+			contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644)).
+				File(llb.Mkdir("/dir/module1", 0644)).
+				File(llb.Mkfile("/dir/module1/go.mod", 0644, []byte(alternativeGomodFixtureMod))).
+				File(llb.Mkfile("/dir/module1/go.sum", 0644, []byte(alternativeGomodFixtureSum))).
+				File(llb.Mkfile("/dir/module1/main.go", 0644, []byte(alternativeGomodFixtureMain))).
+				File(llb.Mkdir("/dir/module2", 0644)).
+				File(llb.Mkfile("/dir/module2/go.mod", 0644, []byte(gomodFixtureMod))).
+				File(llb.Mkfile("/dir/module2/go.sum", 0644, []byte(gomodFixtureSum))).
+				File(llb.Mkfile("/dir/module2/main.go", 0644, []byte(gomodFixtureMain)))
+
+			const contextName = "multi-module-edits"
+			spec := &dalec.Spec{
+				Name: "test-dalec-multi-module-edits",
+				Sources: map[string]dalec.Source{
+					"src": {
+						Context: &dalec.SourceContext{Name: contextName},
+						Generate: []*dalec.SourceGenerator{
+							{
+								Gomod: &dalec.GeneratorGomod{
+									Paths: []string{"./dir/module1", "./dir/module2"},
+									Edits: &dalec.GomodEdits{
+										Require: []dalec.GomodRequire{
+											{Module: "github.com/cpuguy83/tar2go", Version: "github.com/cpuguy83/tar2go@v0.3.0"},
+										},
+										Replace: []dalec.GomodReplace{
+											{Old: "github.com/stretchr/testify", New: "github.com/stretchr/testify@v1.8.4"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				Dependencies: &dalec.PackageDependencies{
+					Build: map[string]dalec.PackageConstraints{
+						"golang": {
+							Version: []string{},
+						},
+					},
+				},
+			}
+
+			runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+				req := newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt), withBuildTarget("debug/gomods"))
+				res := solveT(ctx, t, gwc, req)
+				ref, err := res.SingleRef()
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				// Verify the downgraded dependency
+				deps := []string{"github.com/cpuguy83/tar2go@v0.3.0", "github.com/stretchr/testify@v1.8.4"}
+				for _, dep := range deps {
+					stat, err := ref.StatFile(ctx, gwclient.StatRequest{
+						Path: dep,
+					})
+
+					if err != nil {
+						t.Fatalf("expected to find %s: %v", dep, err)
+					}
+
+					if !fs.FileMode(stat.Mode).IsDir() {
+						t.Fatalf("expected %s to be a directory", dep)
+					}
+				}
+			})
+		})
+
+		t.Run("require string format parsing", func(t *testing.T) {
+			t.Parallel()
+			testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+				spec := baseSpec()
+
+				// Test that we can use the YAML shorthand "module:version" format
+				// This is handled by the UnmarshalYAML in GomodRequire
+				src := spec.Sources[srcName]
+				src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+					Require: []dalec.GomodRequire{
+						// This will be parsed from "github.com/cpuguy83/tar2go:github.com/cpuguy83/tar2go@v0.3.0"
+						{Module: "github.com/cpuguy83/tar2go", Version: "github.com/cpuguy83/tar2go@v0.3.0"},
+					},
+				}
+				spec.Sources[srcName] = src
+
+				checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+			})
+		})
+
+		t.Run("replace string format parsing", func(t *testing.T) {
+			t.Parallel()
+			testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+				spec := baseSpec()
+
+				// Test that we can use the YAML shorthand "old:new" format
+				// This is handled by the UnmarshalYAML in GomodReplace
+				src := spec.Sources[srcName]
+				src.Generate[0].Gomod.Edits = &dalec.GomodEdits{
+					Replace: []dalec.GomodReplace{
+						// This will be parsed from "github.com/cpuguy83/tar2go:github.com/cpuguy83/tar2go@v0.3.0"
+						{Old: "github.com/cpuguy83/tar2go", New: "github.com/cpuguy83/tar2go@v0.3.0"},
+					},
+				}
+				spec.Sources[srcName] = src
+
+				checkModule(ctx, gwc, "github.com/cpuguy83/tar2go@v0.3.0", spec)
+			})
 		})
 	})
 }
@@ -1190,6 +1396,60 @@ func TestPatchSources_ConflictingPatches(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error, got none")
 		}
+	})
+}
+
+func TestPatchSources_GomodPatchApplied(t *testing.T) {
+	t.Parallel()
+
+	contextSt := llb.Scratch()
+
+	const (
+		sourceName = "src"
+		patchName  = "gomod.patch"
+	)
+
+	goModOriginal := "module example.com/test\n\ngo 1.21\n\nrequire github.com/russross/blackfriday/v2 v2.0.1\n"
+	goModPatched := "module example.com/test\n\ngo 1.21\n\nrequire github.com/russross/blackfriday/v2 v2.1.0\n"
+	patchContent := "diff --git a/go.mod b/go.mod\nindex 1111111..2222222 100644\n--- a/go.mod\n+++ b/go.mod\n@@ -3,4 +3,4 @@ module example.com/test\n go 1.21\n \n-require github.com/russross/blackfriday/v2 v2.0.1\n+require github.com/russross/blackfriday/v2 v2.1.0\n"
+
+	testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+		spec := &dalec.Spec{
+			Name:        "test-gomod-patch",
+			License:     "MIT",
+			Version:     "1.0.0",
+			Revision:    "1",
+			Description: "This is a test package",
+			Website:     "https://example.com",
+			Sources: map[string]dalec.Source{
+				sourceName: {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: goModOriginal},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		spec.AddGomodPatchForTesting(&dalec.GomodPatch{
+			SourceName: sourceName,
+			FileName:   patchName,
+			Strip:      1,
+			State:      llb.Scratch().File(llb.Mkfile(patchName, 0o644, []byte(patchContent))),
+			Contents:   []byte(patchContent),
+		})
+
+		req := newSolveRequest(
+			withBuildTarget("debug/patched-sources"),
+			withBuildContext(ctx, t, "context", contextSt),
+			withSpec(ctx, t, spec),
+		)
+
+		res := solveT(ctx, t, gwc, req)
+		checkFile(ctx, t, filepath.Join(sourceName, "go.mod"), res, []byte(goModPatched))
 	})
 }
 

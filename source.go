@@ -43,7 +43,7 @@ type Source struct {
 	// Path is the path to the source after fetching it based on the identifier.
 	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 
-	// Includes is a list of paths underneath `Path` to include, everything else is execluded
+	// Includes is a list of paths underneath `Path` to include, everything else is excluded
 	// If empty, everything is included (minus the excludes)
 	Includes []string `yaml:"includes,omitempty" json:"includes,omitempty"`
 	// Excludes is a list of paths underneath `Path` to exclude, everything else is included
@@ -224,6 +224,17 @@ func patchSource(worker, sourceState llb.State, sourceToState map[string]llb.Sta
 	return sourceState
 }
 
+func patchSourceWithGomod(worker llb.State, sourceState llb.State, sourceName string, patch *GomodPatch, opts ...llb.ConstraintsOpt) llb.State {
+	script := fmt.Sprintf("if [ -s /patch ]; then patch -p%d -s < /patch; fi", patch.Strip)
+
+	return worker.Run(
+		llb.AddMount("/patch", patch.State, llb.Readonly, llb.SourcePath(patch.FileName)),
+		llb.Dir(filepath.Join("src", sourceName)),
+		ShArgs(script),
+		WithConstraints(opts...),
+	).AddMount("/src", sourceState)
+}
+
 // PatchSources returns a new map containing the patched LLB state for each source in the source map.
 // Sources that are not patched are also included in the result for convenience.
 // `sourceToState` must be a complete map from source name -> llb state for each source in the dalec spec.
@@ -243,6 +254,22 @@ func PatchSources(worker llb.State, spec *Spec, sourceToState map[string]llb.Sta
 		}
 		pg := llb.ProgressGroup(pgID, "Patch spec source: "+sourceName+" ", false)
 		states[sourceName] = patchSource(worker, sourceState, states, patches, sourceName, spec.Sources, sourceName, pg, withConstraints(opts))
+	}
+
+	if spec.gomodPatchesGenerated {
+		for _, sourceName := range sorted {
+			gomodPatches := spec.GomodPatchesForSource(sourceName)
+			if len(gomodPatches) == 0 {
+				continue
+			}
+
+			sourceState := states[sourceName]
+			pg := llb.ProgressGroup(pgID, "Go module patch source: "+sourceName+" ", false)
+			for _, patch := range gomodPatches {
+				sourceState = patchSourceWithGomod(worker, sourceState, sourceName, patch, pg, withConstraints(opts))
+			}
+			states[sourceName] = sourceState
+		}
 	}
 
 	return states

@@ -1,3 +1,4 @@
+// Package deb provides Debian/Ubuntu package building functionality for dalec.
 package deb
 
 import (
@@ -69,6 +70,12 @@ func sourcePatchesDir(sOpt dalec.SourceOpts, base llb.State, dir, name string, s
 		st = base.File(llb.Copy(st, copySrc, filepath.Join(patchesPath, patch.Source)), opts...)
 		seriesBuf.WriteString(name + "\n")
 		states = append(states, st)
+	}
+
+	for _, patch := range spec.GomodPatchesForSource(name) {
+		patchSt := base.File(llb.Copy(patch.State, patch.FileName, filepath.Join(patchesPath, patch.FileName)), opts...)
+		seriesBuf.WriteString(patch.FileName + "\n")
+		states = append(states, patchSt)
 	}
 
 	series := base.File(llb.Mkfile(filepath.Join(patchesPath, "series"), 0o640, seriesBuf.Bytes()), opts...)
@@ -294,6 +301,22 @@ func fixupGenerators(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 		fmt.Fprintf(buf, `test -n "$(go env GOMODCACHE)" || (GOPATH="$(go env GOPATH)"; mkdir -p "${GOPATH}/pkg" && ln -s "$(pwd)/%s" "${GOPATH}/pkg/mod")`, gomodsName)
 		// Above command does not have a newline due to quoting issues, so add that here.
 		fmt.Fprint(buf, "\n")
+		fmt.Fprintf(buf, "export GOMODCACHE=\"$(pwd)/%s\"\n", gomodsName)
+		fmt.Fprintf(buf, "export GOPROXY=\"file://$(pwd)/%s/cache/download\"\n", gomodsName)
+		fmt.Fprintln(buf, "export GOSUMDB=off")
+	}
+
+	script, err := dalec.GomodEditScript(spec)
+	if err != nil {
+		// This should never happen due to early validation in LoadSpec,
+		// but if it does, we want to fail the build with a clear error.
+		panic(errors.Wrap(err, "error generating gomod edit script"))
+	}
+	if script != "" {
+		if spec.HasGomods() {
+			fmt.Fprintln(buf)
+		}
+		buf.WriteString(script)
 	}
 
 	return buf.Bytes()
@@ -327,10 +350,18 @@ func createPatchScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 
 	writeScriptHeader(buf, cfg)
 
-	for name, patches := range spec.Patches {
-		for _, patch := range patches {
+	patchSources := dalec.GomodPatchSourceSet(spec)
+	sortedSources := dalec.SortMapKeys(patchSources)
+	for _, name := range sortedSources {
+		manual := spec.Patches[name]
+		for _, patch := range manual {
 			p := filepath.Join("${DEBIAN_DIR:=debian}/dalec/patches", name, patch.Source)
 			fmt.Fprintf(buf, "patch -d %q -p%d -s < %q\n", name, *patch.Strip, p)
+		}
+
+		for _, patch := range spec.GomodPatchesForSource(name) {
+			p := filepath.Join("${DEBIAN_DIR:=debian}/dalec/patches", name, patch.FileName)
+			fmt.Fprintln(buf, dalec.FormatGomodPatchCommand(p, name, patch.Strip, nil))
 		}
 	}
 

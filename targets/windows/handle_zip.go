@@ -1,3 +1,4 @@
+// Package windows provides Windows container and zip package building for dalec.
 package windows
 
 import (
@@ -286,6 +287,17 @@ func createBuildScript(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
 		fmt.Fprintln(buf, "  fi")
 		fmt.Fprintln(buf, "done")
 		fmt.Fprintln(buf, "")
+	}
+
+	script, err := dalec.GomodEditScript(spec)
+	if err != nil {
+		// This should never happen due to early validation in LoadSpec,
+		// but if it does, we want to fail the build with a clear error.
+		panic(errors.Wrap(err, "error generating gomod edit script"))
+	}
+	if script != "" {
+		fmt.Fprintln(buf)
+		fmt.Fprint(buf, script)
 	}
 
 	for i, step := range spec.Build.Steps {
