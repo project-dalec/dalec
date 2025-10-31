@@ -3951,11 +3951,31 @@ echo "This is a test binary"
 					},
 				},
 			},
+			"ping2": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is another test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+			"ping3": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is a third test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
 		},
 		Build: dalec.ArtifactBuild{
 			Steps: []dalec.BuildStep{
 				{
-					Command: "cp ping /tmp/ping",
+					Command: "cp ping /tmp/ping && cp ping2 /tmp/ping2 && cp ping3 /tmp/ping3",
 				},
 			},
 		},
@@ -3970,12 +3990,44 @@ echo "This is a test binary"
 							Permitted: true,
 						},
 						{
-							Name:      "cap_net_admin",
-							Effective: true,
-							Permitted: true,
-							Inheritable:  true,
+							Name:        "cap_net_admin",
+							Effective:   true,
+							Permitted:   true,
+							Inheritable: true,
 						},
 					},
+				},
+				"/tmp/ping2": {
+					Name: "ping2",
+					User: "testuser",
+					Capabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_raw",
+							Effective: true,
+							Permitted: true,
+						},
+					},
+				},
+				"/tmp/ping3": {
+					Name: "ping3",
+					Group: "testgroup",
+					Capabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_bind_service",
+							Effective: true,
+							Permitted: true,
+						},
+					},
+				},
+			},
+			Users: []dalec.AddUserConfig{
+				{
+					Name: "testuser",
+				},
+			},
+			Groups: []dalec.AddGroupConfig{
+				{
+					Name: "testgroup",
 				},
 			},
 		},
@@ -4001,6 +4053,30 @@ echo "This is a test binary"
 						Command: "getcap /usr/bin/ping",
 						Stdout: dalec.CheckOutput{
 							Equals: "/usr/bin/ping cap_net_raw=ep,cap_net_admin=eip\n",
+						},
+					},
+					{
+						Command: "getcap /usr/bin/ping2",
+						Stdout: dalec.CheckOutput{
+							Equals: "/usr/bin/ping2 cap_net_raw=ep\n",
+						},
+					},
+					{
+						Command: "stat -c '%U' /usr/bin/ping2",
+						Stdout: dalec.CheckOutput{
+							Equals: "testuser\n",
+						},
+					},
+					{
+						Command: "getcap /usr/bin/ping3",
+						Stdout: dalec.CheckOutput{
+							Equals: "/usr/bin/ping3 cap_net_bind_service=ep\n",
+						},
+					},
+					{
+						Command: "stat -c '%G' /usr/bin/ping3",
+						Stdout: dalec.CheckOutput{
+							Equals: "testgroup\n",
 						},
 					},
 				},
