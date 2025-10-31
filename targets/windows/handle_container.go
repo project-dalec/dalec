@@ -22,8 +22,19 @@ import (
 )
 
 const (
-	defaultBaseImage = "mcr.microsoft.com/windows/nanoserver:1809"
+	winltsc2019 = "mcr.microsoft.com/windows/nanoserver:ltsc2019"
+	winltsc2022 = "mcr.microsoft.com/windows/nanoserver:ltsc2022"
+	winltsc2025 = "mcr.microsoft.com/windows/nanoserver:ltsc2025"
+
 	windowsSystemDir = "/Windows/System32/"
+)
+
+var (
+	defaultbaseRefs = []string{
+		winltsc2019,
+		winltsc2022,
+		winltsc2025,
+	}
 )
 
 var (
@@ -58,11 +69,13 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 	bases := spec.GetImageBases(targetKey)
 
 	if len(bases) == 0 {
-		bases = append(bases, dalec.BaseImage{
-			Rootfs: dalec.Source{
-				DockerImage: &dalec.SourceDockerImage{Ref: defaultBaseImage},
-			},
-		})
+		for _, ref := range defaultbaseRefs {
+			bases = append(bases, dalec.BaseImage{
+				Rootfs: dalec.Source{
+					DockerImage: &dalec.SourceDockerImage{Ref: ref},
+				},
+			})
+		}
 	}
 
 	eg, grpCtx := errgroup.WithContext(ctx)
