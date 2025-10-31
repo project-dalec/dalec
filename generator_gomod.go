@@ -329,16 +329,10 @@ func generateGomodPatchForPath(sourceName string, generatorIndex, pathIndex int,
 	for _, cmd := range commands {
 		script.WriteString("  " + cmd + "\n")
 	}
-	script.WriteString("  go mod download\n")
-	script.WriteString("  for mod in $(go list -mod=mod -m -f '{{if and (not .Main) (ne .Version \"\")}}{{.Path}}@{{.Version}}{{end}}' all); do\n")
-	script.WriteString("    go mod download \"$mod\"\n")
-	script.WriteString("  done\n")
+	// Tidy to ensure go.mod and go.sum are consistent
 	script.WriteString("  go mod tidy\n")
+	// Download any new dependencies that tidy added
 	script.WriteString("  go mod download\n")
-	script.WriteString("  for mod in $(go list -mod=mod -m -f '{{if and (not .Main) (ne .Version \"\")}}{{.Path}}@{{.Version}}{{end}}' all); do\n")
-	script.WriteString("    go mod download \"$mod\"\n")
-	script.WriteString("  done\n")
-	script.WriteString("  go list -deps ./... >/dev/null 2>&1 || true\n")
 	script.WriteString(")\n")
 	script.WriteString("if [ ! -f " + fmt.Sprintf("%q", goSumPath) + " ]; then touch " + fmt.Sprintf("%q", goSumPath) + "; fi\n")
 	script.WriteString("mkdir -p $(dirname \"$patch_file\")\n")
@@ -676,9 +670,8 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 
 	script.WriteRune('\n')
 	fmt.Fprintln(&script, "go mod download")
-	fmt.Fprintln(&script, "for mod in $(go list -mod=mod -m -f '{{if and (not .Main) (ne .Version \"\")}}{{.Path}}@{{.Version}}{{end}}' all); do")
-	fmt.Fprintln(&script, "  go mod download \"$mod\"")
-	fmt.Fprintln(&script, "done")
+	fmt.Fprintln(&script, "go mod tidy")
+	fmt.Fprintln(&script, "go mod download")
 	return llb.Scratch().File(llb.Mkfile(scriptPath, 0o755, script.Bytes()))
 }
 

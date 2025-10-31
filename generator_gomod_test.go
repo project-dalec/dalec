@@ -157,13 +157,8 @@ func TestGitconfigGeneratorScriptIncludesReplace(t *testing.T) {
 		t.Fatalf("expected script to invoke go mod download, script:\n%s", script)
 	}
 
-	loopCmd := "go list -mod=mod -m -f '{{if and (not .Main) (ne .Version \"\")}}{{.Path}}@{{.Version}}{{end}}' all"
-	if !strings.Contains(script, loopCmd) {
-		t.Fatalf("expected script to enumerate required modules with %q, script:\n%s", loopCmd, script)
-	}
-
-	if !strings.Contains(script, "for mod in $(go list -mod=mod -m") {
-		t.Fatalf("expected script to download each module reported by go list, script:\n%s", script)
+	if !strings.Contains(script, "go mod tidy") {
+		t.Fatalf("expected script to invoke go mod tidy, script:\n%s", script)
 	}
 
 	if strings.Contains(script, "go env -w GOPRIVATE=") {
