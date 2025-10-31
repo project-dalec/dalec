@@ -664,12 +664,18 @@ func (w *specWrapper) getArtifactCapabilities() string {
 	artifacts := w.Spec.GetArtifacts(w.Target)
 	b := &strings.Builder{}
 
+	// Only use setcap in postinstall if there's also a chown/chgrp
+	// (since chown clears capabilities). Otherwise, use %caps macro in %files.
 	setArtifactCapabilities := func(root, p string, cfg *dalec.ArtifactConfig) {
 		if cfg == nil {
 			return
 		}
 		capString := dalec.CapabilitiesString(cfg.Capabilities)
 		if capString == "" {
+			return
+		}
+		// Only add setcap if there's a user/group ownership change
+		if cfg.User == "" && cfg.Group == "" {
 			return
 		}
 		targetDir := filepath.Join(root, cfg.SubPath)
@@ -704,6 +710,13 @@ func (w *specWrapper) getArtifactCapabilities() string {
 		for _, p := range binKeys {
 			cfg := artifacts.Binaries[p]
 			setArtifactCapabilities(`/%{_bindir}`, p, &cfg)
+		}
+	}
+	if artifacts.Libexec != nil {
+		libexecKeys := dalec.SortMapKeys(artifacts.Libexec)
+		for _, k := range libexecKeys {
+			cfg := artifacts.Libexec[k]
+			setArtifactCapabilities(`/%{_libexecdir}`, k, &cfg)
 		}
 	}
 
@@ -932,7 +945,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 		for _, p := range binKeys {
 			cfg := artifacts.Binaries[p]
 			full := filepath.Join(`%{_bindir}/`, cfg.SubPath, cfg.ResolveName(p))
-			fmt.Fprintln(b, full)
+			// Use %caps macro if capabilities are set and there's no chown
+			capString := dalec.CapabilitiesString(cfg.Capabilities)
+			if capString != "" && cfg.User == "" && cfg.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, full)
+			} else {
+				fmt.Fprintln(b, full)
+			}
 		}
 	}
 
@@ -959,7 +978,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 		for _, k := range dataKeys {
 			df := artifacts.DataDirs[k]
 			fullPath := filepath.Join(`%{_datadir}`, df.SubPath, df.ResolveName(k))
-			fmt.Fprintln(b, fullPath)
+			// Use %caps macro if capabilities are set and there's no chown
+			capString := dalec.CapabilitiesString(df.Capabilities)
+			if capString != "" && df.User == "" && df.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
+			} else {
+				fmt.Fprintln(b, fullPath)
+			}
 		}
 	}
 
@@ -969,7 +994,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 			le := artifacts.Libexec[k]
 			targetDir := filepath.Join(`%{_libexecdir}`, le.SubPath)
 			fullPath := filepath.Join(targetDir, le.ResolveName(k))
-			fmt.Fprintln(b, fullPath)
+			// Use %caps macro if capabilities are set and there's no chown
+			capString := dalec.CapabilitiesString(le.Capabilities)
+			if capString != "" && le.User == "" && le.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
+			} else {
+				fmt.Fprintln(b, fullPath)
+			}
 		}
 	}
 
@@ -978,6 +1009,11 @@ func (w *specWrapper) Files() fmt.Stringer {
 		cfg := artifacts.ConfigFiles[c]
 		fullPath := filepath.Join(`%{_sysconfdir}`, cfg.SubPath, cfg.ResolveName(c))
 		fullDirective := strings.Join([]string{`%config(noreplace)`, fullPath}, " ")
+		// Use %caps macro if capabilities are set and there's no chown
+		capString := dalec.CapabilitiesString(cfg.Capabilities)
+		if capString != "" && cfg.User == "" && cfg.Group == "" {
+			fullDirective = fmt.Sprintf("%%caps(%s) %s", capString, fullDirective)
+		}
 		fmt.Fprintln(b, fullDirective)
 	}
 
@@ -1046,7 +1082,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 	for _, l := range libKeys {
 		cfg := artifacts.Libs[l]
 		path := filepath.Join(`%{_libdir}`, cfg.SubPath, cfg.ResolveName(l))
-		fmt.Fprintln(b, path)
+		// Use %caps macro if capabilities are set and there's no chown
+		capString := dalec.CapabilitiesString(cfg.Capabilities)
+		if capString != "" && cfg.User == "" && cfg.Group == "" {
+			fmt.Fprintf(b, "%%caps(%s) %s\n", capString, path)
+		} else {
+			fmt.Fprintln(b, path)
+		}
 	}
 
 	for _, l := range artifacts.Links {
