@@ -735,6 +735,20 @@ func (w *specWrapper) Install() fmt.Stringer {
 
 	artifacts := w.Spec.GetArtifacts(w.Target)
 
+	// If package-specific files are defined for RPM, assume that make install
+	// or similar commands have already placed files in their intended locations
+	// during the build phase. In this case, we skip the individual artifact copying.
+	if _, ok := artifacts.PackageFiles["rpm"]; ok {
+		// Still handle users, groups, and symlinks since these are metadata operations
+		// that wouldn't typically be handled by make install
+		for _, l := range artifacts.Links {
+			fmt.Fprintln(b, "mkdir -p", filepath.Dir(filepath.Join("%{buildroot}", l.Dest)))
+			fmt.Fprintln(b, "ln -sf", l.Source, "%{buildroot}/"+l.Dest)
+		}
+		b.WriteString("\n")
+		return b
+	}
+
 	copyArtifact := func(root, p string, cfg *dalec.ArtifactConfig) {
 		if cfg == nil {
 			return
@@ -872,6 +886,17 @@ func (w *specWrapper) Files() fmt.Stringer {
 	fmt.Fprintf(b, "%%files\n")
 
 	artifacts := w.GetArtifacts(w.Target)
+
+	// If package-specific files are defined for RPM, use them instead of generating 
+	// the file list from individual artifact categories
+	if rpmFiles, ok := artifacts.PackageFiles["rpm"]; ok {
+		fmt.Fprint(b, rpmFiles)
+		if !strings.HasSuffix(rpmFiles, "\n") {
+			fmt.Fprintln(b)
+		}
+		fmt.Fprintln(b)
+		return b
+	}
 
 	if len(artifacts.Binaries) > 0 {
 		binKeys := dalec.SortMapKeys(artifacts.Binaries)
