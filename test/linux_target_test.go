@@ -3920,6 +3920,9 @@ func testArtifactCapabilities(ctx context.Context, t *testing.T, testConfig test
 			Build: map[string]dalec.PackageConstraints{
 				"libcap": {},
 			},
+			Test: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+			},
 		},
 	}
 
