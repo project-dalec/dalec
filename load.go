@@ -11,7 +11,6 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
 	"github.com/goccy/go-yaml/parser"
-	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	"github.com/moby/buildkit/solver/errdefs"
 	"github.com/pkg/errors"
@@ -299,9 +298,6 @@ func loadSpec(ctx context.Context, dt []byte) (*Spec, error) {
 	}
 
 	spec.FillDefaults()
-	if err := spec.populateGomodPatchesFromExtensions(); err != nil {
-		return nil, err
-	}
 	if err := spec.validateGomodDirectives(); err != nil {
 		return nil, errors.Wrap(err, "invalid gomod configuration")
 	}
@@ -321,49 +317,6 @@ func LoadSpecWithSourceMap(filename string, dt []byte) (*Spec, error) {
 		return nil, err
 	}
 	return spec, nil
-}
-
-// populateGomodPatchesFromExtensions reconstructs gomod patches from extension data
-// stored in the spec. This allows patches generated during the build to be persisted
-// and rehydrated when the spec is loaded later.
-func (s *Spec) populateGomodPatchesFromExtensions() error {
-	entries, err := s.gomodPatchExtensionEntries()
-	if err != nil {
-		return err
-	}
-
-	if len(entries) == 0 {
-		return nil
-	}
-
-	for _, entry := range entries {
-		if entry.Source == "" {
-			return errors.New("gomod patch extension entry missing source")
-		}
-		if entry.FileName == "" {
-			return errors.Errorf("gomod patch extension entry missing filename for source %q", entry.Source)
-		}
-
-		strip := entry.Strip
-		if strip == 0 {
-			strip = DefaultPatchStrip
-		}
-
-		contents := []byte(entry.Contents)
-		patchState := llb.Scratch().File(llb.Mkfile(entry.FileName, 0o644, contents))
-
-		patch := &GomodPatch{
-			SourceName: entry.Source,
-			FileName:   entry.FileName,
-			Strip:      strip,
-			State:      patchState,
-			Contents:   contents,
-		}
-
-		s.registerGomodPatch(patch)
-	}
-
-	return nil
 }
 
 // rawYAML is similar to json.RawMessage

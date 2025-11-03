@@ -48,11 +48,17 @@ build:
     - command: |
         cd src
         go build -o go-md2man .
-    # - command: |
-    #     set -x
-    #     cd kustomize/kustomize
-    #     ls -la
-    #     cat go.mod
+    - command: |
+        set -xe
+        cd autoscaler/vertical-pod-autoscaler
+        # check that the go.mod is patched with the require directive
+        grep -q "github.com/spf13/pflag v1.0.10" go.mod
+        cat go.mod
+        # verify the module cache exists
+        test -d "${GOMODCACHE}/github.com/spf13/pflag@v1.0.10"
+        cd ../cluster-autoscaler
+        cat go.mod
+        grep -q "github.com/spf13/pflag v1.0.10" go.mod
 
 artifacts:
   binaries:

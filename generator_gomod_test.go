@@ -143,12 +143,12 @@ func TestGitconfigGeneratorScriptIncludesReplace(t *testing.T) {
 		t.Fatalf("expected script to guard against missing go.mod, script:\n%s", script)
 	}
 
-	expectedReplace := "go mod edit -replace=\"github.com/example/mod@v1.2.3=../mod\""
+	expectedReplace := "-replace=\"github.com/example/mod@v1.2.3=../mod\""
 	if !strings.Contains(script, expectedReplace) {
 		t.Fatalf("expected script to apply replace directive %q, script:\n%s", expectedReplace, script)
 	}
 
-	expectedRequire := "go mod edit -require=\"github.com/example/mod@v1.2.3\""
+	expectedRequire := "-require=\"github.com/example/mod@v1.2.3\""
 	if !strings.Contains(script, expectedRequire) {
 		t.Fatalf("expected script to apply require directive %q, script:\n%s", expectedRequire, script)
 	}

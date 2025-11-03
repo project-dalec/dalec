@@ -158,18 +158,6 @@ func (s *Spec) GomodPatchSources() []string {
 	return keys
 }
 
-// AddGomodPatchForTesting allows tests to inject a gomod patch without running the
-// full generator pipeline.
-func (s *Spec) AddGomodPatchForTesting(patch *GomodPatch) {
-	if patch == nil {
-		return
-	}
-	s.registerGomodPatch(patch)
-	if err := s.appendGomodPatchExtensionEntry(patch); err != nil {
-		panic(err)
-	}
-}
-
 func (s *Spec) generateGomodPatches(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) (map[string][]*GomodPatch, error) {
 	gomodSources := s.gomodSources()
 	if len(gomodSources) == 0 {
