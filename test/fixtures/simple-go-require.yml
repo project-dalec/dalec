@@ -1,8 +1,8 @@
 #syntax=local/dalec/frontend:test
 args:
-  REVISION: 9
-  VERSION: 5.4.3
-  COMMIT: d4248b1213768c184f5ebbb8ee1a1422817478e4
+  VERSION: 1.5.1
+  COMMIT: a8ca31655b37214a6038a3e2a53b4c6d81ba21f5
+  REVISION: 1
 
 name: go-md2man
 version: ${VERSION}
@@ -24,16 +24,17 @@ sources:
       url: https://github.com/cpuguy83/go-md2man.git
       commit: v2.0.0
 
-  kustomize:
+  autoscaler:
     generate:
       - gomod:
           paths:
-            - kustomize
+            - vertical-pod-autoscaler
+            - cluster-autoscaler
           edits:
             require:
-              - github.com/spf13/cobra:github.com/spf13/cobra@v1.10.1
+              - github.com/spf13/pflag:github.com/spf13/pflag@v1.0.10
     git:
-      url: https://github.com/kubernetes-sigs/kustomize.git
+      url: https://github.com/kubernetes/autoscaler.git
       commit: ${COMMIT}
 
 dependencies:

@@ -767,20 +767,19 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 		return nil, errors.Wrap(err, "failed to prepare gomod patches")
 	}
 
-	// Capture the original (pre-patch) source states so we can pre-populate the
-	// shared gomod cache with modules referenced by the upstream go.sum before
-	// our gomod edits/tidy steps potentially prune them away.
-	//
-	// Performance optimization: Only fetch base states for sources that have
-	// replace/require directives. Sources without these directives don't need
-	// the dual-download approach since their dependencies won't change.
+	// OPTIMIZATION: Skip the baseline fetch for now
+	// The original idea was to pre-populate the cache with dependencies from the
+	// upstream go.sum before edits, but this doubles the download time.
+	// The persistent cache (GomodCacheKey) will already cache dependencies across builds.
 	baseSourceStates := map[string]llb.State{}
 	sourcesNeedingBaseline := []string{}
-	for name, src := range sources {
-		if src.sourceHasGomodDirectives() {
-			sourcesNeedingBaseline = append(sourcesNeedingBaseline, name)
-		}
-	}
+
+	// Disabled for performance - uncomment to re-enable baseline caching
+	// for name, src := range sources {
+	// 	if src.sourceHasGomodDirectives() {
+	// 		sourcesNeedingBaseline = append(sourcesNeedingBaseline, name)
+	// 	}
+	// }
 
 	if len(sourcesNeedingBaseline) > 0 {
 		if allSources, err := Sources(s, sOpt, opts...); err == nil {

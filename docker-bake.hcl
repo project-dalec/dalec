@@ -261,6 +261,23 @@ target "go-azl3-container-stuff" {
     output = [ "_src_${tgt}" ]
 
 }
+target "godebugmod" {
+    name = "godebugmod-examples-${f}"
+    matrix = {
+        f = ["simple-go-require"]
+        tgt = ["azlinux3/rpm/debug/sources"]
+    }
+    args = {
+        "BUILDKIT_SYNTAX" = "dalec_frontend"
+    }
+    contexts = {
+        "dalec_frontend" = "target:frontend"
+    }
+    target = "azlinux3/rpm/debug/sources"
+    dockerfile = "test/fixtures/${f}.yml"
+    // tags = ["local/dalec/examples/${f}:${distro}"]
+    output = [ "_src_debug_gomods" ]
+}
 
 target "deps-only" {
     name = "deps-only-${distro}"
