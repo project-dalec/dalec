@@ -221,7 +221,7 @@ func (s *Spec) generateGomodPatches(sOpt SourceOpts, worker llb.State, opts ...l
 // buildGomodPatchesForGenerator creates patches for a single generator's gomod directives.
 // It processes all paths specified in the generator configuration.
 func buildGomodPatchesForGenerator(sourceName string, generatorIndex int, gen *SourceGenerator, base llb.State, worker llb.State, credHelper llb.RunOption, opts ...llb.ConstraintsOpt) ([]*GomodPatch, error) {
-	commands, err := gomodEditCommandLines(gen.Gomod)
+	command, err := gomodEditCommandLines(gen.Gomod)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func buildGomodPatchesForGenerator(sourceName string, generatorIndex int, gen *S
 
 	patches := make([]*GomodPatch, 0, len(paths))
 	for pathIndex, relPath := range paths {
-		patch, err := generateGomodPatchForPath(sourceName, generatorIndex, pathIndex, relPath, gen, base, worker, credHelper, commands, opts...)
+		patch, err := generateGomodPatchForPath(sourceName, generatorIndex, pathIndex, relPath, gen, base, worker, credHelper, command, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +249,7 @@ func buildGomodPatchesForGenerator(sourceName string, generatorIndex int, gen *S
 // 1. Capturing the original go.mod/go.sum
 // 2. Applying replace/require directives and running go mod tidy
 // 3. Diffing the changes to create a unified patch
-func generateGomodPatchForPath(sourceName string, generatorIndex, pathIndex int, relPath string, gen *SourceGenerator, base llb.State, worker llb.State, credHelper llb.RunOption, commands []string, opts ...llb.ConstraintsOpt) (*GomodPatch, error) {
+func generateGomodPatchForPath(sourceName string, generatorIndex, pathIndex int, relPath string, gen *SourceGenerator, base llb.State, worker llb.State, credHelper llb.RunOption, command string, opts ...llb.ConstraintsOpt) (*GomodPatch, error) {
 	const (
 		workDir         = "/work/src"
 		patchMountpoint = "/tmp/dalec/internal/gomod/patch-output"
@@ -326,12 +326,11 @@ func generateGomodPatchForPath(sourceName string, generatorIndex, pathIndex int,
 		fmt.Fprintf(script, "  export GOPRIVATE=%q\n", joined)
 		fmt.Fprintf(script, "  export GOINSECURE=%q\n", joined)
 	}
-	for _, cmd := range commands {
-		script.WriteString("  " + cmd + "\n")
+	if command != "" {
+		script.WriteString("  " + command + "\n")
 	}
-	// Tidy to ensure go.mod and go.sum are consistent
+	// Tidy to ensure consistency, then download all dependencies
 	script.WriteString("  go mod tidy\n")
-	// Download any new dependencies that tidy added
 	script.WriteString("  go mod download\n")
 	script.WriteString(")\n")
 	script.WriteString("if [ ! -f " + fmt.Sprintf("%q", goSumPath) + " ]; then touch " + fmt.Sprintf("%q", goSumPath) + "; fi\n")
@@ -392,25 +391,30 @@ fi
 	}, nil
 }
 
-func gomodEditCommandLines(g *GeneratorGomod) ([]string, error) {
-	var cmds []string
+func gomodEditCommandLines(g *GeneratorGomod) (string, error) {
+	if len(g.GetReplace()) == 0 && len(g.GetRequire()) == 0 {
+		return "", nil
+	}
+	var flags []string
 	for _, replace := range g.GetReplace() {
 		arg, err := replace.goModEditArg()
 		if err != nil {
-			return nil, errors.Wrap(err, "invalid gomod replace configuration")
+			return "", errors.Wrap(err, "invalid gomod replace configuration")
 		}
-		cmds = append(cmds, fmt.Sprintf("go mod edit -replace=%q", arg))
+		flags = append(flags, fmt.Sprintf("-replace=%q", arg))
 	}
 
 	for _, require := range g.GetRequire() {
 		arg, err := require.goModEditArg()
 		if err != nil {
-			return nil, errors.Wrap(err, "invalid gomod require configuration")
+			return "", errors.Wrap(err, "invalid gomod require configuration")
 		}
-		cmds = append(cmds, fmt.Sprintf("go mod edit -require=%q", arg))
+		flags = append(flags, fmt.Sprintf("-require=%q", arg))
 	}
-
-	return cmds, nil
+	if len(flags) == 0 {
+		return "", nil
+	}
+	return "go mod edit " + strings.Join(flags, " "), nil
 }
 
 // sanitizeForFilename converts a string into a safe filename by replacing
@@ -642,34 +646,17 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 		fmt.Fprintf(&script, "go env -w GOINSECURE=%s\n", joined)
 	}
 
-	if len(g.Gomod.GetReplace()) > 0 {
+	// Apply replace/require directives if present
+	// Note: validation happens during spec loading via validateGomodDirectives()
+	// so this should never error in practice.
+	if editCmd, _ := gomodEditCommandLines(g.Gomod); editCmd != "" {
 		script.WriteRune('\n')
 		fmt.Fprintln(&script, "if [ -f go.mod ]; then")
-		for _, replace := range g.Gomod.GetReplace() {
-			// Note: validation happens during spec loading via validateGomodDirectives()
-			// so this should never error in practice. The validation ensures all directives
-			// are well-formed before we reach this point.
-			arg, _ := replace.goModEditArg()
-			fmt.Fprintf(&script, "  go mod edit -replace=%q\n", arg)
-		}
-		fmt.Fprintln(&script, "fi")
-	}
-
-	if len(g.Gomod.GetRequire()) > 0 {
-		script.WriteRune('\n')
-		fmt.Fprintln(&script, "if [ -f go.mod ]; then")
-		for _, require := range g.Gomod.GetRequire() {
-			// Note: validation happens during spec loading via validateGomodDirectives()
-			// so this should never error in practice. The validation ensures all directives
-			// are well-formed before we reach this point.
-			arg, _ := require.goModEditArg()
-			fmt.Fprintf(&script, "  go mod edit -require=%q\n", arg)
-		}
+		fmt.Fprintf(&script, "  %s\n", editCmd)
 		fmt.Fprintln(&script, "fi")
 	}
 
 	script.WriteRune('\n')
-	fmt.Fprintln(&script, "go mod download")
 	fmt.Fprintln(&script, "go mod tidy")
 	fmt.Fprintln(&script, "go mod download")
 	return llb.Scratch().File(llb.Mkfile(scriptPath, 0o755, script.Bytes()))
