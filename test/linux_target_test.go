@@ -4061,27 +4061,27 @@ func testGomodEdits(_ context.Context, t *testing.T, cfg testLinuxConfig) {
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "Apache-2.0",
-			Website:     "https://github.com/kubernetes-sigs/kustomize",
+			Website:     "https://github.com/kubernetes/autoscaler",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Test gomod edits with multi-module repo",
 			Sources: map[string]dalec.Source{
-				"kustomize": {
+				"autoscaler": {
 					Generate: []*dalec.SourceGenerator{
 						{
 							Gomod: &dalec.GeneratorGomod{
-								Paths: []string{"kustomize", "kyaml", "api", "cmd/config"},
+								Paths: []string{"vertical-pod-autoscaler", "cluster-autoscaler"},
 								Edits: &dalec.GomodEdits{
 									Require: []dalec.GomodRequire{
-										{Module: "github.com/spf13/cobra", Version: "github.com/spf13/cobra@v1.8.0"},
+										{Module: "github.com/spf13/pflag", Version: "github.com/spf13/pflag@v1.0.10"},
 									},
 								},
 							},
 						},
 					},
 					Git: &dalec.SourceGit{
-						URL:    "https://github.com/kubernetes-sigs/kustomize.git",
-						Commit: "kustomize/v5.4.3",
+						URL:    "https://github.com/kubernetes/autoscaler.git",
+						Commit: "a8ca31655b37214a6038a3e2a53b4c6d81ba21f5",
 					},
 				},
 			},
@@ -4093,14 +4093,19 @@ func testGomodEdits(_ context.Context, t *testing.T, cfg testLinuxConfig) {
 			Build: dalec.ArtifactBuild{
 				Steps: []dalec.BuildStep{
 					{
-						Command: "cd kustomize/kustomize && go build -o /tmp/kustomize .",
+						Command: `set -ex
+cd autoscaler/vertical-pod-autoscaler
+# check that the go.mod is patched with the require directive
+grep -q "github.com/spf13/pflag v1.0.10" go.mod
+# verify the module cache exists
+test -d "${GOMODCACHE}/github.com/spf13/pflag@v1.0.10"
+cd ../cluster-autoscaler
+grep -q "github.com/spf13/pflag v1.0.10" go.mod`,
 					},
 				},
 			},
 			Artifacts: dalec.Artifacts{
-				Binaries: map[string]dalec.ArtifactConfig{
-					"/tmp/kustomize": {},
-				},
+				Binaries: map[string]dalec.ArtifactConfig{},
 			},
 		}
 
