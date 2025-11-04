@@ -1,6 +1,8 @@
 package dalec
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"path/filepath"
@@ -253,4 +255,34 @@ func (a Artifacts) HasDocs() bool {
 		return true
 	}
 	return false
+}
+
+// validate checks for errors in artifact configuration
+func (a *Artifacts) validate() error {
+	var errs []error
+
+	// Check for capabilities on non-executable artifacts
+	checkCapabilities := func(artifactType string, artifacts map[string]ArtifactConfig) {
+		for path, cfg := range artifacts {
+			if len(cfg.Capabilities) > 0 {
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on %s '%s'", artifactType, path))
+			}
+		}
+	}
+
+	// These artifact types should not have capabilities
+	checkCapabilities("manpages", a.Manpages)
+	checkCapabilities("data_dirs", a.DataDirs)
+	checkCapabilities("configFiles", a.ConfigFiles)
+	checkCapabilities("docs", a.Docs)
+	checkCapabilities("licenses", a.Licenses)
+	checkCapabilities("headers", a.Headers)
+
+	// Note: We don't error for Binaries, Libs, or Libexec as these are executable
+	// and capabilities are appropriate for them
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }

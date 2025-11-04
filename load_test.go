@@ -2039,6 +2039,171 @@ func TestArtifactBuildValidation(t *testing.T) {
 	}
 }
 
+func TestArtifactsValidation(t *testing.T) {
+	cases := []struct {
+		name      string
+		artifacts Artifacts
+		expectErr string
+	}{
+		{
+			name: "capabilities on binaries is valid",
+			artifacts: Artifacts{
+				Binaries: map[string]ArtifactConfig{
+					"/tmp/mybinary": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true, Permitted: true},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "capabilities on libs is valid",
+			artifacts: Artifacts{
+				Libs: map[string]ArtifactConfig{
+					"/tmp/mylib.so": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "capabilities on libexec is valid",
+			artifacts: Artifacts{
+				Libexec: map[string]ArtifactConfig{
+					"/tmp/helper": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true, Permitted: true},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "capabilities on docs is invalid",
+			artifacts: Artifacts{
+				Docs: map[string]ArtifactConfig{
+					"README.md": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on docs 'README.md'",
+		},
+		{
+			name: "capabilities on configFiles is invalid",
+			artifacts: Artifacts{
+				ConfigFiles: map[string]ArtifactConfig{
+					"config.yaml": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on configFiles 'config.yaml'",
+		},
+		{
+			name: "capabilities on manpages is invalid",
+			artifacts: Artifacts{
+				Manpages: map[string]ArtifactConfig{
+					"tool.1": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on manpages 'tool.1'",
+		},
+		{
+			name: "capabilities on data_dirs is invalid",
+			artifacts: Artifacts{
+				DataDirs: map[string]ArtifactConfig{
+					"data": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on data_dirs 'data'",
+		},
+		{
+			name: "capabilities on licenses is invalid",
+			artifacts: Artifacts{
+				Licenses: map[string]ArtifactConfig{
+					"LICENSE": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on licenses 'LICENSE'",
+		},
+		{
+			name: "capabilities on headers is invalid",
+			artifacts: Artifacts{
+				Headers: map[string]ArtifactConfig{
+					"myheader.h": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on headers 'myheader.h'",
+		},
+		{
+			name: "multiple capability errors",
+			artifacts: Artifacts{
+				Docs: map[string]ArtifactConfig{
+					"README.md": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+				ConfigFiles: map[string]ArtifactConfig{
+					"config.yaml": {
+						Capabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on",
+		},
+		{
+			name: "no capabilities is valid",
+			artifacts: Artifacts{
+				Binaries: map[string]ArtifactConfig{
+					"/tmp/mybinary": {},
+				},
+				Docs: map[string]ArtifactConfig{
+					"README.md": {},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.artifacts.validate()
+			if tc.expectErr == "" {
+				assert.NilError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tc.expectErr)
+			}
+		})
+	}
+}
+
 func FuzzLoad(f *testing.F) {
 	// Add some initial test cases
 	f.Add("name: test\n")
