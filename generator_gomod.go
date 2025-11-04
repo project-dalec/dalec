@@ -538,6 +538,9 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, cred
 		const proxyPath = "/tmp/dalec/gomod-proxy-cache"
 
 		// Pass in git auth if necessary
+		// Note: We don't apply go mod edit commands here because the sources
+		// are already patched with the edits via gomod patches.
+		// We only need to download dependencies, not re-apply edits.
 		script := g.gitconfigGeneratorScript(gomodDownloadWrapperBasename)
 		scriptPath := filepath.Join(scriptMountpoint, gomodDownloadWrapperBasename)
 
@@ -604,10 +607,6 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 				username = sshConfig.Username
 			}
 
-			// By default, go will make a request to git for the source of a
-			// package, and it will specify the remote url as https://<package
-			// name>. Because SSH auth was requested for this host, tell git to
-			// use ssh for upstreams with this host name.
 			fmt.Fprintf(&script, `git config --global url."ssh://%[1]s@%[2]s/".insteadOf https://%[3]s/`, username, host, gpHost)
 			script.WriteRune('\n')
 			continue
@@ -632,16 +631,6 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 		joined := strings.Join(goPrivate, ",")
 		fmt.Fprintf(&script, "go env -w GOPRIVATE=%s\n", joined)
 		fmt.Fprintf(&script, "go env -w GOINSECURE=%s\n", joined)
-	}
-
-	// Apply replace/require directives if present
-	// Note: validation happens during spec loading via validateGomodDirectives()
-	// so this should never error in practice.
-	if editCmd, _ := gomodEditCommandLines(g.Gomod); editCmd != "" {
-		script.WriteRune('\n')
-		fmt.Fprintln(&script, "if [ -f go.mod ]; then")
-		fmt.Fprintf(&script, "  %s\n", editCmd)
-		fmt.Fprintln(&script, "fi")
 	}
 
 	script.WriteRune('\n')
@@ -803,7 +792,6 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 	for _, key := range sorted {
 		src := s.Sources[key]
 
-		baseState, hasBase := baseSourceStates[key]
 		patchedState := patched[key]
 
 		deps = deps.With(func(in llb.State) llb.State {
@@ -814,16 +802,9 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 				// First run against the unpatched tree to mirror any dependencies
 				// that exist prior to our go.mod/go.sum modifications.
 				// This is only needed when replace/require directives are present.
-				if hasBase {
-					pgOpts := append(opts, ProgressGroup("Fetch baseline go module dependencies for source: "+key))
-					in = in.With(withGomod(gen, baseState, worker, key, credHelperRunOpt, pgOpts...))
-				}
 				// Then run with the patched sources (or just once if no replace/require).
 				// The cache reflects the final module graph after any go mod edits.
 				progressMsg := "Fetch go module dependencies for source: " + key
-				if hasBase {
-					progressMsg = "Fetch updated go module dependencies for source: " + key
-				}
 				pgOpts := append(opts, ProgressGroup(progressMsg))
 				in = in.With(withGomod(gen, patchedState, worker, key, credHelperRunOpt, pgOpts...))
 			}
