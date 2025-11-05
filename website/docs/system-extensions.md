@@ -1,6 +1,12 @@
 ---
-title: System Extensions (EXPERIMENTAL)
+title: System Extensions
 ---
+
+:::caution
+
+Experimental: This feature might change without preserving backwards compatibility.
+
+:::
 
 Dalec can create system extensions, known as sysexts, for use with systemd. Such extensions are filesystem images that get overlaid onto an existing running system. These are often designed to be standalone, making them very portable, but they don't necessarily have to be.
 
