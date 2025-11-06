@@ -752,12 +752,6 @@ func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target s
 	}
 
 	apply(artifacts.Binaries, BinariesPath)
-	apply(artifacts.ConfigFiles, ConfigFilesPath)
-	apply(artifacts.Manpages, filepath.Join(ManpagesPath, spec.Name))
-	apply(artifacts.Headers, HeadersPath)
-	apply(artifacts.Licenses, filepath.Join(LicensesPath, spec.Name))
-	apply(artifacts.Docs, filepath.Join(DocsPath, spec.Name))
 	apply(artifacts.Libs, LibsPath)
 	apply(artifacts.Libexec, LibexecPath)
-	apply(artifacts.DataDirs, DataDirsPath)
 }

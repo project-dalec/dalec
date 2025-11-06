@@ -278,8 +278,19 @@ func (a *Artifacts) validate() error {
 	checkCapabilities("licenses", a.Licenses)
 	checkCapabilities("headers", a.Headers)
 
-	// Note: We don't error for Binaries, Libs, or Libexec as these are executable
-	// and capabilities are appropriate for them
+	// Check systemd units and dropins
+	if a.Systemd != nil {
+		for path, cfg := range a.Systemd.Units {
+			if artifact := cfg.Artifact(); artifact != nil && len(artifact.Capabilities) > 0 {
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd unit '%s'", path))
+			}
+		}
+		for path, cfg := range a.Systemd.Dropins {
+			if artifact := cfg.Artifact(); artifact != nil && len(artifact.Capabilities) > 0 {
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd dropin '%s'", path))
+			}
+		}
+	}
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
