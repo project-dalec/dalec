@@ -40,6 +40,8 @@ jobs:
   build-worker-images:
     permissions:
       packages: write
+      id-token: write  # Required for cosign OIDC signing
+      attestations: write  # Required for GitHub attestations
     needs: load-matrix
     runs-on: ubuntu-22.04
     strategy:
@@ -51,9 +53,23 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+            fulcio.sigstore.dev:443
+            ghcr.io:443
+            github.com:443
+            *.githubusercontent.com:443
+            proxy.golang.org:443
+            rekor.sigstore.dev:443
+            storage.googleapis.com:443
+            tuf-repo-cdn.sigstore.dev:443
 
       - name: Checkout code
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Install Cosign
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
       - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         name: Login to GHCR
@@ -133,3 +149,43 @@ jobs:
             ${EXTRA_FLAGS}
         env:
           WORKER_TARGET: ${{ matrix.target }}
+      
+      - name: Sign and attest worker images
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
+        id: sign
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          
+          ref="ghcr.io/${IMAGE_REPO}"
+          
+          # Get the digest of the pushed image
+          DIGEST=$(docker buildx imagetools inspect ${ref} --format '{{json .Manifest.Digest}}' | tr -d '"')
+          
+          # Sign the image
+          cosign sign --yes "${ref}@${DIGEST}"
+          
+          # Verify the signature
+          cosign verify "${ref}@${DIGEST}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/worker-images.yml@${{ github.ref }}"
+          
+          # If there's a latest tag, sign that too
+          latest="$(gh release view --json tagName -q .tagName || echo '')"
+          if [ "${{ github.ref_name }}" = "${latest}" ]; then
+            IMAGE_REPO_LATEST="${BASE_REPO}:latest"
+            ref_latest="ghcr.io/${IMAGE_REPO_LATEST}"
+            cosign sign --yes "${ref_latest}@${DIGEST}"
+          fi
+          
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          echo "image-name=ghcr.io/${IMAGE_REPO}" >> $GITHUB_OUTPUT
+      
+      - name: Attest build provenance
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v2.0.0
+        with:
+          subject-name: ${{ steps.sign.outputs.image-name }}
+          subject-digest: ${{ steps.sign.outputs.digest }}
+          push-to-registry: true

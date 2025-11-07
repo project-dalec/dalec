@@ -26,39 +26,86 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # Required for cosign OIDC signing
+      attestations: write  # Required for GitHub attestations
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+            fulcio.sigstore.dev:443
+            ghcr.io:443
+            github.com:443
+            *.githubusercontent.com:443
+            proxy.golang.org:443
+            rekor.sigstore.dev:443
+            storage.googleapis.com:443
+            tuf-repo-cdn.sigstore.dev:443
 
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         name: Checkout
+      
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+      
       - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         name: Login to GHCR
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      
       - uses: ./.github/actions/setup-source-policy
         name: Setup Source Policy
-      - run: |
-          set -eux -o pipefail
-
-          FRONTEND_REPO="$(tr '[:upper:]' '[:lower:]' <<<"${FRONTEND_REPO}")"
-          docker buildx create --use
-          
-          set_tags=""
-          IFS=, read -ra SPLIT_TAGS <<<"${FRONTEND_TAGS}"
-          
-          for tag in "${SPLIT_TAGS[@]}"; do
-              set_tags+=" --set frontend.tags=${FRONTEND_REPO}:${tag}"
-          done
-          
-          docker buildx bake --push \
-              frontend \
-                  --set frontend.platform=linux/amd64,linux/arm64 \
-                  ${set_tags}
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5.8.0
+        with:
+          images: ghcr.io/${{ github.repository }}/frontend
+          tags: ${{ inputs.tag }}
+      
+      - name: Build and push
+        id: build-and-push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          target: frontend
+          sbom: true
+          provenance: true
+          cache-from: type=gha,scope=${{ github.workflow }}
+          cache-to: type=gha,scope=${{ github.workflow }},mode=max
+      
+      - name: Sign the images with GitHub OIDC Token
         env:
-          FRONTEND_REPO: ghcr.io/${{ github.repository }}/frontend
-          FRONTEND_TAGS: ${{ inputs.tag }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+      
+      - name: Verify image signature
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: |
+          cosign verify ghcr.io/${{ github.repository }}/frontend@${DIGEST} \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity https://github.com/${{ github.repository }}/.github/workflows/frontend-image.yml@${{ github.ref }}
+      
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v2.0.0
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/frontend
+          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          push-to-registry: true
