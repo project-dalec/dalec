@@ -520,6 +520,11 @@ interface DalecDebugConfiguration extends vscode.DebugConfiguration {
   dalecContextResolved?: boolean;
 }
 
+interface BuildTargetInfo {
+  name: string;
+  description?: string;
+}
+
 interface DalecDocumentMetadata {
   targets: string[];
   contexts: string[];
@@ -649,14 +654,17 @@ async function pickTarget(
   const targets = await getTargetsForDocument(document, tracker);
 
   if (targets.length === 1) {
-    return targets[0];
+    return targets[0].name;
   }
 
   if (targets.length > 1) {
-    const selection = await vscode.window.showQuickPick(targets, {
+    const items = buildTargetQuickPickItems(targets);
+    const selection = await vscode.window.showQuickPick(items, {
       placeHolder: placeholder,
+      matchOnDescription: true,
+      matchOnDetail: true,
     });
-    return selection ?? undefined;
+    return selection?.target ?? undefined;
   }
 
   const manual = await vscode.window.showInputBox({
@@ -712,18 +720,25 @@ function sanitizeContextName(raw: string | undefined): string {
   }
   return cleaned || 'context';
 }
-
 async function getTargetsForDocument(
   document: vscode.TextDocument,
   tracker: DalecDocumentTracker,
-): Promise<string[]> {
-  const targets = new Set(tracker.getMetadata(document)?.targets ?? []);
+): Promise<BuildTargetInfo[]> {
+  const merged = new Map<string, BuildTargetInfo>();
+  const trackedTargets = tracker.getMetadata(document)?.targets ?? [];
+  for (const name of trackedTargets) {
+    if (!merged.has(name)) {
+      merged.set(name, { name });
+    }
+  }
+
   const frontendTargets = await getFrontendTargets(document);
-  frontendTargets?.forEach((target) => targets.add(target));
-  return [...targets];
+  frontendTargets?.forEach((info) => merged.set(info.name, info));
+
+  return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function getFrontendTargets(document: vscode.TextDocument): Promise<string[] | undefined> {
+async function getFrontendTargets(document: vscode.TextDocument): Promise<BuildTargetInfo[] | undefined> {
   const key = document.uri.toString();
   const now = Date.now();
   const cached = frontendTargetCache.get(key);
@@ -765,20 +780,25 @@ async function getFrontendTargets(document: vscode.TextDocument): Promise<string
   );
 }
 
-function parseTargetsFromOutput(output: string): string[] {
-  const targets = new Set<string>();
+function parseTargetsFromOutput(output: string): BuildTargetInfo[] {
+  const targets: BuildTargetInfo[] = [];
   for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || /^target/i.test(trimmed) || trimmed.startsWith('=') || trimmed.startsWith('-')) {
       continue;
     }
 
-    const match = trimmed.match(/^([A-Za-z0-9._/-]+)/);
-    if (match) {
-      targets.add(match[1]);
+    const match =
+      trimmed.match(/^([A-Za-z0-9._/-]+)(?:\s+\(default\))?(?:\s{2,}(.*))?$/) ??
+      trimmed.match(/^([A-Za-z0-9._/-]+)\s+(.*)$/);
+    if (!match) {
+      continue;
     }
+    const name = match[1];
+    const description = match[2]?.trim() || undefined;
+    targets.push({ name, description });
   }
-  return [...targets];
+  return targets;
 }
 
 type YamlExtensionExports = {
@@ -792,7 +812,7 @@ type YamlExtensionExports = {
 type YamlExtensionApi = YamlExtensionExports;
 
 interface FrontendTargetCacheEntry {
-  targets: string[];
+  targets: BuildTargetInfo[];
   timestamp: number;
 }
 
@@ -1099,4 +1119,94 @@ function contextsSatisfied(selection: ContextSelection, requiredNames: string[])
     }
   }
   return true;
+}
+
+function buildTargetQuickPickItems(targets: BuildTargetInfo[]): TargetQuickPickItem[] {
+  const grouped = new Map<string, TargetQuickPickItem[]>();
+  for (const info of targets) {
+    const segments = info.name.split('/');
+    const scope = segments[0];
+    const label = segments.slice(1).join('/') || scope;
+    const groupName = scope || info.name;
+    if (!grouped.has(groupName)) {
+      grouped.set(groupName, []);
+    }
+    grouped.get(groupName)!.push({
+      label,
+      detail: info.description,
+      target: info.name,
+    });
+  }
+
+  const items: TargetQuickPickItem[] = [];
+  const sortedScopes = [...grouped.keys()].sort((a, b) => {
+    const aDebug = isDebugScope(a);
+    const bDebug = isDebugScope(b);
+    if (aDebug && !bDebug) {
+      return 1;
+    }
+    if (!aDebug && bDebug) {
+      return -1;
+    }
+    return a.localeCompare(b);
+  });
+
+  for (const scope of sortedScopes) {
+    items.push(createGroupHeader(scope));
+    const entries = grouped.get(scope)!;
+    entries.sort((a, b) => {
+      const aDebug = isDebugTarget(a.target);
+      const bDebug = isDebugTarget(b.target);
+      if (aDebug && !bDebug) {
+        return 1;
+      }
+      if (!aDebug && bDebug) {
+        return -1;
+      }
+      const aNested = isNestedTarget(a.target);
+      const bNested = isNestedTarget(b.target);
+      if (aNested && !bNested) {
+        return 1;
+      }
+      if (!aNested && bNested) {
+        return -1;
+      }
+      return a.label.localeCompare(b.label);
+    });
+    items.push(...entries);
+  }
+  return items;
+}
+
+type TargetQuickPickItem = vscode.QuickPickItem & { target?: string };
+
+function createGroupHeader(scope: string): TargetQuickPickItem {
+  return {
+    label: ` ${scope}`,
+    kind: vscode.QuickPickItemKind.Separator,
+  };
+}
+
+function isDebugScope(value: string): boolean {
+  return value.toLowerCase() === 'debug';
+}
+
+function isDebugTarget(value?: string): boolean {
+  if (!value) {
+    return false;
+  }
+  const lower = value.toLowerCase();
+  return (
+    lower.startsWith('debug/') ||
+    lower === 'debug' ||
+    lower.includes('/debug/') ||
+    lower.endsWith('/debug')
+  );
+}
+
+function isNestedTarget(value?: string): boolean {
+  if (!value) {
+    return false;
+  }
+  return value.split('/').length > 2;
 }
