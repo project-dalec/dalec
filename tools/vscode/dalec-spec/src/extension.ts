@@ -256,7 +256,7 @@ class DalecSchemaProvider implements vscode.Disposable {
       ? encodeURIComponent(workspaceFolder.uri.toString())
       : 'global';
 
-    return `${SCHEMA_SCHEME}://${authority}/spec`;
+    return `${SCHEMA_SCHEME}://${authority}/dalec-jsonschema`;
   }
 
   private async onRequestSchemaContent(uri: string): Promise<string | undefined> {
