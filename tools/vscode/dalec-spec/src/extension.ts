@@ -673,26 +673,53 @@ async function pickTarget(
 ): Promise<string | undefined> {
   const targets = await getTargetsForDocument(document, tracker);
 
+  if (targets.length === 0) {
+    const manual = await vscode.window.showInputBox({
+      prompt: 'No targets detected in this spec. Enter a target name to use.',
+      placeHolder: 'target-name',
+    });
+    return manual?.trim() || undefined;
+  }
+
   if (targets.length === 1) {
     return targets[0].name;
   }
 
-  if (targets.length > 1) {
-    const items = buildTargetQuickPickItems(targets);
-    const selection = await vscode.window.showQuickPick(items, {
-      placeHolder: placeholder,
-      matchOnDescription: true,
-      matchOnDetail: true,
-    });
-    return selection?.target ?? undefined;
-  }
-
-  const manual = await vscode.window.showInputBox({
-    prompt: 'No targets detected in this spec. Enter a target name to use.',
-    placeHolder: 'target-name',
+  const scoped = groupTargets(targets);
+  const scopes = [...scoped.keys()].sort((a, b) => {
+    const aDebug = isDebugScope(a);
+    const bDebug = isDebugScope(b);
+    if (aDebug && !bDebug) {
+      return 1;
+    }
+    if (!aDebug && bDebug) {
+      return -1;
+    }
+    return a.localeCompare(b);
   });
 
-  return manual?.trim() || undefined;
+  const scopeChoice = await vscode.window.showQuickPick(scopes, {
+    placeHolder: 'Select target group',
+  });
+  if (!scopeChoice) {
+    return undefined;
+  }
+
+  const scopeTargets = scoped.get(scopeChoice)!;
+  scopeTargets.sort((a, b) => a.name.localeCompare(b.name));
+  const targetChoice = await vscode.window.showQuickPick(
+    scopeTargets.map((targetInfo) => ({
+      label: targetInfo.name.slice(targetInfo.name.indexOf('/') + 1) || targetInfo.name,
+      detail: targetInfo.description,
+      target: targetInfo.name,
+    })),
+    {
+      placeHolder: placeholder,
+      matchOnDetail: true,
+    },
+  );
+
+  return targetChoice?.target;
 }
 
 function quote(value: string): string {
@@ -1272,61 +1299,16 @@ function extractArgs(text: string): Map<string, string | undefined> {
   return args;
 }
 
-function buildTargetQuickPickItems(targets: BuildTargetInfo[]): TargetQuickPickItem[] {
-  const grouped = new Map<string, TargetQuickPickItem[]>();
+function groupTargets(targets: BuildTargetInfo[]): Map<string, BuildTargetInfo[]> {
+  const grouped = new Map<string, BuildTargetInfo[]>();
   for (const info of targets) {
-    const segments = info.name.split('/');
-    const scope = segments[0];
-    const label = segments.slice(1).join('/') || scope;
-    const groupName = scope || info.name;
-    if (!grouped.has(groupName)) {
-      grouped.set(groupName, []);
+    const scope = info.name.split('/')[0] || info.name;
+    if (!grouped.has(scope)) {
+      grouped.set(scope, []);
     }
-    grouped.get(groupName)!.push({
-      label,
-      detail: info.description,
-      target: info.name,
-    });
+    grouped.get(scope)!.push(info);
   }
-
-  const items: TargetQuickPickItem[] = [];
-  const sortedScopes = [...grouped.keys()].sort((a, b) => {
-    const aDebug = isDebugScope(a);
-    const bDebug = isDebugScope(b);
-    if (aDebug && !bDebug) {
-      return 1;
-    }
-    if (!aDebug && bDebug) {
-      return -1;
-    }
-    return a.localeCompare(b);
-  });
-
-  for (const scope of sortedScopes) {
-    items.push(createGroupHeader(scope));
-    const entries = grouped.get(scope)!;
-    entries.sort((a, b) => {
-      const aDebug = isDebugTarget(a.target);
-      const bDebug = isDebugTarget(b.target);
-      if (aDebug && !bDebug) {
-        return 1;
-      }
-      if (!aDebug && bDebug) {
-        return -1;
-      }
-      const aNested = isNestedTarget(a.target);
-      const bNested = isNestedTarget(b.target);
-      if (aNested && !bNested) {
-        return 1;
-      }
-      if (!aNested && bNested) {
-        return -1;
-      }
-      return a.label.localeCompare(b.label);
-    });
-    items.push(...entries);
-  }
-  return items;
+  return grouped;
 }
 
 type TargetQuickPickItem = vscode.QuickPickItem & { target?: string };
