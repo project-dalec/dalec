@@ -25,7 +25,8 @@
     "onDebug:dalec-buildx",
     "workspaceContains:docs/spec.schema.json",
     "onCommand:dalec.debugCurrentSpec",
-    "onCommand:dalec.buildCurrentSpec"
+    "onCommand:dalec.buildCurrentSpec",
+    "onCommand:dalec.rerunLastAction"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -37,6 +38,10 @@
       {
         "command": "dalec.buildCurrentSpec",
         "title": "Dalec: Build Spec"
+      },
+      {
+        "command": "dalec.rerunLastAction",
+        "title": "Dalec: Rerun Last Action"
       }
     ],
     "breakpoints": [

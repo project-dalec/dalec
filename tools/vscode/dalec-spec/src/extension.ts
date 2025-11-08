@@ -22,12 +22,13 @@ const contextSelectionCache = new Map<string, ContextSelection>();
 export async function activate(context: vscode.ExtensionContext) {
   const tracker = new DalecDocumentTracker();
   context.subscriptions.push(tracker);
+  const lastAction = new LastDalecActionState();
 
   const schemaProvider = new DalecSchemaProvider(context, tracker);
   await schemaProvider.initialize();
   context.subscriptions.push(schemaProvider);
 
-  const codeLensProvider = new DalecCodeLensProvider(tracker);
+  const codeLensProvider = new DalecCodeLensProvider(tracker, lastAction);
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider([{ language: 'yaml' }, { language: 'yml' }], codeLensProvider),
     codeLensProvider,
@@ -44,11 +45,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(DEBUG_COMMAND, (uri?: vscode.Uri) =>
-      runDebugCommand(uri, tracker),
+      runDebugCommand(uri, tracker, lastAction),
     ),
     vscode.commands.registerCommand(BUILD_COMMAND, (uri?: vscode.Uri) =>
-      runBuildCommand(uri, tracker),
+      runBuildCommand(uri, tracker, lastAction),
     ),
+    vscode.commands.registerCommand('dalec.rerunLastAction', () => rerunLastAction(tracker, lastAction)),
   );
 }
 
@@ -281,7 +283,7 @@ class DalecCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposabl
   readonly onDidChangeCodeLenses = this.emitter.event;
   private readonly trackerSubscription: vscode.Disposable;
 
-  constructor(private readonly tracker: DalecDocumentTracker) {
+  constructor(private readonly tracker: DalecDocumentTracker, private readonly lastAction: LastDalecActionState) {
     this.trackerSubscription = this.tracker.onDidChange(() => this.emitter.fire());
   }
 
@@ -291,7 +293,7 @@ class DalecCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposabl
     }
 
     const range = new vscode.Range(0, 0, 0, 0);
-    return [
+    const lenses: vscode.CodeLens[] = [
       new vscode.CodeLens(range, {
         command: DEBUG_COMMAND,
         title: 'Dalec: Debug',
@@ -303,6 +305,22 @@ class DalecCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposabl
         arguments: [document.uri],
       }),
     ];
+
+    const last = this.lastAction.get();
+    if (last && last.specUri.toString() === document.uri.toString()) {
+      const label =
+        last.type === 'build'
+          ? `Prev Dalec: Build (${last.target})`
+          : `Prev Dalec: Debug (${last.target})`;
+      lenses.push(
+        new vscode.CodeLens(range, {
+          command: 'dalec.rerunLastAction',
+          title: label,
+        }),
+      );
+    }
+
+    return lenses;
   }
 
   dispose() {
@@ -489,7 +507,11 @@ interface DalecDocumentMetadata {
   contexts: string[];
 }
 
-async function runDebugCommand(uri: vscode.Uri | undefined, tracker: DalecDocumentTracker) {
+async function runDebugCommand(
+  uri: vscode.Uri | undefined,
+  tracker: DalecDocumentTracker,
+  lastAction: LastDalecActionState,
+) {
   const document = await resolveDalecDocument(uri, tracker);
   if (!document) {
     return;
@@ -508,7 +530,7 @@ async function runDebugCommand(uri: vscode.Uri | undefined, tracker: DalecDocume
   const folder = vscode.workspace.getWorkspaceFolder(document.uri);
   const configuration: DalecDebugConfiguration = {
     type: DEBUG_TYPE,
-    name: `Dalec: Debug ${target}`,
+    name: `Dalec: Debug (${target})`,
     request: 'launch',
     target,
     specFile: document.uri.fsPath,
@@ -516,11 +538,21 @@ async function runDebugCommand(uri: vscode.Uri | undefined, tracker: DalecDocume
     buildContexts: recordFromMap(contextSelection.additionalContexts),
     dalecContextResolved: true,
   };
+  lastAction.record({
+    type: 'debug',
+    target,
+    specUri: document.uri,
+    contexts: contextSelection,
+  });
 
   await vscode.debug.startDebugging(folder, configuration);
 }
 
-async function runBuildCommand(uri: vscode.Uri | undefined, tracker: DalecDocumentTracker) {
+async function runBuildCommand(
+  uri: vscode.Uri | undefined,
+  tracker: DalecDocumentTracker,
+  lastAction: LastDalecActionState,
+) {
   const document = await resolveDalecDocument(uri, tracker);
   if (!document) {
     return;
@@ -555,6 +587,13 @@ async function runBuildCommand(uri: vscode.Uri | undefined, tracker: DalecDocume
     quote(contextSelection.defaultContextPath),
   ];
   terminal.sendText(parts.join(' '));
+
+  lastAction.record({
+    type: 'build',
+    target,
+    specUri: document.uri,
+    contexts: contextSelection,
+  });
 }
 
 async function resolveDalecDocument(
@@ -742,6 +781,7 @@ interface ContextSelection {
 async function collectContextSelection(
   document: vscode.TextDocument,
   tracker: DalecDocumentTracker,
+  cachedValue?: ContextSelection,
 ): Promise<ContextSelection | undefined> {
   const key = document.uri.toString();
   const contextNames = new Set(scanContextNames(document.getText()));
@@ -755,7 +795,7 @@ async function collectContextSelection(
     return selection;
   }
 
-  const previousSelection = contextSelectionCache.get(key);
+  const previousSelection = cachedValue ?? contextSelectionCache.get(key);
   const sortedNames = [...contextNames].sort();
   const selections = new Map<string, string>();
   let defaultPath = previousSelection?.defaultContextPath ?? (await getEmptyContextDir());
@@ -850,6 +890,25 @@ function toInputValue(value: string | undefined): string {
   return value ?? '.';
 }
 
+class LastDalecActionState {
+  private entry: LastDalecAction | undefined;
+
+  record(entry: LastDalecAction) {
+    this.entry = entry;
+  }
+
+  get(): LastDalecAction | undefined {
+    return this.entry;
+  }
+}
+
+interface LastDalecAction {
+  type: 'build' | 'debug';
+  target: string;
+  specUri: vscode.Uri;
+  contexts: ContextSelection;
+}
+
 function isRemoteContextReference(value: string): boolean {
   const lowered = value.toLowerCase();
   if (lowered.startsWith('type=')) {
@@ -918,6 +977,67 @@ function extractInlineContextName(remainder: string): string | undefined {
   return sanitizeContextName(nameMatch[1]);
 }
 
+async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDalecActionState) {
+  const entry = lastAction.get();
+  if (!entry) {
+    void vscode.window.showInformationMessage('Dalec: no previous action to rerun.');
+    return;
+  }
+
+  const document = await resolveDalecDocument(entry.specUri, tracker);
+  if (!document) {
+    return;
+  }
+
+  const entryContexts = entry.contexts;
+  const specContextNames = scanContextNames(document.getText());
+  let contextSelection: ContextSelection | undefined;
+  if (contextsSatisfied(entryContexts, specContextNames)) {
+    contextSelection = entryContexts;
+  } else {
+    contextSelection = await collectContextSelection(document, tracker, entryContexts);
+    if (!contextSelection) {
+      return;
+    }
+  }
+
+  const folder = vscode.workspace.getWorkspaceFolder(entry.specUri);
+
+  if (entry.type === 'debug') {
+    const configuration: DalecDebugConfiguration = {
+      type: DEBUG_TYPE,
+      name: `Dalec: Debug (${entry.target})`,
+      request: 'launch',
+      target: entry.target,
+      specFile: entry.specUri.fsPath,
+      context: contextSelection.defaultContextPath,
+      buildContexts: recordFromMap(contextSelection.additionalContexts),
+      dalecContextResolved: true,
+    };
+    await vscode.debug.startDebugging(folder, configuration);
+  } else {
+    const additionalContexts = formatBuildContextFlags(contextSelection.additionalContexts);
+    const terminal = vscode.window.createTerminal({
+      name: `Dalec Build (${entry.target})`,
+      env: {
+        ...process.env,
+        BUILDX_EXPERIMENTAL: '1',
+      },
+    });
+    terminal.show();
+    const parts = [
+      'docker buildx build',
+      ...additionalContexts,
+      '--target',
+      quote(entry.target),
+      '-f',
+      quote(entry.specUri.fsPath),
+      quote(contextSelection.defaultContextPath),
+    ];
+    terminal.sendText(parts.join(' '));
+  }
+}
+
 function extractBlockContextName(
   lines: string[],
   startIndex: number,
@@ -941,4 +1061,15 @@ function extractBlockContextName(
     }
   }
   return undefined;
+}
+
+function contextsSatisfied(selection: ContextSelection, requiredNames: string[]): boolean {
+  const available = new Set(selection.additionalContexts.keys());
+  available.add('context');
+  for (const name of requiredNames) {
+    if (!available.has(name)) {
+      return false;
+    }
+  }
+  return true;
 }
