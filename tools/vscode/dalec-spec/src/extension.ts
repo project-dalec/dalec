@@ -1,5 +1,6 @@
+import { execFile, type ExecFileOptionsWithStringEncoding } from 'child_process';
 import * as path from 'path';
-import { TextDecoder } from 'util';
+import { TextDecoder, promisify } from 'util';
 import * as vscode from 'vscode';
 
 const YAML_EXTENSION_ID = 'redhat.vscode-yaml';
@@ -9,6 +10,9 @@ const DEBUG_COMMAND = 'dalec.debugCurrentSpec';
 const BUILD_COMMAND = 'dalec.buildCurrentSpec';
 const SYNTAX_REGEX = /^#\s*(?:syntax|sytnax)\s*=\s*(?<image>ghcr\.io\/(?:project-dalec|azure)\/dalec\/frontend:[^\s#]+|[^\s#]*dalec[^\s#]*)/i;
 const FALLBACK_SCHEMA_RELATIVE_PATH = ['schemas', 'spec.schema.json'];
+const FRONTEND_TARGET_CACHE_TTL_MS = 5 * 60 * 1000;
+const execFileAsync = promisify(execFile);
+const frontendTargetCache = new Map<string, FrontendTargetCacheEntry>();
 
 export async function activate(context: vscode.ExtensionContext) {
   const tracker = new DalecDocumentTracker();
@@ -524,8 +528,7 @@ async function pickTarget(
   tracker: DalecDocumentTracker,
   placeholder: string,
 ): Promise<string | undefined> {
-  const metadata = tracker.getMetadata(document);
-  const targets = metadata?.targets ?? [];
+  const targets = await getTargetsForDocument(document, tracker);
 
   if (targets.length === 1) {
     return targets[0];
@@ -558,6 +561,74 @@ function quote(value: string): string {
   return value;
 }
 
+async function getTargetsForDocument(
+  document: vscode.TextDocument,
+  tracker: DalecDocumentTracker,
+): Promise<string[]> {
+  const targets = new Set(tracker.getMetadata(document)?.targets ?? []);
+  const frontendTargets = await getFrontendTargets(document);
+  frontendTargets?.forEach((target) => targets.add(target));
+  return [...targets];
+}
+
+async function getFrontendTargets(document: vscode.TextDocument): Promise<string[] | undefined> {
+  const key = document.uri.toString();
+  const now = Date.now();
+  const cached = frontendTargetCache.get(key);
+  if (cached && now - cached.timestamp < FRONTEND_TARGET_CACHE_TTL_MS) {
+    return cached.targets;
+  }
+
+  return vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Querying Dalec targets via docker buildx...',
+      cancellable: false,
+    },
+    async () => {
+      try {
+        const contextPath = getContextPath(document);
+        const args = ['buildx', 'build', '--call', 'targets', '-f', document.uri.fsPath, contextPath];
+        const execOptions: ExecFileOptionsWithStringEncoding = {
+          cwd: contextPath,
+          env: {
+            ...process.env,
+            BUILDX_EXPERIMENTAL: '1',
+          },
+          maxBuffer: 20 * 1024 * 1024,
+          encoding: 'utf8',
+        };
+        const { stdout } = await execFileAsync('docker', args, execOptions);
+        const parsed = parseTargetsFromOutput(stdout);
+        if (parsed.length > 0) {
+          frontendTargetCache.set(key, { targets: parsed, timestamp: Date.now() });
+        }
+        return parsed;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showWarningMessage(`Failed to query Dalec targets: ${message}`);
+        return cached?.targets;
+      }
+    },
+  );
+}
+
+function parseTargetsFromOutput(output: string): string[] {
+  const targets = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || /^target/i.test(trimmed) || trimmed.startsWith('=') || trimmed.startsWith('-')) {
+      continue;
+    }
+
+    const match = trimmed.match(/^([A-Za-z0-9._/-]+)/);
+    if (match) {
+      targets.add(match[1]);
+    }
+  }
+  return [...targets];
+}
+
 type YamlExtensionExports = {
   registerContributor?: (
     schema: string,
@@ -567,3 +638,8 @@ type YamlExtensionExports = {
 };
 
 type YamlExtensionApi = YamlExtensionExports;
+
+interface FrontendTargetCacheEntry {
+  targets: string[];
+  timestamp: number;
+}

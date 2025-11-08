@@ -9,6 +9,7 @@ This extension adds lightweight authoring, CodeLens actions, and BuildKit debugg
 - Adds a `dalec-buildx` debug type that shells out to `BUILDX_EXPERIMENTAL=1 docker buildx dap build --target <target> -f <spec file> <context>` so you can start BuildKit debug sessions straight from VS Code. Breakpoints are enabled inside YAML docs.
 - Inserts CodeLens actions (“Dalec: Debug” / “Dalec: Build”) at the top of every Dalec spec. These commands prompt for a target (auto-detected from the `targets:` map when present) and either launch a debugger or run `docker buildx build` in a terminal.
 - Exposes commands `Dalec: Debug Spec` and `Dalec: Build Spec` through the Command Palette for quick access.
+- When picking a target the extension queries the Dalec frontend via `docker buildx build --call targets -f <spec> <context>` so nested routes and frontend-provided descriptions stay accurate. Results are cached briefly to avoid redundant calls.
 
 ## Getting started
 
@@ -48,3 +49,4 @@ If `specFile` is omitted the extension attempts to use the currently-focused Dal
 
 - The schema provider prefers `docs/spec.schema.json` inside the workspace folder that owns the Dalec document. A vendored copy at `schemas/spec.schema.json` acts as a fallback to keep the extension functional even when the docs directory is missing.
 - The provider depends on the Red Hat YAML extension (`redhat.vscode-yaml`). Install it to surface completions and validation—this extension declares the dependency so VS Code will prompt you automatically.
+- Target discovery requires a working Docker + Buildx setup because the extension shells out to `docker buildx build --call targets ...`. Failures fall back to whatever `targets:` entries are defined in the spec.
