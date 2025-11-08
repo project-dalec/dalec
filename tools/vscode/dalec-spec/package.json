@@ -1,0 +1,111 @@
+{
+  "name": "dalec-spec",
+  "displayName": "Dalec Spec Tools",
+  "description": "Dalec spec language helpers and BuildKit debugging integration.",
+  "version": "0.1.0",
+  "publisher": "project-dalec",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/project-dalec/dalec.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Debuggers"
+  ],
+  "extensionDependencies": [
+    "redhat.vscode-yaml"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "onLanguage:yml",
+    "onDebug:dalec-buildx",
+    "workspaceContains:docs/spec.schema.json",
+    "onCommand:dalec.debugCurrentSpec",
+    "onCommand:dalec.buildCurrentSpec"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dalec.debugCurrentSpec",
+        "title": "Dalec: Debug Spec"
+      },
+      {
+        "command": "dalec.buildCurrentSpec",
+        "title": "Dalec: Build Spec"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "yaml"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "dalec-buildx",
+        "label": "Dalec Buildx (docker buildx dap)",
+        "enableBreakpointsFor": [
+          {
+            "language": "yaml"
+          }
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "target"
+            ],
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Name of the dalec target to debug",
+                "default": ""
+              },
+              "specFile": {
+                "type": "string",
+                "description": "Path to the dalec spec file (defaults to active editor)",
+                "default": ""
+              },
+              "context": {
+                "type": "string",
+                "description": "Build context directory (defaults to workspace root)",
+                "default": ""
+              },
+              "buildArgs": {
+                "type": "object",
+                "description": "Additional --build-arg values keyed by arg name",
+                "default": {}
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "name": "Dalec: Buildx Debug Current Spec",
+            "type": "dalec-buildx",
+            "request": "launch",
+            "target": "example",
+            "specFile": "${file}"
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "lint": "eslint src --max-warnings=0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.25",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.18.0",
+    "@typescript-eslint/parser": "^6.18.0",
+    "@vscode/vsce": "^3.7.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  }
+}

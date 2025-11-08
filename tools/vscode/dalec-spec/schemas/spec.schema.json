@@ -1,0 +1,2399 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$ref": "#/$defs/Spec",
+	"patternProperties": {
+		"^x-": {}
+	},
+	"$id": "https://github.com/project-dalec/dalec/spec",
+	"id": "",
+	"$defs": {
+		"AddGroupConfig": {
+			"required": [
+				"name"
+			],
+			"properties": {
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the name of the group to add to the system."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "AddGroupConfig is the configuration for adding a group to the system."
+		},
+		"AddUserConfig": {
+			"required": [
+				"name"
+			],
+			"properties": {
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the name of the user to add to the system."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "AddUserConfig is the configuration for adding a user to the system."
+		},
+		"ArtifactBuild": {
+			"required": [
+				"steps"
+			],
+			"properties": {
+				"caches": {
+					"items": {
+						"$ref": "#/$defs/CacheConfig"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Caches is the list of caches to use for the build.\nThese apply to all steps."
+				},
+				"env": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"integer",
+						"null"
+					],
+					"description": "Env is the list of environment variables to set for all commands in this step group."
+				},
+				"network_mode": {
+					"enum": [
+						"none",
+						"sandbox"
+					],
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "NetworkMode sets the network mode to use during the build phase.\nAccepted values: none, sandbox\nDefault: none"
+				},
+				"steps": {
+					"$ref": "#/$defs/BuildStepList",
+					"description": "Steps is the list of commands to run to build the artifact(s).\nEach step is run sequentially and will be cached accordingly depending on the frontend implementation."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ArtifactBuild configures a group of steps that are run sequentially along with their outputs to build the artifact(s)."
+		},
+		"ArtifactConfig": {
+			"properties": {
+				"group": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Group is the group name that should own the artifact"
+				},
+				"name": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Name is file or dir name to use for the artifact in the package.\nIf empty, the file or dir name from the produced artifact will be used."
+				},
+				"permissions": {
+					"type": [
+						"integer"
+					],
+					"description": "Permissions is the file permissions to set on the artifact.\nIf not set, the default value will depend on the kind of artifact or the underlying artifact's already set permissions."
+				},
+				"subpath": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Subpath is the subpath to use in the package for the artifact type.\n\nAs an example, binaries are typically placed in /usr/bin when installed.\nIf you want to nest them in a subdirectory, you can specify it here."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the user name that should own the artifact"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ArtifactConfig is the configuration for a given artifact type."
+		},
+		"ArtifactDirConfig": {
+			"properties": {
+				"group": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Group is the group name that should own the directory"
+				},
+				"mode": {
+					"type": [
+						"integer"
+					],
+					"description": "Mode is used to set the file permission bits of the final created directory to the specified mode.\nMode is the octal permissions to set on the dir."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the user name that should own the directory"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ArtifactDirConfig contains information about the directory to be created"
+		},
+		"ArtifactSymlinkConfig": {
+			"properties": {
+				"dest": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Dest is the path where the symlink will be installed"
+				},
+				"group": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Group is the group name that should own the symlink"
+				},
+				"source": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Source is the path that is being linked to\nExample:\n  If you want a symlink in /usr/bin/foo that is linking to /usr/bin/foo/foo\n  then the `Source` is `/usr/bin/foo/foo`"
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the user name that should own the symlink"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"Artifacts": {
+			"properties": {
+				"binaries": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Binaries is the list of binaries to include in the package."
+				},
+				"configFiles": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "ConfigFiles is a list of files that should be marked as config files in the package."
+				},
+				"createDirectories": {
+					"$ref": "#/$defs/CreateArtifactDirectories",
+					"description": "Directories is a list of various directories that should be created by the package."
+				},
+				"data_dirs": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "DataDirs is a list of read-only architecture-independent data files, to be placed in /usr/share/"
+				},
+				"disable_auto_requires": {
+					"type": [
+						"boolean"
+					],
+					"description": "DisableAutoRequires is used to disable automatic dependency discovery for\nthe produced package.\n\nSome tooling, such as `rpmbuild`, will look at all artifacts and\nautomatically inject missing dependencies into the package metadata.\nFor instance, if you include a `.sh` script, rpmbuild with automatically\nadd `bash` as a dependency for the package.\nIt also does this for libraries being linked against.\n\nThis is useful if you want to have more control over the dependencies\nthat are included in the package.\nHowever, you must be careful to manually include all dependencies that are required."
+				},
+				"disable_strip": {
+					"type": [
+						"boolean"
+					],
+					"description": "DisableStrip is used to disable stripping of artifacts."
+				},
+				"docs": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Docs is a list of doc files included in the package"
+				},
+				"groups": {
+					"items": {
+						"$ref": "#/$defs/AddGroupConfig"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Groups is a list of groups to add to the system when the package is installed."
+				},
+				"headers": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Headers is a list of header files and/or folders to be installed.\nOn linux this would typically be installed to /usr/include/."
+				},
+				"libexec": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Libexec is the list of additional binaries that may be invoked by the main package binary."
+				},
+				"libs": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Libs is the list of library files to be installed.\nOn linux this would typically be installed to /usr/lib/\u003cpackage name\u003e"
+				},
+				"licenses": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Licenses is a list of doc files included in the package"
+				},
+				"links": {
+					"items": {
+						"$ref": "#/$defs/ArtifactSymlinkConfig"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Links is the list of symlinks to be installed with the package\nLinks should only be used if the *package* should contain the link.\nFor making a container compatible with another image, use [PostInstall] in\nthe [ImageConfig]."
+				},
+				"manpages": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Manpages is the list of manpages to include in the package."
+				},
+				"systemd": {
+					"$ref": "#/$defs/SystemdConfiguration",
+					"description": "Systemd is the list of systemd units and dropin files for the package"
+				},
+				"users": {
+					"items": {
+						"$ref": "#/$defs/AddUserConfig"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Users is a list of users to add to the system when the package is installed."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "Artifacts describes all the artifacts to include in the package."
+		},
+		"BaseImage": {
+			"required": [
+				"rootfs"
+			],
+			"properties": {
+				"rootfs": {
+					"$ref": "#/$defs/Source",
+					"description": "Rootfs represents an image rootfs."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"BazelCache": {
+			"properties": {
+				"scope": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Scope adds extra information to the cache key.\nThis is useful to differentiate between different build contexts if required.\n\nThis is mainly intended for internal testing purposes."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "Currently this only supports setting up a *local* bazel cache."
+		},
+		"BuildStep": {
+			"required": [
+				"command"
+			],
+			"properties": {
+				"command": {
+					"type": [
+						"string"
+					],
+					"description": "Command is the command to run to build the artifact(s).\nThis will always be wrapped as /bin/sh -c \"\u003ccommand\u003e\", or whatever the equivalent is for the target distro."
+				},
+				"env": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Env is the list of environment variables to set for the command."
+				},
+				"mounts": {
+					"items": {
+						"$ref": "#/$defs/SourceMount"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Mounts is the list of sources to mount into the build step."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "BuildStep is used to execute a command to build the artifact(s)."
+		},
+		"BuildStepList": {
+			"items": {
+				"$ref": "#/$defs/BuildStep"
+			},
+			"type": [
+				"array"
+			]
+		},
+		"CacheConfig": {
+			"properties": {
+				"bazel": {
+					"$ref": "#/$defs/BazelCache",
+					"description": "Bazel specifies a cache for bazel builds."
+				},
+				"dir": {
+					"$ref": "#/$defs/CacheDir",
+					"description": "Dir specifies a generic cache directory configuration."
+				},
+				"gobuild": {
+					"$ref": "#/$defs/GoBuildCache",
+					"description": "GoBuild specifies a cache for Go's incremental build artifacts.\nThis should speed up repeated builds of Go projects."
+				},
+				"rustsccache": {
+					"$ref": "#/$defs/SCCache",
+					"description": "RustSCCache specifies a cache for Rust build artifacts.\nThis uses sccache to cache Rust compilation artifacts."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"oneOf": [
+				{
+					"required": [
+						"dir"
+					],
+					"title": "dir"
+				},
+				{
+					"required": [
+						"gobuild"
+					],
+					"title": "gobuild"
+				},
+				{
+					"required": [
+						"rustsccache"
+					],
+					"title": "rustsccache"
+				},
+				{
+					"required": [
+						"bazel"
+					],
+					"title": "bazel-local"
+				}
+			],
+			"description": "CacheConfig configures a cache to use for a build."
+		},
+		"CacheDir": {
+			"required": [
+				"key",
+				"dest",
+				"sharing",
+				"no_auto_namespace"
+			],
+			"properties": {
+				"dest": {
+					"type": [
+						"string"
+					],
+					"description": "Dest is the directory to mount the cache to."
+				},
+				"key": {
+					"type": [
+						"string"
+					],
+					"description": "Key is the cache key to use.\nIf not set then the dest will be used."
+				},
+				"no_auto_namespace": {
+					"type": [
+						"boolean"
+					],
+					"description": "NoAutoNamespace disables the automatic prefixing of the cache key with the\ntarget specific information such as distro and CPU architecture, which may\nbe auto-injected to prevent common issues that would cause an invalid cache."
+				},
+				"sharing": {
+					"enum": [
+						"shared",
+						"locked",
+						"private"
+					],
+					"type": [
+						"string"
+					],
+					"description": "Sharing is the sharing mode of the cache.\nIt can be one of the following:\n- shared: multiple jobs can use the cache at the same time.\n- locked: exclusive access to the cache is required.\n- private: changes to the cache are not shared with other jobs and are discarded\n  after the job is finished."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "CacheDir is a generic cache directory configuration."
+		},
+		"ChangelogEntry": {
+			"required": [
+				"date",
+				"author",
+				"changes"
+			],
+			"properties": {
+				"author": {
+					"type": [
+						"string"
+					],
+					"description": "Author is the author of the changelog entry. e.g. `John Smith \u003cjohn.smith@example.com\u003e`"
+				},
+				"changes": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Changes is the list of changes in the changelog entry."
+				},
+				"date": {
+					"$ref": "#/$defs/Date",
+					"description": "Date is the date of the changelog entry.\nDates are formatted as YYYY-MM-DD"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"oneOf": [
+				{
+					"required": [
+						"date"
+					],
+					"title": "date"
+				}
+			],
+			"description": "ChangelogEntry is an entry in the changelog."
+		},
+		"CheckOutput": {
+			"properties": {
+				"contains": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Contains is the list of strings to check if they are contained in the output."
+				},
+				"empty": {
+					"type": [
+						"boolean"
+					],
+					"description": "Empty is used to check if the output is empty."
+				},
+				"ends_with": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "EndsWith is the string to check if the output ends with."
+				},
+				"equals": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Equals is the exact string to compare the output to."
+				},
+				"matches": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Matches is the list of regular expressions to match the output against."
+				},
+				"starts_with": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "StartsWith is the string to check if the output starts with."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "CheckOutput is used to specify the expected output of a check, such as stdout/stderr or a file."
+		},
+		"Command": {
+			"required": [
+				"steps"
+			],
+			"properties": {
+				"dir": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Dir is the working directory to run the command in."
+				},
+				"env": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Env is the list of environment variables to set for all commands in this step group."
+				},
+				"mounts": {
+					"items": {
+						"$ref": "#/$defs/SourceMount"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Mounts is the list of sources to mount into the build steps."
+				},
+				"steps": {
+					"items": {
+						"$ref": "#/$defs/BuildStep"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Steps is the list of commands to run to generate the source.\nSteps are run sequentially and results of each step should be cached."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "Command is used to execute a command to generate a source from a docker image."
+		},
+		"CreateArtifactDirectories": {
+			"properties": {
+				"config": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactDirConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Config is a list of directories the RPM should place under the system config directory (i.e. /etc)"
+				},
+				"state": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactDirConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "State is a list of directories the RPM should place under the common directory for shared state and libs (i.e. /var/lib)."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "CreateArtifactDirectories describes various directories that should be created on install."
+		},
+		"Date": {
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"FileCheckOutput": {
+			"properties": {
+				"contains": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Contains is the list of strings to check if they are contained in the output."
+				},
+				"empty": {
+					"type": [
+						"boolean"
+					],
+					"description": "Empty is used to check if the output is empty."
+				},
+				"ends_with": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "EndsWith is the string to check if the output ends with."
+				},
+				"equals": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Equals is the exact string to compare the output to."
+				},
+				"is_dir": {
+					"type": [
+						"boolean"
+					],
+					"description": "IsDir is used to set the expected file mode to a directory."
+				},
+				"matches": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Matches is the list of regular expressions to match the output against."
+				},
+				"not_exist": {
+					"type": [
+						"boolean"
+					],
+					"description": "NotExist is used to check that the file does not exist."
+				},
+				"permissions": {
+					"type": [
+						"integer"
+					],
+					"description": "Permissions is the expected permissions of the file."
+				},
+				"starts_with": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "StartsWith is the string to check if the output starts with."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "FileCheckOutput is used to specify the expected output of a file."
+		},
+		"Frontend": {
+			"required": [
+				"image"
+			],
+			"properties": {
+				"cmdline": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "CmdLine is the command line to use to forward the build to the frontend.\nBy default the frontend image's entrypoint/cmd is used."
+				},
+				"image": {
+					"type": [
+						"string"
+					],
+					"description": "Image specifies the frontend image to forward the build to.\nThis can be left unspecified *if* the original frontend has builtin support for the distro.\n\nIf the original frontend does not have builtin support for the distro, this must be specified or the build will fail.\nIf this is specified then it MUST be used."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "Frontend encapsulates the configuration for a frontend to forward a build target to."
+		},
+		"GeneratorCargohome": {
+			"properties": {
+				"paths": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Paths is the list of paths to run the generator on. Used to generate multi-module in a single source."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GeneratorCargohome is used to generate a cargo home from cargo sources"
+		},
+		"GeneratorGomod": {
+			"properties": {
+				"auth": {
+					"additionalProperties": {
+						"$ref": "#/$defs/GomodGitAuth"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host."
+				},
+				"paths": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Paths is the list of paths to run the generator on. Used to generate multi-module in a single source."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GeneratorGomod is used to generate a go module cache from go module sources"
+		},
+		"GeneratorNodeMod": {
+			"properties": {
+				"paths": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Paths is the list of paths to run the generator on. Used to generate multi-module in a single source."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GeneratorNodeMod is used to generate a node module cache for Yarn or npm."
+		},
+		"GeneratorPip": {
+			"properties": {
+				"extra_index_urls": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "ExtraIndexUrls specifies additional PyPI index URLs"
+				},
+				"index_url": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "IndexUrl specifies a custom PyPI index URL"
+				},
+				"paths": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Paths is the list of paths to run the generator on. Used to generate multi-module in a single source."
+				},
+				"requirements_file": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "RequirementsFile is the name of the requirements file (default: \"requirements.txt\")"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"GitAuth": {
+			"properties": {
+				"header": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Header is the name of the secret which contains the git auth header.\nWhen using git auth header based authentication.\nNote: This should not have the *actual* secret value, just the name of\nthe secret which was specified as a build secret."
+				},
+				"ssh": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "SSH is the name of the secret which contains the ssh auth info when using\nssh based auth.\nNote: This should not have the *actual* secret value, just the name of\nthe secret which was specified as a build secret."
+				},
+				"token": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Token is the name of the secret which contains a git auth token when using\ntoken based authentication.\nNote: This should not have the *actual* secret value, just the name of\nthe secret which was specified as a build secret."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"GoBuildCache": {
+			"properties": {
+				"disabled": {
+					"type": [
+						"boolean"
+					],
+					"description": "The gobuild cache may be automatically injected into a build if\ngo is detected.\nDisabled explicitly turns this off."
+				},
+				"scope": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Scope adds extra information to the cache key.\nThis is useful to differentiate between different build contexts if required.\n\nThis is mainly intended for internal testing purposes."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GoBuildCache is a cache for Go build artifacts."
+		},
+		"GomodGitAuth": {
+			"properties": {
+				"header": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Header is the name of the secret that contains the git auth header.\nwhen using git auth header based authentication.\nNote: This should not have the *actual* secret value, just the name of\nthe secret which was specified as a build secret."
+				},
+				"ssh": {
+					"$ref": "#/$defs/GomodGitAuthSSH",
+					"description": "SSH is a struct container the name of the ssh ID which contains the\naddress of the ssh auth socket, plus the username to use for the git\nremote.\nNote: This should not have the *actual* socket address, just the name of\nthe ssh ID which was specified as a build secret."
+				},
+				"token": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Token is the name of the secret which contains a git auth token when using\ntoken based authentication.\nNote: This should not have the *actual* secret value, just the name of\nthe secret which was specified as a build secret."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"GomodGitAuthSSH": {
+			"properties": {
+				"id": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "ID is the name of the ssh socket to mount, as provided via the `--ssh`\nflag to `docker build`."
+				},
+				"username": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Username is the username to use with this particular git remote. If none\nis provided, `git` will be inserted."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"ImageConfig": {
+			"properties": {
+				"base": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Deprecated: Use [Bases] instead."
+				},
+				"bases": {
+					"items": {
+						"$ref": "#/$defs/BaseImage"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Bases is used to specify a list of base images to build images for.  The\nintent of allowing multiple bases is for cases, such as Windows, where you\nmay want to publish multiple versions of a base image in one image.\n\nWindows is the example here because of the way Windows works, the image\nthat the base is based off of must match the OS version of the host machine.\nTherefore it is common to have multiple Windows images in one with a\ndifferent value for the os version field of the platform.\n\nFor the most part implementations are not expected to support multiple base\nimages and may error out if multiple are specified.\n\nThis should not be set if [Base] is also set."
+				},
+				"cmd": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Cmd sets the image's \"cmd\" field.\nWhen entrypoint is set, this is used as the default arguments to the entrypoint.\nWhen entrypoint is not set, this is used as the default command to run."
+				},
+				"entrypoint": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Entrypoint sets the image's \"entrypoint\" field.\nThis is used to control the default command to run when the image is run."
+				},
+				"env": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Env is the list of environment variables to set in the image."
+				},
+				"labels": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Labels is the list of labels to set in the image metadata."
+				},
+				"post": {
+					"$ref": "#/$defs/PostInstall",
+					"description": "Post is the post install configuration for the image.\nThis allows making additional modifications to the container rootfs after the package(s) are installed.\n\nUse this to perform actions that would otherwise require additional tooling inside the container that is not relevant to\nthe resulting container and makes a post-install script as part of the package unnecessary."
+				},
+				"stop_signal": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "StopSignal is the signal to send to the container to stop it.\nThis is used to stop the container gracefully."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the that the image should run as."
+				},
+				"volumes": {
+					"additionalProperties": {
+						"additionalProperties": {
+							"not": {}
+						},
+						"type": [
+							"object",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Volumes is the list of volumes for the image.\nVolumes instruct the runtime to bypass the any copy-on-write filesystems and mount the volume directly to the container."
+				},
+				"working_dir": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "WorkingDir is the working directory to set in the image.\nThis sets the directory the container will start in."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ImageConfig is the configuration for the output image."
+		},
+		"PackageConfig": {
+			"properties": {
+				"signer": {
+					"$ref": "#/$defs/PackageSigner",
+					"description": "Signer is the configuration to use for signing packages"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "PackageConfig encapsulates the configuration for artifact targets"
+		},
+		"PackageConstraints": {
+			"properties": {
+				"arch": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Arch is a list of architecture constraints for the package.\nUse this to specify that a package constraint only applies to certain architectures."
+				},
+				"version": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Version is a list of version constraints for the package.\nThe format of these strings is dependent on the package manager of the target system.\nExamples:\n  [\"\u003e=1.0.0\", \"\u003c2.0.0\"]"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "PackageConstraints is used to specify complex constraints for a package dependency."
+		},
+		"PackageDependencies": {
+			"properties": {
+				"build": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Build is the list of packagese required to build the package."
+				},
+				"extra_repos": {
+					"items": {
+						"$ref": "#/$defs/PackageRepositoryConfig"
+					},
+					"type": [
+						"array"
+					],
+					"description": "ExtraRepos is used to inject extra package repositories that may be used to\nsatisfy package dependencies in various stages."
+				},
+				"recommends": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Recommends is the list of packages recommended to install with the generated package.\nNote: Not all package managers support this (e.g. rpm)"
+				},
+				"runtime": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Runtime is the list of packages required to install/run the package."
+				},
+				"sysext": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Sysext is the list of packages to include in the generated system\nextension. No dependency resolution is performed when generating system\nextensions, so all required dependencies must be explicitly listed here."
+				},
+				"test": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Test lists any extra packages required for running tests\nThese packages are only installed for tests which have steps that require\nrunning a command in the built container.\nUse a map so test dependencies can have PackageConstraints (and source maps)."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "PackageDependencies is a list of dependencies for a package."
+		},
+		"PackageDependencyList": {
+			"additionalProperties": {
+				"$ref": "#/$defs/PackageConstraints"
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"PackageRepositoryConfig": {
+			"required": [
+				"config",
+				"envs"
+			],
+			"properties": {
+				"config": {
+					"additionalProperties": {
+						"$ref": "#/$defs/Source"
+					},
+					"type": [
+						"object"
+					],
+					"description": "Config list of repo configs to to add to the environment.  The format of\nthese configs are distro specific (e.g. apt/yum configs)."
+				},
+				"data": {
+					"items": {
+						"$ref": "#/$defs/SourceMount"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Data lists all the extra data that needs to be made available for the\nprovided repository config to work.\nAs an example, if the provided config is referencing a file backed repository\nthen data would include the file data, assuming its not already available\nin the environment."
+				},
+				"envs": {
+					"items": {
+						"enum": [
+							"build",
+							"test",
+							"install"
+						],
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Envs specifies the list of environments to make the repositories available\nduring.\nAcceptable values are:\n - \"build\"   - Repositories are added prior to installing build dependencies\n - \"test\"    - Repositories are added prior to installing test dependencies\n - \"install\" - Repositories are added prior to installing the output\n               package in a container build target."
+				},
+				"keys": {
+					"additionalProperties": {
+						"$ref": "#/$defs/Source"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Keys are the list of keys that need to be imported to use the configured\nrepositories"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "PackageRepositoryConfig"
+		},
+		"PackageSigner": {
+			"required": [
+				"image"
+			],
+			"properties": {
+				"args": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Args are passed along to the signer frontend as build args"
+				},
+				"cmdline": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "CmdLine is the command line to use to forward the build to the frontend.\nBy default the frontend image's entrypoint/cmd is used."
+				},
+				"image": {
+					"type": [
+						"string"
+					],
+					"description": "Image specifies the frontend image to forward the build to.\nThis can be left unspecified *if* the original frontend has builtin support for the distro.\n\nIf the original frontend does not have builtin support for the distro, this must be specified or the build will fail.\nIf this is specified then it MUST be used."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "PackageSigner is the configuration for defining how to sign a package"
+		},
+		"PatchSpec": {
+			"required": [
+				"source"
+			],
+			"properties": {
+				"path": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Optional subpath to the patch file inside the source\nThis is only useful for directory-backed sources."
+				},
+				"source": {
+					"type": [
+						"string"
+					],
+					"description": "Source is the name of the source that contains the patch to apply."
+				},
+				"strip": {
+					"type": [
+						"integer"
+					],
+					"description": "Strip is the number of leading path components to strip from the patch.\nThe default is 1 which is typical of a git diff."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "PatchSpec is used to apply a patch to a source with a given set of options."
+		},
+		"PostInstall": {
+			"properties": {
+				"symlinks": {
+					"additionalProperties": {
+						"$ref": "#/$defs/SymlinkTarget"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Symlinks is the list of symlinks to create in the container rootfs after the package(s) are installed.\nThe key is the path the symlink should point to."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "PostInstall is the post install configuration for the image."
+		},
+		"SCCache": {
+			"properties": {
+				"scope": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Scope adds extra information to the cache key.\nThis is useful to differentiate between different build contexts if required.\n\nThis is mainly intended for internal testing purposes."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SCCache is a cache for Rust build artifacts."
+		},
+		"Source": {
+			"properties": {
+				"build": {
+					"$ref": "#/$defs/SourceBuild"
+				},
+				"context": {
+					"$ref": "#/$defs/SourceContext"
+				},
+				"excludes": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Excludes is a list of paths underneath `Path` to exclude, everything else is included"
+				},
+				"generate": {
+					"items": {
+						"$ref": "#/$defs/SourceGenerator"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Generate specifies a list of dependency generators to apply to a given source.\n\nGenerators are used to generate additional sources from this source.\nAs an example the `gomod` generator can be used to generate a go module cache from a go source.\nHow a generator operates is dependent on the actual generator.\nGenerators may also cause modifications to the build environment.\n\nCurrently supported generators are: \"gomod\", \"cargohome\", and \"pip\".\nThe \"gomod\" generator will generate a go module cache from the source.\nThe \"cargohome\" generator will generate a cargo home from the source.\nThe \"pip\" generator will generate a pip cache from the source."
+				},
+				"git": {
+					"$ref": "#/$defs/SourceGit"
+				},
+				"http": {
+					"$ref": "#/$defs/SourceHTTP"
+				},
+				"image": {
+					"$ref": "#/$defs/SourceDockerImage",
+					"description": "This is an embedded union representing all of the possible source types.\nExactly one must be non-nil, with all other cases being errors.\n\n=== Begin Source Variants ==="
+				},
+				"includes": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Includes is a list of paths underneath `Path` to include, everything else is execluded\nIf empty, everything is included (minus the excludes)"
+				},
+				"inline": {
+					"$ref": "#/$defs/SourceInline"
+				},
+				"path": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Path is the path to the source after fetching it based on the identifier."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "Source defines a source to be used in the build."
+		},
+		"SourceBuild": {
+			"properties": {
+				"args": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Args are the build args to pass to the build."
+				},
+				"dockerfile_path": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "DockerfilePath is the path to the build file in the build context\nIf not set the default is assumed by buildkit to be `Dockerfile` at the root of the context."
+				},
+				"source": {
+					"$ref": "#/$defs/Source",
+					"description": "A source specification to use as the context for the Dockerfile build"
+				},
+				"target": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Target specifies the build target to use.\nIf unset, the default target is determined by the frontend implementation\n(e.g. the dockerfile frontend uses the last build stage as the default)."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceBuild is used to generate source from a DockerFile build."
+		},
+		"SourceContext": {
+			"properties": {
+				"name": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Name is the name of the build context. By default, it is the magic name\n`context`, recognized by Docker as the default context."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceContext is used to generate a source from a build context."
+		},
+		"SourceDockerImage": {
+			"required": [
+				"ref"
+			],
+			"properties": {
+				"cmd": {
+					"$ref": "#/$defs/Command"
+				},
+				"ref": {
+					"type": [
+						"string"
+					]
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"SourceGenerator": {
+			"properties": {
+				"cargohome": {
+					"$ref": "#/$defs/GeneratorCargohome",
+					"description": "Cargohome is the cargo home generator."
+				},
+				"gomod": {
+					"$ref": "#/$defs/GeneratorGomod",
+					"description": "Gomod is the go module generator."
+				},
+				"nodemod": {
+					"$ref": "#/$defs/GeneratorNodeMod",
+					"description": "NodeMod is the generic node module generator for npm."
+				},
+				"pip": {
+					"$ref": "#/$defs/GeneratorPip",
+					"description": "Pip is the pip generator."
+				},
+				"subpath": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Subpath is the path inside a source to run the generator from."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"oneOf": [
+				{
+					"required": [
+						"gomod"
+					],
+					"title": "gomod"
+				},
+				{
+					"required": [
+						"cargohome"
+					],
+					"title": "cargohome"
+				},
+				{
+					"required": [
+						"pip"
+					],
+					"title": "pip"
+				},
+				{
+					"required": [
+						"nodemod"
+					],
+					"title": "nodemod"
+				}
+			],
+			"description": "SourceGenerator holds the configuration for a source generator."
+		},
+		"SourceGit": {
+			"required": [
+				"url",
+				"commit"
+			],
+			"properties": {
+				"auth": {
+					"$ref": "#/$defs/GitAuth"
+				},
+				"commit": {
+					"type": [
+						"string"
+					]
+				},
+				"keepGitDir": {
+					"type": [
+						"boolean"
+					]
+				},
+				"url": {
+					"type": [
+						"string"
+					]
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"SourceHTTP": {
+			"required": [
+				"url"
+			],
+			"properties": {
+				"digest": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Digest is the digest of the file to download.\nThis is used to verify the integrity of the file.\nForm: \u003calgorithm\u003e:\u003cdigest\u003e"
+				},
+				"permissions": {
+					"type": [
+						"integer"
+					],
+					"description": "Permissions is the octal file permissions to set on the file."
+				},
+				"url": {
+					"type": [
+						"string"
+					],
+					"description": "URL is the URL to download the file from."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceHTTP is used to download a file from an HTTP(s) URL."
+		},
+		"SourceInline": {
+			"properties": {
+				"dir": {
+					"$ref": "#/$defs/SourceInlineDir",
+					"description": "Dir creates a directory with the given files and directories.\n[SourceIsDir] will return true when this is set.\nThis is mutually exclusive with [File]"
+				},
+				"file": {
+					"$ref": "#/$defs/SourceInlineFile",
+					"description": "File is the inline file to generate.\nFile is treated as a literal single file.\n[SourceIsDir] will return false when this is set.\nThis is mutually exclusive with [Dir]"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceInline is used to generate a source from inline content."
+		},
+		"SourceInlineDir": {
+			"properties": {
+				"files": {
+					"additionalProperties": {
+						"$ref": "#/$defs/SourceInlineFile"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Files is the list of files to include in the directory.\nThe map key is the name of the file.\n\nFiles with path separators in the key will be rejected."
+				},
+				"gid": {
+					"type": [
+						"integer"
+					],
+					"description": "GID is the group ID to set on the directory and all files and directories within it.\nUID must be greater than or equal to 0"
+				},
+				"permissions": {
+					"type": [
+						"integer"
+					],
+					"description": "Permissions is the octal permissions to set on the directory."
+				},
+				"uid": {
+					"type": [
+						"integer"
+					],
+					"description": "UID is the user ID to set on the directory and all files and directories within it.\nUID must be greater than or equal to 0"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceInlineDir is used by by [SourceInline] to represent a filesystem directory."
+		},
+		"SourceInlineFile": {
+			"properties": {
+				"contents": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Contents is the content."
+				},
+				"gid": {
+					"type": [
+						"integer"
+					],
+					"description": "GID is the group ID to set on the directory and all files and directories within it.\nUID must be greater than or equal to 0"
+				},
+				"permissions": {
+					"type": [
+						"integer"
+					],
+					"description": "Permissions is the octal file permissions to set on the file."
+				},
+				"uid": {
+					"type": [
+						"integer"
+					],
+					"description": "UID is the user ID to set on the directory and all files and directories within it.\nUID must be greater than or equal to 0"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceInlineFile is used to specify the content of an inline source."
+		},
+		"SourceMount": {
+			"required": [
+				"dest",
+				"spec"
+			],
+			"properties": {
+				"dest": {
+					"type": [
+						"string"
+					],
+					"description": "Dest is the destination directory to mount to"
+				},
+				"spec": {
+					"$ref": "#/$defs/Source",
+					"description": "Spec specifies the source to mount"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceMount wraps a [Source] with a target mount point."
+		},
+		"Spec": {
+			"required": [
+				"name",
+				"description",
+				"website",
+				"version",
+				"revision",
+				"license"
+			],
+			"properties": {
+				"args": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"integer",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Args is the list of arguments that can be used for shell-style expansion in (certain fields of) the spec.\nAny arg supplied in the build request which does not appear in this list will cause an error.\nAttempts to use an arg in the spec which is not specified here will assume to be a literal string.\nThe map value is the default value to use if the arg is not supplied in the build request."
+				},
+				"artifacts": {
+					"$ref": "#/$defs/Artifacts",
+					"description": "Artifacts is the list of artifacts to include in the package."
+				},
+				"build": {
+					"$ref": "#/$defs/ArtifactBuild",
+					"description": "Build is the configuration for building the artifacts in the package."
+				},
+				"changelog": {
+					"items": {
+						"$ref": "#/$defs/ChangelogEntry"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Changelog is the list of changes to the package."
+				},
+				"conflicts": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Conflicts is the list of packages that conflict with the generated package.\nThis will prevent the package from being installed if any of these packages are already installed or vice versa."
+				},
+				"dependencies": {
+					"$ref": "#/$defs/PackageDependencies",
+					"description": "Dependencies are the different dependencies that need to be specified in the package.\nDependencies are overwritten if specified in the target map for the requested distro."
+				},
+				"description": {
+					"type": [
+						"string"
+					],
+					"description": "Description is a short description of the package."
+				},
+				"image": {
+					"$ref": "#/$defs/ImageConfig",
+					"description": "Image is the image configuration when the target output is a container image.\nThis is overwritten if specified in the target map for the requested distro."
+				},
+				"license": {
+					"type": [
+						"string"
+					],
+					"description": "License is the license of the package."
+				},
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the name of the package."
+				},
+				"noarch": {
+					"type": [
+						"boolean"
+					],
+					"description": "Marks the package as architecture independent.\nIt is up to the package author to ensure that the package is actually architecture independent.\nThis is metadata only."
+				},
+				"package_config": {
+					"$ref": "#/$defs/PackageConfig",
+					"description": "PackageConfig is the configuration to use for artifact targets, such as\nrpms, debs, or zip files containing Windows binaries"
+				},
+				"packager": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Packager is the name of the person,team,company that packaged the package."
+				},
+				"patches": {
+					"additionalProperties": {
+						"items": {
+							"$ref": "#/$defs/PatchSpec"
+						},
+						"type": [
+							"array"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Patches is the list of patches to apply to the sources.\nThe map key is the name of the source to apply the patches to.\nThe value is the list of patches to apply to the source.\nThe patch must be present in the `Sources` map.\nEach patch is applied in order and the result is used as the source for the build."
+				},
+				"provides": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Provides is the list of things that the generated package provides.\nThis can be used to satisfy dependencies of other packages.\nAs an example, the moby-runc package provides \"runc\", other packages could depend on \"runc\" and be satisfied by moby-runc.\nThis is an advanced use case and consideration should be taken to ensure that the package actually provides the thing it claims to provide."
+				},
+				"replaces": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Replaces is the list of packages that are replaced by the generated package."
+				},
+				"revision": {
+					"oneOf": [
+						{
+							"type": [
+								"string"
+							]
+						},
+						{
+							"type": [
+								"integer"
+							]
+						}
+					],
+					"description": "Revision sets the package revision.\nThis will generally get merged into the package version when generating the package."
+				},
+				"sources": {
+					"additionalProperties": {
+						"$ref": "#/$defs/Source"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Sources is the list of sources to use to build the artifact(s).\nThe map key is the name of the source and the value is the source configuration.\nThe source configuration is used to fetch the source and filter the files to include/exclude.\nThis can be mounted into the build using the \"Mounts\" field in the StepGroup.\n\nSources can be embedded in the main spec as here or overridden in a build request."
+				},
+				"targets": {
+					"additionalProperties": {
+						"$ref": "#/$defs/Target"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "The list of distro targets to build the package for."
+				},
+				"tests": {
+					"items": {
+						"$ref": "#/$defs/TestSpec"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Tests are the list of tests to run for the package that should work regardless of target OS\nEach item in this list is run with a separate rootfs and cannot interact with other tests.\nEach [TestSpec] is run with a separate rootfs, asynchronously from other [TestSpec]."
+				},
+				"vendor": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Vendor is the vendor of the package."
+				},
+				"version": {
+					"type": [
+						"string"
+					],
+					"description": "Version sets the version of the package."
+				},
+				"website": {
+					"type": [
+						"string"
+					],
+					"description": "Website is the URL to store in the metadata of the package."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "Spec is the specification for a package build."
+		},
+		"SymlinkTarget": {
+			"required": [
+				"path",
+				"paths"
+			],
+			"properties": {
+				"group": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Group is the group name to set on the symlink."
+				},
+				"path": {
+					"type": [
+						"string"
+					],
+					"description": "Path is the path where the symlink should be placed\n\nDeprecated: This is here for backward compatibility. Use `Paths` instead."
+				},
+				"paths": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Path is a list of `newpath`s that will all point to the same `oldpath`."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the user name to set on the symlink."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"oneOf": [
+				{
+					"required": [
+						"path"
+					],
+					"title": "path"
+				},
+				{
+					"required": [
+						"paths"
+					],
+					"title": "paths"
+				}
+			],
+			"description": "SymlinkTarget specifies the properties of a symlink"
+		},
+		"SystemdConfiguration": {
+			"properties": {
+				"dropins": {
+					"additionalProperties": {
+						"$ref": "#/$defs/SystemdDropinConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Dropins is a list of systemd drop in files that should be included in the package"
+				},
+				"units": {
+					"additionalProperties": {
+						"$ref": "#/$defs/SystemdUnitConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Units is a list of systemd units to include in the package."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"SystemdDropinConfig": {
+			"required": [
+				"unit"
+			],
+			"properties": {
+				"name": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Name is file or dir name to use for the artifact in the package.\nIf empty, the file or dir name from the produced artifact will be used."
+				},
+				"unit": {
+					"type": [
+						"string"
+					],
+					"description": "Unit is the name of the systemd unit that the dropin files should be copied under."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"SystemdUnitConfig": {
+			"required": [
+				"name"
+			],
+			"properties": {
+				"enable": {
+					"type": [
+						"boolean"
+					],
+					"description": "Enable is used to enable the systemd unit on install\nThis determines what will be written to a systemd preset file"
+				},
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the name systemd unit should be copied under.\nNested paths are not supported. It is the user's responsibility\nto name the service with the appropriate extension, i.e. .service, .timer, etc."
+				},
+				"start": {
+					"type": [
+						"boolean"
+					],
+					"description": "Start can be optionally used to start the systemd unit on install\nThis determines what will be written to a systemd preset file\nNote that depending on distribution there may be different\nexpectations as to if the package should be responsible for this"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"Target": {
+			"properties": {
+				"artifacts": {
+					"$ref": "#/$defs/Artifacts",
+					"description": "Artifacts describes all of the artifact configurations to include for this specific target."
+				},
+				"conflicts": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Conflicts is the list of packages that this target conflicts with."
+				},
+				"dependencies": {
+					"$ref": "#/$defs/PackageDependencies",
+					"description": "Dependencies are the different dependencies that need to be specified in the package."
+				},
+				"frontend": {
+					"$ref": "#/$defs/Frontend",
+					"description": "Frontend is the frontend configuration to use for the target.\nThis is used to forward the build to a different, dalec-compatible frontend.\nThis can be useful when testing out new distros or using a different version of the frontend for a given distro."
+				},
+				"image": {
+					"$ref": "#/$defs/ImageConfig",
+					"description": "Image is the image configuration when the target output is a container image."
+				},
+				"package_config": {
+					"$ref": "#/$defs/PackageConfig",
+					"description": "PackageConfig is the configuration to use for artifact targets, such as\nrpms, debs, or zip files containing Windows binaries"
+				},
+				"provides": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Provides is the list of packages that this target provides."
+				},
+				"replaces": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Replaces is the list of packages that this target replaces/obsoletes."
+				},
+				"tests": {
+					"items": {
+						"$ref": "#/$defs/TestSpec"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Tests are the list of tests to run which are specific to the target.\nTests are appended to the list of tests in the main [Spec]"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "Target defines a distro-specific build target."
+		},
+		"TestSpec": {
+			"required": [
+				"name"
+			],
+			"properties": {
+				"dir": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Dir is the working directory to run the command in."
+				},
+				"env": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Env is the list of environment variables to set for all commands in this step group."
+				},
+				"files": {
+					"additionalProperties": {
+						"$ref": "#/$defs/FileCheckOutput"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Files is the list of files to check after running the steps."
+				},
+				"mounts": {
+					"items": {
+						"$ref": "#/$defs/SourceMount"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Mounts is the list of sources to mount into the build steps."
+				},
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the name of the test\nThis will be used to output the test results"
+				},
+				"steps": {
+					"items": {
+						"$ref": "#/$defs/TestStep"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Steps is the list of commands to run to test the package."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "TestSpec is used to execute tests against a container with the package installed in it."
+		},
+		"TestStep": {
+			"required": [
+				"command"
+			],
+			"properties": {
+				"command": {
+					"type": [
+						"string"
+					],
+					"description": "Command is the command to run to build the artifact(s).\nThis will always be wrapped as /bin/sh -c \"\u003ccommand\u003e\", or whatever the equivalent is for the target distro."
+				},
+				"env": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Env is the list of environment variables to set for the command."
+				},
+				"stderr": {
+					"$ref": "#/$defs/CheckOutput",
+					"description": "Stderr describes checks to perform against stderr"
+				},
+				"stdin": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Stdin is the input to provide to the command when running tests"
+				},
+				"stdout": {
+					"$ref": "#/$defs/CheckOutput",
+					"description": "Stdout describes checks to perform against stdout"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "TestStep is a wrapper for [BuildStep] to include checks on stdio streams"
+		}
+	}
+}

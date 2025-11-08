@@ -1,3 +1,6 @@
 _output
 .vscode
 .vim-lsp-settings
+tools/vscode/dalec-spec/*.vsix
+tools/vscode/dalec-spec/dist/
+tools/vscode/dalec-spec/node_modules/
