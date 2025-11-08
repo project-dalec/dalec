@@ -10,6 +10,9 @@ const SCHEMA_SCHEME = 'dalecspec';
 const DEBUG_TYPE = 'dalec-buildx';
 const DEBUG_COMMAND = 'dalec.debugCurrentSpec';
 const BUILD_COMMAND = 'dalec.buildCurrentSpec';
+const DEBUG_ENABLED = process.env.DALEC_ENABLE_DEBUG === '1';
+const DEBUG_DISABLED_MESSAGE =
+  'Dalec BuildKit debugging is temporarily disabled. Set DALEC_ENABLE_DEBUG=1 before starting VS Code to re-enable it for development.';
 const SYNTAX_REGEX = /^#\s*(?:syntax|sytnax)\s*=\s*(?<image>ghcr\.io\/(?:project-dalec|azure)\/dalec\/frontend:[^\s#]+|[^\s#]*dalec[^\s#]*)/i;
 const FALLBACK_SCHEMA_RELATIVE_PATH = ['schemas', 'spec.schema.json'];
 const FRONTEND_TARGET_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -34,19 +37,25 @@ export async function activate(context: vscode.ExtensionContext) {
     codeLensProvider,
   );
 
-  const debugProvider = new DalecDebugConfigurationProvider(tracker);
-  context.subscriptions.push(
-    vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, debugProvider),
-    vscode.debug.registerDebugAdapterDescriptorFactory(
-      DEBUG_TYPE,
-      new DalecDebugAdapterDescriptorFactory(),
-    ),
-  );
+  if (DEBUG_ENABLED) {
+    const debugProvider = new DalecDebugConfigurationProvider(tracker);
+    context.subscriptions.push(
+      vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, debugProvider),
+      vscode.debug.registerDebugAdapterDescriptorFactory(
+        DEBUG_TYPE,
+        new DalecDebugAdapterDescriptorFactory(),
+      ),
+    );
+  }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand(DEBUG_COMMAND, (uri?: vscode.Uri) =>
-      runDebugCommand(uri, tracker, lastAction),
-    ),
+    vscode.commands.registerCommand(DEBUG_COMMAND, (uri?: vscode.Uri) => {
+      if (!DEBUG_ENABLED) {
+        void vscode.window.showInformationMessage(DEBUG_DISABLED_MESSAGE);
+        return;
+      }
+      void runDebugCommand(uri, tracker, lastAction);
+    }),
     vscode.commands.registerCommand(BUILD_COMMAND, (uri?: vscode.Uri) =>
       runBuildCommand(uri, tracker, lastAction),
     ),
@@ -295,19 +304,28 @@ class DalecCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposabl
     const range = new vscode.Range(0, 0, 0, 0);
     const lenses: vscode.CodeLens[] = [
       new vscode.CodeLens(range, {
-        command: DEBUG_COMMAND,
-        title: 'Dalec: Debug',
-        arguments: [document.uri],
-      }),
-      new vscode.CodeLens(range, {
         command: BUILD_COMMAND,
         title: 'Dalec: Build',
         arguments: [document.uri],
       }),
     ];
 
+    if (DEBUG_ENABLED) {
+      lenses.unshift(
+        new vscode.CodeLens(range, {
+          command: DEBUG_COMMAND,
+          title: 'Dalec: Debug',
+          arguments: [document.uri],
+        }),
+      );
+    }
+
     const last = this.lastAction.get();
     if (last && last.specUri.toString() === document.uri.toString()) {
+      if (last.type === 'debug' && !DEBUG_ENABLED) {
+        // Skip showing rerun lens if debug runs are disabled.
+        return lenses;
+      }
       const label =
         last.type === 'build'
           ? `Prev Dalec: Build (${last.target})`
@@ -512,6 +530,11 @@ async function runDebugCommand(
   tracker: DalecDocumentTracker,
   lastAction: LastDalecActionState,
 ) {
+  if (!DEBUG_ENABLED) {
+    void vscode.window.showInformationMessage(DEBUG_DISABLED_MESSAGE);
+    return;
+  }
+
   const document = await resolveDalecDocument(uri, tracker);
   if (!document) {
     return;
@@ -1004,6 +1027,10 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
   const folder = vscode.workspace.getWorkspaceFolder(entry.specUri);
 
   if (entry.type === 'debug') {
+    if (!DEBUG_ENABLED) {
+      void vscode.window.showInformationMessage(DEBUG_DISABLED_MESSAGE);
+      return;
+    }
     const configuration: DalecDebugConfiguration = {
       type: DEBUG_TYPE,
       name: `Dalec: Debug (${entry.target})`,
