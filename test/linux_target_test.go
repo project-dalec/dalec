@@ -2989,6 +2989,9 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			Revision:    "42",
 			Description: "Testing package tests",
 			License:     "MIT",
+			Dependencies: &dalec.PackageDependencies{
+				Test: map[string]dalec.PackageConstraints{"bash": {}},
+			},
 			Tests: []*dalec.TestSpec{
 				{
 					Name: "Test that tests fail the build",
@@ -3008,6 +3011,26 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 						"/": {IsDir: false},
 					},
 				},
+				{
+					Name: "Test that command exiting non-zero fails the build",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'exit 42'"},
+					},
+				},
+				{
+					Name: "Test that command giving the wrong output fails the build",
+					Steps: []dalec.TestStep{
+						{
+							Command: "/bin/sh -ec 'echo hello'",
+							Stdout: dalec.CheckOutput{
+								Equals: "stdout not hello",
+							},
+							Stderr: dalec.CheckOutput{
+								Equals: "stderr not hello",
+							},
+						},
+					},
+				},
 			},
 		}
 
@@ -3017,12 +3040,18 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			assert.ErrorContains(t, err, "expected \"/non-existing-file\" not_exist \"exists=false\"")
 			assert.ErrorContains(t, err, "expected \"/\" permissions \"-rw-r--r--\", got \"-rwxr-xr-x\"")
 			assert.ErrorContains(t, err, "expected \"/\" is_dir \"ModeFile\", got \"ModeDir\"")
+			assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
+			assert.ErrorContains(t, err, "stdout not hello")
+			assert.ErrorContains(t, err, "stderr not hello")
 
 			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			_, err = client.Solve(ctx, sr)
 			assert.ErrorContains(t, err, "expected \"/non-existing-file\" not_exist \"exists=false\"")
 			assert.ErrorContains(t, err, "expected \"/\" permissions \"-rw-r--r--\", got \"-rwxr-xr-x\"")
 			assert.ErrorContains(t, err, "expected \"/\" is_dir \"ModeFile\", got \"ModeDir\"")
+			assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
+			assert.ErrorContains(t, err, "stdout not hello")
+			assert.ErrorContains(t, err, "stderr not hello")
 		})
 	})
 

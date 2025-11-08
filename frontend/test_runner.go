@@ -12,15 +12,15 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
-	"github.com/project-dalec/dalec/internal/testrunner"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/identity"
 	"github.com/moby/buildkit/solver/errdefs"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/internal/testrunner"
 )
 
 // RunTests runs the tests defined in the spec against the given target container.
@@ -156,7 +156,7 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, ref
 						if r.StepIndex != nil {
 							idx := *r.StepIndex
 							step := test.Steps[idx]
-							err = errors.Wrapf(err, "step %d", idx)
+							err := errors.Wrapf(checkErr, "step %d", idx)
 							err = errors.Wrapf(err, "%q", test.Name)
 							switch r.Filename {
 							case "stdout":
