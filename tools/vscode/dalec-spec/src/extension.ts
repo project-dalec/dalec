@@ -21,6 +21,7 @@ const frontendTargetCache = new Map<string, FrontendTargetCacheEntry>();
 const emptyContextDirPath = path.join(os.tmpdir(), 'dalec-empty-context');
 let emptyContextDirReady: Promise<string> | undefined;
 const contextSelectionCache = new Map<string, ContextSelection>();
+const argsSelectionCache = new Map<string, ArgsSelection>();
 
 export async function activate(context: vscode.ExtensionContext) {
   const tracker = new DalecDocumentTracker();
@@ -123,6 +124,7 @@ class DalecDocumentTracker implements vscode.Disposable {
 
     const key = document.uri.toString();
     clearCachedContextSelection(document.uri);
+    clearCachedArgsSelection(document.uri);
     this.tracked.set(key, metadata);
     this.changeEmitter.fire(document.uri);
   }
@@ -133,6 +135,7 @@ class DalecDocumentTracker implements vscode.Disposable {
       this.changeEmitter.fire(uri);
     }
     clearCachedContextSelection(uri);
+    clearCachedArgsSelection(uri);
   }
 
   private extractTargets(document: vscode.TextDocument): string[] {
@@ -179,6 +182,7 @@ class DalecDocumentTracker implements vscode.Disposable {
     return {
       targets: this.extractTargets(document),
       contexts: scanContextNames(document.getText()),
+      args: extractArgs(document.getText()),
     };
   }
 
@@ -528,6 +532,7 @@ interface BuildTargetInfo {
 interface DalecDocumentMetadata {
   targets: string[];
   contexts: string[];
+  args: Map<string, string | undefined>;
 }
 
 async function runDebugCommand(
@@ -555,6 +560,11 @@ async function runDebugCommand(
     return;
   }
 
+  const argsSelection = await collectArgsSelection(document, tracker);
+  if (!argsSelection) {
+    return;
+  }
+
   const folder = vscode.workspace.getWorkspaceFolder(document.uri);
   const configuration: DalecDebugConfiguration = {
     type: DEBUG_TYPE,
@@ -565,12 +575,14 @@ async function runDebugCommand(
     context: contextSelection.defaultContextPath,
     buildContexts: recordFromMap(contextSelection.additionalContexts),
     dalecContextResolved: true,
+    buildArgs: recordFromMap(argsSelection.values),
   };
   lastAction.record({
     type: 'debug',
     target,
     specUri: document.uri,
     contexts: contextSelection,
+    args: argsSelection,
   });
 
   await vscode.debug.startDebugging(folder, configuration);
@@ -596,7 +608,13 @@ async function runBuildCommand(
     return;
   }
 
+  const argsSelection = await collectArgsSelection(document, tracker);
+  if (!argsSelection) {
+    return;
+  }
+
   const additionalContexts = formatBuildContextFlags(contextSelection.additionalContexts);
+  const buildArgFlags = formatBuildArgs(argsSelection.values);
   const terminal = vscode.window.createTerminal({
     name: `Dalec Build (${target})`,
     env: {
@@ -608,6 +626,7 @@ async function runBuildCommand(
   const parts = [
     'docker buildx build',
     ...additionalContexts,
+    ...buildArgFlags,
     '--target',
     quote(target),
     '-f',
@@ -621,6 +640,7 @@ async function runBuildCommand(
     target,
     specUri: document.uri,
     contexts: contextSelection,
+    args: argsSelection,
   });
 }
 
@@ -699,6 +719,15 @@ function buildContextArgs(contexts: Map<string, string>): string[] {
     args.push('--build-context', `${name}=${ctxPath}`);
   }
   return args;
+}
+
+function formatBuildArgs(args: Map<string, string>): string[] {
+  const entries = [...args.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const flags: string[] = [];
+  for (const [key, value] of entries) {
+    flags.push('--build-arg', `${key}=${value}`);
+  }
+  return flags;
 }
 
 function sanitizeContextName(raw: string | undefined): string {
@@ -821,6 +850,10 @@ interface ContextSelection {
   additionalContexts: Map<string, string>;
 }
 
+interface ArgsSelection {
+  values: Map<string, string>;
+}
+
 async function collectContextSelection(
   document: vscode.TextDocument,
   tracker: DalecDocumentTracker,
@@ -869,6 +902,41 @@ async function collectContextSelection(
     additionalContexts: selections,
   };
   contextSelectionCache.set(key, selection);
+  return selection;
+}
+
+async function collectArgsSelection(
+  document: vscode.TextDocument,
+  tracker: DalecDocumentTracker,
+  cachedValue?: ArgsSelection,
+): Promise<ArgsSelection | undefined> {
+  const metadata = tracker.getMetadata(document);
+  const definedArgs = metadata?.args;
+
+  if (!definedArgs || definedArgs.size === 0) {
+    const emptySelection: ArgsSelection = { values: new Map() };
+    argsSelectionCache.set(document.uri.toString(), emptySelection);
+    return emptySelection;
+  }
+
+  const key = document.uri.toString();
+  const previousSelection = cachedValue ?? argsSelectionCache.get(key);
+  const result = new Map<string, string>();
+
+  for (const [name, defaultValue] of definedArgs.entries()) {
+    const value = await vscode.window.showInputBox({
+      prompt: `Enter value for build argument "${name}"`,
+      value: previousSelection?.values.get(name) ?? defaultValue ?? '',
+      placeHolder: defaultValue ?? '',
+    });
+    if (value === undefined) {
+      return undefined;
+    }
+    result.set(name, value);
+  }
+
+  const selection: ArgsSelection = { values: result };
+  argsSelectionCache.set(key, selection);
   return selection;
 }
 
@@ -929,6 +997,10 @@ function clearCachedContextSelection(uri: vscode.Uri) {
   contextSelectionCache.delete(uri.toString());
 }
 
+function clearCachedArgsSelection(uri: vscode.Uri) {
+  argsSelectionCache.delete(uri.toString());
+}
+
 function toInputValue(value: string | undefined): string {
   return value ?? '.';
 }
@@ -950,6 +1022,7 @@ interface LastDalecAction {
   target: string;
   specUri: vscode.Uri;
   contexts: ContextSelection;
+  args: ArgsSelection;
 }
 
 function isRemoteContextReference(value: string): boolean {
@@ -1032,16 +1105,23 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
     return;
   }
 
+  const metadata = tracker.getMetadata(document);
   const entryContexts = entry.contexts;
   const specContextNames = scanContextNames(document.getText());
-  let contextSelection: ContextSelection | undefined;
-  if (contextsSatisfied(entryContexts, specContextNames)) {
-    contextSelection = entryContexts;
-  } else {
-    contextSelection = await collectContextSelection(document, tracker, entryContexts);
-    if (!contextSelection) {
-      return;
-    }
+  const contextSelection =
+    contextsSatisfied(entryContexts, specContextNames)
+      ? entryContexts
+      : await collectContextSelection(document, tracker, entryContexts);
+  if (!contextSelection) {
+    return;
+  }
+
+  const entryArgs = entry.args;
+  const argsSelection = argsSatisfied(entryArgs, metadata?.args)
+    ? entryArgs
+    : await collectArgsSelection(document, tracker, entryArgs);
+  if (!argsSelection) {
+    return;
   }
 
   const folder = vscode.workspace.getWorkspaceFolder(entry.specUri);
@@ -1059,11 +1139,13 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
       specFile: entry.specUri.fsPath,
       context: contextSelection.defaultContextPath,
       buildContexts: recordFromMap(contextSelection.additionalContexts),
+      buildArgs: recordFromMap(argsSelection.values),
       dalecContextResolved: true,
     };
     await vscode.debug.startDebugging(folder, configuration);
   } else {
     const additionalContexts = formatBuildContextFlags(contextSelection.additionalContexts);
+    const buildArgFlags = formatBuildArgs(argsSelection.values);
     const terminal = vscode.window.createTerminal({
       name: `Dalec Build (${entry.target})`,
       env: {
@@ -1075,6 +1157,7 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
     const parts = [
       'docker buildx build',
       ...additionalContexts,
+      ...buildArgFlags,
       '--target',
       quote(entry.target),
       '-f',
@@ -1119,6 +1202,74 @@ function contextsSatisfied(selection: ContextSelection, requiredNames: string[])
     }
   }
   return true;
+}
+
+function argsSatisfied(selection: ArgsSelection, definedArgs?: Map<string, string | undefined>): boolean {
+  if (!definedArgs || definedArgs.size === 0) {
+    return selection.values.size === 0;
+  }
+  if (selection.values.size === 0) {
+    return false;
+  }
+  for (const key of definedArgs.keys()) {
+    if (!selection.values.has(key)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function extractArgs(text: string): Map<string, string | undefined> {
+  const args = new Map<string, string | undefined>();
+  const lines = text.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const line = rawLine.replace(/\t/g, '  ');
+    if (line.trimStart().startsWith('#')) {
+      continue;
+    }
+    const match = line.match(/^(\s*)args\s*:/);
+    if (!match) {
+      continue;
+    }
+    const baseIndent = match[1].length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const candidateRaw = lines[j];
+      const candidate = candidateRaw.replace(/\t/g, '  ');
+      const trimmed = candidate.trim();
+      if (!trimmed) {
+        continue;
+      }
+      if (trimmed.startsWith('#')) {
+        continue;
+      }
+      const indent = candidate.match(/^\s*/)?.[0].length ?? 0;
+      if (indent <= baseIndent) {
+        break;
+      }
+
+      const keyMatch = candidate.match(/^\s*([^\s:#]+)\s*:\s*(.*)$/);
+      if (!keyMatch) {
+        continue;
+      }
+      const key = keyMatch[1];
+      let value = keyMatch[2]?.trim() ?? '';
+      if (value.includes('#')) {
+        value = value.split('#')[0]?.trim() ?? '';
+      }
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      args.set(key, value === '' ? undefined : value);
+    }
+    break;
+  }
+
+  return args;
 }
 
 function buildTargetQuickPickItems(targets: BuildTargetInfo[]): TargetQuickPickItem[] {
