@@ -1,4 +1,6 @@
 import { execFile, type ExecFileOptionsWithStringEncoding } from 'child_process';
+import { promises as fs } from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { TextDecoder, promisify } from 'util';
 import * as vscode from 'vscode';
@@ -13,6 +15,9 @@ const FALLBACK_SCHEMA_RELATIVE_PATH = ['schemas', 'spec.schema.json'];
 const FRONTEND_TARGET_CACHE_TTL_MS = 5 * 60 * 1000;
 const execFileAsync = promisify(execFile);
 const frontendTargetCache = new Map<string, FrontendTargetCacheEntry>();
+const emptyContextDirPath = path.join(os.tmpdir(), 'dalec-empty-context');
+let emptyContextDirReady: Promise<string> | undefined;
+const contextSelectionCache = new Map<string, ContextSelection>();
 
 export async function activate(context: vscode.ExtensionContext) {
   const tracker = new DalecDocumentTracker();
@@ -103,11 +108,10 @@ class DalecDocumentTracker implements vscode.Disposable {
       return;
     }
 
-    const metadata: DalecDocumentMetadata = {
-      targets: this.extractTargets(document),
-    };
+    const metadata: DalecDocumentMetadata = this.buildMetadata(document);
 
     const key = document.uri.toString();
+    clearCachedContextSelection(document.uri);
     this.tracked.set(key, metadata);
     this.changeEmitter.fire(document.uri);
   }
@@ -117,6 +121,7 @@ class DalecDocumentTracker implements vscode.Disposable {
     if (this.tracked.delete(key)) {
       this.changeEmitter.fire(uri);
     }
+    clearCachedContextSelection(uri);
   }
 
   private extractTargets(document: vscode.TextDocument): string[] {
@@ -157,6 +162,13 @@ class DalecDocumentTracker implements vscode.Disposable {
     }
 
     return [...targets];
+  }
+
+  private buildMetadata(document: vscode.TextDocument): DalecDocumentMetadata {
+    return {
+      targets: this.extractTargets(document),
+      contexts: scanContextNames(document.getText()),
+    };
   }
 
   private isYamlFile(document: vscode.TextDocument): boolean {
@@ -336,15 +348,6 @@ class DalecDebugConfigurationProvider implements vscode.DebugConfigurationProvid
 
     config.specFile = specFile;
 
-    if (typeof config.context !== 'string' || !config.context) {
-      const fallback = folder?.uri.fsPath;
-      if (fallback) {
-        config.context = fallback;
-      } else if (!this.containsVariableReference(specFile)) {
-        config.context = path.dirname(specFile);
-      }
-    }
-
     return config;
   }
 
@@ -373,15 +376,41 @@ class DalecDebugConfigurationProvider implements vscode.DebugConfigurationProvid
 
     config.specFile = resolvedSpec;
 
-    let contextValue = typeof config.context === 'string' ? config.context.trim() : '';
-    if (!contextValue) {
-      contextValue = path.dirname(resolvedSpec);
-    }
-    config.context = this.resolvePath(contextValue, folder);
-
     if (config.buildArgs && typeof config.buildArgs !== 'object') {
       void vscode.window.showWarningMessage('Ignoring buildArgs – value must be an object map.');
       delete config.buildArgs;
+    }
+
+    const document = await vscode.workspace.openTextDocument(resolvedSpec);
+    if (!this.tracker.isDalecDocument(document)) {
+      void vscode.window.showErrorMessage('Selected file is not recognized as a Dalec spec.');
+      return null;
+    }
+
+    if (!config.dalecContextResolved) {
+      const selection = await collectContextSelection(document, this.tracker);
+      if (!selection) {
+        return undefined;
+      }
+      config.context = selection.defaultContextPath;
+      config.buildContexts = recordFromMap(selection.additionalContexts);
+      config.dalecContextResolved = true;
+    }
+
+    if (!config.context) {
+      config.context = await getEmptyContextDir();
+    }
+
+    const workspaceForSpec = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(resolvedSpec)) ?? folder;
+    config.context = this.resolvePath(config.context, workspaceForSpec);
+
+    if (config.buildContexts && typeof config.buildContexts === 'object') {
+      const resolved: Record<string, string> = {};
+      const entries = Object.entries(config.buildContexts as Record<string, string>);
+      for (const [name, ctxPath] of entries) {
+        resolved[name] = this.resolvePath(ctxPath, workspaceForSpec);
+      }
+      config.buildContexts = resolved;
     }
 
     return config;
@@ -436,6 +465,11 @@ class DalecDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescripto
       }
     }
 
+    if (config.buildContexts && typeof config.buildContexts === 'object') {
+      const contextsMap = new Map<string, string>(Object.entries(config.buildContexts));
+      args.push(...buildContextArgs(contextsMap));
+    }
+
     args.push(config.context);
     return args;
   }
@@ -446,10 +480,13 @@ interface DalecDebugConfiguration extends vscode.DebugConfiguration {
   specFile: string;
   context: string;
   buildArgs?: Record<string, string>;
+  buildContexts?: Record<string, string>;
+  dalecContextResolved?: boolean;
 }
 
 interface DalecDocumentMetadata {
   targets: string[];
+  contexts: string[];
 }
 
 async function runDebugCommand(uri: vscode.Uri | undefined, tracker: DalecDocumentTracker) {
@@ -463,6 +500,11 @@ async function runDebugCommand(uri: vscode.Uri | undefined, tracker: DalecDocume
     return;
   }
 
+  const contextSelection = await collectContextSelection(document, tracker);
+  if (!contextSelection) {
+    return;
+  }
+
   const folder = vscode.workspace.getWorkspaceFolder(document.uri);
   const configuration: DalecDebugConfiguration = {
     type: DEBUG_TYPE,
@@ -470,7 +512,9 @@ async function runDebugCommand(uri: vscode.Uri | undefined, tracker: DalecDocume
     request: 'launch',
     target,
     specFile: document.uri.fsPath,
-    context: folder?.uri.fsPath ?? path.dirname(document.uri.fsPath),
+    context: contextSelection.defaultContextPath,
+    buildContexts: recordFromMap(contextSelection.additionalContexts),
+    dalecContextResolved: true,
   };
 
   await vscode.debug.startDebugging(folder, configuration);
@@ -487,7 +531,12 @@ async function runBuildCommand(uri: vscode.Uri | undefined, tracker: DalecDocume
     return;
   }
 
-  const contextPath = getContextPath(document);
+  const contextSelection = await collectContextSelection(document, tracker);
+  if (!contextSelection) {
+    return;
+  }
+
+  const additionalContexts = formatBuildContextFlags(contextSelection.additionalContexts);
   const terminal = vscode.window.createTerminal({
     name: `Dalec Build (${target})`,
     env: {
@@ -496,9 +545,16 @@ async function runBuildCommand(uri: vscode.Uri | undefined, tracker: DalecDocume
     },
   });
   terminal.show();
-  terminal.sendText(
-    `docker buildx build --target ${quote(target)} -f ${quote(document.uri.fsPath)} ${quote(contextPath)}`,
-  );
+  const parts = [
+    'docker buildx build',
+    ...additionalContexts,
+    '--target',
+    quote(target),
+    '-f',
+    quote(document.uri.fsPath),
+    quote(contextSelection.defaultContextPath),
+  ];
+  terminal.sendText(parts.join(' '));
 }
 
 async function resolveDalecDocument(
@@ -549,16 +605,50 @@ async function pickTarget(
   return manual?.trim() || undefined;
 }
 
-function getContextPath(document: vscode.TextDocument): string {
-  const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-  return folder?.uri.fsPath ?? path.dirname(document.uri.fsPath);
-}
-
 function quote(value: string): string {
   if (value.includes(' ')) {
     return `"${value.replace(/(["\\$`])/g, '\\$1')}"`;
   }
   return value;
+}
+
+function getSpecWorkspacePath(document: vscode.TextDocument): string {
+  const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+  return folder?.uri.fsPath ?? path.dirname(document.uri.fsPath);
+}
+
+function formatBuildContextFlags(contexts: Map<string, string>): string[] {
+  const entries = [...contexts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return entries.map(([name, ctxPath]) => `--build-context ${name}=${quote(ctxPath)}`);
+}
+
+function buildContextArgs(contexts: Map<string, string>): string[] {
+  const entries = [...contexts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const args: string[] = [];
+  for (const [name, ctxPath] of entries) {
+    args.push('--build-context', `${name}=${ctxPath}`);
+  }
+  return args;
+}
+
+function sanitizeContextName(raw: string | undefined): string {
+  if (!raw) {
+    return 'context';
+  }
+
+  let cleaned = raw.trim();
+  const commentIndex = cleaned.indexOf('#');
+  if (commentIndex !== -1) {
+    cleaned = cleaned.slice(0, commentIndex).trim();
+  }
+  cleaned = cleaned.replace(/[,}]+$/, '').trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned || 'context';
 }
 
 async function getTargetsForDocument(
@@ -587,7 +677,7 @@ async function getFrontendTargets(document: vscode.TextDocument): Promise<string
     },
     async () => {
       try {
-        const contextPath = getContextPath(document);
+        const contextPath = getSpecWorkspacePath(document);
         const args = ['buildx', 'build', '--call', 'targets', '-f', document.uri.fsPath, contextPath];
         const execOptions: ExecFileOptionsWithStringEncoding = {
           cwd: contextPath,
@@ -642,4 +732,213 @@ type YamlExtensionApi = YamlExtensionExports;
 interface FrontendTargetCacheEntry {
   targets: string[];
   timestamp: number;
+}
+
+interface ContextSelection {
+  defaultContextPath: string;
+  additionalContexts: Map<string, string>;
+}
+
+async function collectContextSelection(
+  document: vscode.TextDocument,
+  tracker: DalecDocumentTracker,
+): Promise<ContextSelection | undefined> {
+  const key = document.uri.toString();
+  const contextNames = new Set(scanContextNames(document.getText()));
+
+  if (contextNames.size === 0) {
+    const selection: ContextSelection = {
+      defaultContextPath: await getEmptyContextDir(),
+      additionalContexts: new Map(),
+    };
+    contextSelectionCache.set(key, selection);
+    return selection;
+  }
+
+  const previousSelection = contextSelectionCache.get(key);
+  const sortedNames = [...contextNames].sort();
+  const selections = new Map<string, string>();
+  let defaultPath = previousSelection?.defaultContextPath ?? (await getEmptyContextDir());
+
+  for (const name of sortedNames) {
+    const promptLabel = name === 'context' ? 'default build context' : `build context "${name}"`;
+    const defaultValue =
+      name === 'context'
+        ? toInputValue(previousSelection?.defaultContextPath)
+        : toInputValue(previousSelection?.additionalContexts.get(name));
+    const value = await vscode.window.showInputBox({
+      prompt: `Enter path for ${promptLabel}`,
+      value: defaultValue,
+    });
+    if (value === undefined) {
+      return undefined;
+    }
+    const resolvedPath = resolveContextReference(value.trim() || '.', document);
+    if (name === 'context') {
+      defaultPath = resolvedPath;
+    } else {
+      selections.set(name, resolvedPath);
+    }
+  }
+
+  const selection: ContextSelection = {
+    defaultContextPath: defaultPath,
+    additionalContexts: selections,
+  };
+  contextSelectionCache.set(key, selection);
+  return selection;
+}
+
+function resolveContextReference(input: string, document: vscode.TextDocument): string {
+  const trimmed = input.trim();
+  if (!trimmed || trimmed === '.' || trimmed === './') {
+    return getSpecWorkspacePath(document);
+  }
+
+  if (isRemoteContextReference(trimmed)) {
+    return trimmed;
+  }
+
+  const expanded = expandUserPath(trimmed);
+  if (path.isAbsolute(expanded)) {
+    return path.normalize(expanded);
+  }
+
+  const base = getSpecWorkspacePath(document);
+  return path.resolve(base, expanded);
+}
+
+function expandUserPath(input: string): string {
+  if (!input) {
+    return input;
+  }
+  if (input === '~') {
+    return os.homedir();
+  }
+  if (input.startsWith('~/')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
+
+async function getEmptyContextDir(): Promise<string> {
+  if (!emptyContextDirReady) {
+    emptyContextDirReady = fs
+      .mkdir(emptyContextDirPath, { recursive: true })
+      .then(() => emptyContextDirPath)
+      .catch((error) => {
+        void vscode.window.showWarningMessage(`Unable to prepare empty context directory: ${error}`);
+        return emptyContextDirPath;
+      });
+  }
+  return emptyContextDirReady;
+}
+
+function recordFromMap(map: Map<string, string>): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const [key, value] of map.entries()) {
+    record[key] = value;
+  }
+  return record;
+}
+
+function clearCachedContextSelection(uri: vscode.Uri) {
+  contextSelectionCache.delete(uri.toString());
+}
+
+function toInputValue(value: string | undefined): string {
+  return value ?? '.';
+}
+
+function isRemoteContextReference(value: string): boolean {
+  const lowered = value.toLowerCase();
+  if (lowered.startsWith('type=')) {
+    return true;
+  }
+  if (/^[a-z0-9+.-]+:\/\//i.test(value)) {
+    return true;
+  }
+  if (value.startsWith('${')) {
+    return true;
+  }
+  if (/[,:]/.test(value) && value.includes('=') && !value.includes(path.sep)) {
+    return true;
+  }
+  return false;
+}
+
+function scanContextNames(text: string): string[] {
+  const contexts = new Set<string>();
+  const lines = text.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const line = rawLine.replace(/\t/g, '  ');
+    if (line.trimStart().startsWith('#')) {
+      continue;
+    }
+
+    const match = line.match(/^(\s*)(?:-\s*)?context\s*:\s*(.*)$/i);
+    if (!match) {
+      continue;
+    }
+
+    const indent = match[1].length;
+    const remainder = match[2]?.trim() ?? '';
+    const inlineName = extractInlineContextName(remainder);
+    if (inlineName) {
+      contexts.add(inlineName);
+      continue;
+    }
+
+    const blockName = extractBlockContextName(lines, i + 1, indent);
+    contexts.add(blockName ?? 'context');
+  }
+
+  return [...contexts];
+}
+
+function extractInlineContextName(remainder: string): string | undefined {
+  if (!remainder) {
+    return undefined;
+  }
+  if (remainder === '{}' || remainder === 'null' || remainder === '~') {
+    return 'context';
+  }
+
+  if (!remainder.includes('{')) {
+    return undefined;
+  }
+
+  const withoutComment = remainder.split('#')[0];
+  const nameMatch = withoutComment.match(/name\s*:\s*([^,}]+)/i);
+  if (!nameMatch) {
+    return undefined;
+  }
+  return sanitizeContextName(nameMatch[1]);
+}
+
+function extractBlockContextName(
+  lines: string[],
+  startIndex: number,
+  baseIndent: number,
+): string | undefined {
+  for (let i = startIndex; i < lines.length; i++) {
+    const candidate = lines[i].replace(/\t/g, '  ');
+    const trimmed = candidate.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const indent = candidate.match(/^\s*/)?.[0].length ?? 0;
+    if (indent <= baseIndent) {
+      break;
+    }
+
+    const nameMatch = candidate.match(/^\s*name\s*:\s*(.+)$/i);
+    if (nameMatch) {
+      return sanitizeContextName(nameMatch[1]);
+    }
+  }
+  return undefined;
 }
