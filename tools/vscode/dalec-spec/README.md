@@ -1,0 +1,50 @@
+# Dalec Spec VS Code extension
+
+This extension adds lightweight authoring, CodeLens actions, and BuildKit debugging support for Dalec specs directly inside this repository.
+
+## Features
+
+- Detects `.yml` / `.yaml` files whose very first line matches `#syntax=...` or `# sytnax=...` (including images hosted at `ghcr.io/project-dalec/dalec/frontend:*` and `ghcr.io/azure/dalec/frontend:*`). Those documents are treated as Dalec specs.
+- Pipes Dalec specs into the Red Hat YAML extension through a custom schema provider so completion, hover, and validation use `docs/spec.schema.json` from the current workspace (falling back to a vendored copy when necessary).
+- Adds a `dalec-buildx` debug type that shells out to `BUILDX_EXPERIMENTAL=1 docker buildx dap build --target <target> -f <spec file> <context>` so you can start BuildKit debug sessions straight from VS Code. Breakpoints are enabled inside YAML docs.
+- Inserts CodeLens actions (“Dalec: Debug” / “Dalec: Build”) at the top of every Dalec spec. These commands prompt for a target (auto-detected from the `targets:` map when present) and either launch a debugger or run `docker buildx build` in a terminal.
+- Exposes commands `Dalec: Debug Spec` and `Dalec: Build Spec` through the Command Palette for quick access.
+
+## Getting started
+
+1. `cd tools/vscode/dalec-spec`
+2. `npm install` (requires network access to pull the TypeScript/ESLint toolchain)
+3. `npm run build` to emit `dist/extension.js`
+4. Launch VS Code with `code --extensionDevelopmentPath=$(pwd)` for dev mode, or package with `npx vsce package`
+
+The extension activates automatically whenever the workspace contains `docs/spec.schema.json`, a Dalec-marked YAML file is opened, one of the Dalec commands runs, or a `dalec-buildx` debug session starts.
+
+## Debug configuration
+
+Add something like the following to `.vscode/launch.json`:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Dalec: Buildx Debug",
+      "type": "dalec-buildx",
+      "request": "launch",
+      "target": "frontend",
+      "specFile": "${file}",
+      "context": "${workspaceFolder}",
+      "buildArgs": {
+        "MY_FLAG": "1"
+      }
+    }
+  ]
+}
+```
+
+If `specFile` is omitted the extension attempts to use the currently-focused Dalec spec. When `specFile` or `context` contains VS Code variables such as `${file}`, they are expanded prior to launching the debug adapter, and relative paths are resolved against the current workspace folder. `context` ultimately defaults to the spec’s directory so `docker buildx (dap) build` runs with the right build context.
+
+## Schema notes
+
+- The schema provider prefers `docs/spec.schema.json` inside the workspace folder that owns the Dalec document. A vendored copy at `schemas/spec.schema.json` acts as a fallback to keep the extension functional even when the docs directory is missing.
+- The provider depends on the Red Hat YAML extension (`redhat.vscode-yaml`). Install it to surface completions and validation—this extension declares the dependency so VS Code will prompt you automatically.
