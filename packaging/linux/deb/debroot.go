@@ -121,6 +121,17 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		return llb.Scratch(), errors.Wrap(err, "error generating changelog file")
 	}
 
+	// Generate README.Debian with source provenance documentation
+	readmeDebian := generateReadmeDebian(spec)
+	var readmeDebianState llb.State
+	if readmeDebian != nil {
+		readmeDebianState = in.
+			File(llb.Mkdir(filepath.Join(dir), 0o755, llb.WithParents(true))).
+			File(llb.Mkfile(filepath.Join(dir, "README.Debian"), 0o644, readmeDebian))
+	} else {
+		readmeDebianState = in.File(llb.Mkdir(filepath.Join(dir), 0o755, llb.WithParents(true)))
+	}
+
 	if dir == "" {
 		dir = "debian"
 	}
@@ -138,7 +149,7 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		File(llb.Mkdir(filepath.Join(dir, "dalec"), 0o755), opts...).
 		File(llb.Mkfile(filepath.Join(dir, "source/include-binaries"), 0o640, append([]byte("dalec"), '\n')), opts...)
 
-	states := []llb.State{control, rules, changelog, debian}
+	states := []llb.State{control, rules, changelog, readmeDebianState, debian}
 	states = append(states, installers...)
 
 	dalecDir := base.
@@ -727,4 +738,51 @@ func setArtifactOwnershipPostInst(w *bytes.Buffer, spec *dalec.Spec, target stri
 			}
 		}
 	}
+}
+
+// generateReadmeDebian creates the content for debian/README.Debian that documents
+// source provenance, allowing consumers to understand where sources came from.
+func generateReadmeDebian(spec *dalec.Spec) []byte {
+	if len(spec.Sources) == 0 {
+		return nil
+	}
+
+	buf := bytes.NewBuffer(nil)
+	
+	fmt.Fprintf(buf, "%s for Debian\n", spec.Name)
+	fmt.Fprintf(buf, "%s\n\n", strings.Repeat("=", len(spec.Name)+11)) // Create underline
+	
+	if spec.Description != "" {
+		fmt.Fprintf(buf, "%s\n\n", spec.Description)
+	}
+	
+	fmt.Fprintf(buf, "Source Provenance\n")
+	fmt.Fprintf(buf, "-----------------\n\n")
+	fmt.Fprintf(buf, "This package was built from the following sources:\n\n")
+	
+	// Sort source names for consistent output
+	sorted := dalec.SortMapKeys(spec.Sources)
+	for i, name := range sorted {
+		if i > 0 {
+			fmt.Fprintf(buf, "\n")
+		}
+		
+		fmt.Fprintf(buf, "Source: %s\n", name)
+		
+		src := spec.Sources[name]
+		doc := src.Doc(name)
+		scanner := bufio.NewScanner(doc)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				fmt.Fprintf(buf, "  %s\n", line)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(buf, "  Error reading source documentation: %v\n", err)
+		}
+	}
+	
+	fmt.Fprintf(buf, "\n")
+	return buf.Bytes()
 }
