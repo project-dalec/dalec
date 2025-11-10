@@ -64,6 +64,25 @@ type Artifacts struct {
 	// that are included in the package.
 	// However, you must be careful to manually include all dependencies that are required.
 	DisableAutoRequires bool `yaml:"disable_auto_requires,omitempty" json:"disable_auto_requires,omitempty"`
+
+	// PackageFiles provides package-specific file listings that can be used when
+	// files are installed via make install or similar commands rather than being
+	// explicitly categorized into specific artifact types.
+	// 
+	// This is useful for projects that use make install or similar installation
+	// mechanisms to place files in their intended locations and want to specify
+	// which files should be included in the package for specific package formats.
+	//
+	// The key is the package format (e.g., "rpm", "deb") and the value is the
+	// raw file listing content for that package format.
+	//
+	// For RPM packages, this would contain the content for the %files section.
+	// Example:
+	//   rpm: |
+	//     %{_bindir}/myapp
+	//     %{_includedir}/myapp.h
+	//     %{_mandir}/man1/myapp.1*
+	PackageFiles map[string]string `yaml:"package_files,omitempty" json:"package_files,omitempty"`
 }
 
 type ArtifactSymlinkConfig struct {
@@ -189,6 +208,9 @@ func (a *Artifacts) IsEmpty() bool {
 		return false
 	}
 	if len(a.Headers) > 0 {
+		return false
+	}
+	if len(a.PackageFiles) > 0 {
 		return false
 	}
 	return true
