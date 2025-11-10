@@ -14,7 +14,7 @@ in a few different ways:
    `targets.[target].package_config.signer` or `.package_config.signer`
 1. Provide the signing config via the `DALEC_SIGNING_CONFIG_PATH` build arg.
    Otherwise, the signing config will be sought in the spec.
-1. The path name will be sough in the main (local) context, unless the build
+1. The path name will be sought in the main (local) context, unless the build
    arg `DALEC_SIGNING_CONFIG_CONTEXT_NAME` is provided, in which case the dalec
    will seek the config in the context with the provided name *and at the
    provided path*.
