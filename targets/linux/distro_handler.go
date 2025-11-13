@@ -6,16 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
-	"github.com/pkg/errors"
-
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 type DistroConfig interface {
@@ -23,7 +21,7 @@ type DistroConfig interface {
 	Validate(*dalec.Spec) error
 
 	// Worker returns the worker image for the particular distro
-	Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error)
+	Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State
 	SysextWorker(worker llb.State, opts ...llb.ConstraintsOpt) llb.State
 
 	// BuildPkg returns an llb.State containing the built package
@@ -33,7 +31,7 @@ type DistroConfig interface {
 		client gwclient.Client,
 		worker llb.State,
 		sOpt dalec.SourceOpts,
-		spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error)
+		spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State
 
 	// ExtractPkg consumes an llb.State containing the built package from the
 	// given *dalec.Spec, and extracts it in a scratch container, along with any
@@ -47,7 +45,7 @@ type DistroConfig interface {
 	// given *dalec.Spec, and installs it in a target container.
 	BuildContainer(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts,
 		spec *dalec.Spec, targetKey string,
-		pkgState llb.State, opts ...llb.ConstraintsOpt) (llb.State, error)
+		pkgState llb.State, opts ...llb.ConstraintsOpt) llb.State
 
 	// RunTests runts the tests specified in a dalec spec against a built container, which may be the target container.
 	// Some distros may need to pass in a separate worker before mounting the target container.
@@ -104,20 +102,13 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			opts = append(opts, dalec.ProgressGroup(spec.Name))
 			opts = append(opts, dalec.Platform(platform))
 
-			worker, err := c.Worker(sOpt, opts...)
-			if err != nil {
-				return nil, nil, err
-			}
+			worker := c.Worker(sOpt, opts...)
 
 			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
 
 			// Pre-built package wasn't found so we need to build it.
 			if !foundPrebuiltPkg {
-				var err error
-				pkgSt, err = c.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, opts...)
-				if err != nil {
-					return nil, nil, err
-				}
+				pkgSt = c.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, opts...)
 			}
 
 			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
@@ -125,11 +116,7 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			ctr, err := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, opts...)
-			if err != nil {
-				return nil, nil, err
-			}
-
+			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, opts...)
 			ref, err := c.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, opts...)
 			return ref, img, err
 		})
@@ -152,20 +139,13 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 			opts = append(opts, dalec.ProgressGroup(spec.Name))
 			opts = append(opts, pc)
 
-			worker, err := c.Worker(sOpt, opts...)
-			if err != nil {
-				return nil, nil, errors.Wrap(err, "error building worker container")
-			}
+			worker := c.Worker(sOpt, opts...)
 
 			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
 
 			// Pre-built package wasn't found so we need to build it.
 			if !foundPrebuiltPkg {
-				var err error
-				pkgSt, err = c.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, opts...)
-				if err != nil {
-					return nil, nil, err
-				}
+				pkgSt = c.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, opts...)
 			}
 
 			extracted := c.ExtractPkg(ctx, client, worker, sOpt, spec, targetKey, pkgSt, opts...)
@@ -214,11 +194,7 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				return ref, nil, err
 			}
 
-			ctr, err := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pc)
-			if err != nil {
-				return ref, nil, err
-			}
-
+			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pc)
 			if ref, err := c.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, pc); err != nil {
 				cfg, _ := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
 				return ref, cfg, err
@@ -282,15 +258,9 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			}
 
 			pc := dalec.Platform(platform)
-			worker, err := cfg.Worker(sOpt, pg, pc)
-			if err != nil {
-				return nil, nil, errors.Wrap(err, "error building worker container")
-			}
+			worker := cfg.Worker(sOpt, pg, pc)
 
-			pkgSt, err := cfg.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, pg, pc)
-			if err != nil {
-				return nil, nil, err
-			}
+			pkgSt := cfg.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, pg, pc)
 
 			def, err := pkgSt.Marshal(ctx, pc)
 			if err != nil {
@@ -312,11 +282,7 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 				return ref, nil, err
 			}
 
-			ctr, err := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
-			if err != nil {
-				return ref, nil, err
-			}
-
+			ctr := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
 			if ref, err := cfg.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, pg, pc); err != nil {
 				cfg, _ := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
 				return ref, cfg, err

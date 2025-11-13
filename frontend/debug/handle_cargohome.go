@@ -3,11 +3,11 @@ package debug
 import (
 	"context"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 const keyCargohomeWorker = "context:cargohome-worker"
@@ -33,10 +33,7 @@ func Cargohome(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 				Run(llb.Shlex("cargo --version")).Root()
 		}
 
-		st, err := spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform))
-		if err != nil {
-			return nil, nil, err
-		}
+		st := spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform))
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

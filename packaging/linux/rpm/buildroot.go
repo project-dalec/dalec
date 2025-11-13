@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"runtime/debug"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/project-dalec/dalec"
 )
 
-func ToSpecLLB(spec *dalec.Spec, in llb.State, targetKey, dir string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func RPMSpec(spec *dalec.Spec, in llb.State, targetKey, dir string, opts ...llb.ConstraintsOpt) llb.State {
 	if err := ValidateSpec(spec); err != nil {
-		return llb.Scratch(), fmt.Errorf("invalid spec: %w", err)
+		return dalec.ErrorState(llb.Scratch(), fmt.Errorf("invalid spec: %w", err))
 	}
 	opts = append(opts, dalec.ProgressGroup("Generate RPM spec"))
 	buf := bytes.NewBuffer(nil)
@@ -21,7 +21,7 @@ func ToSpecLLB(spec *dalec.Spec, in llb.State, targetKey, dir string, opts ...ll
 	buf.WriteString("\n")
 
 	if err := WriteSpec(spec, targetKey, buf); err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(llb.Scratch(), err)
 	}
 
 	if dir == "" {
@@ -29,21 +29,13 @@ func ToSpecLLB(spec *dalec.Spec, in llb.State, targetKey, dir string, opts ...ll
 	}
 
 	return in.
-			File(llb.Mkdir(dir, 0755, llb.WithParents(true)), opts...).
-			File(llb.Mkfile(filepath.Join(dir, spec.Name)+".spec", 0640, buf.Bytes()), opts...),
-		nil
+		File(llb.Mkdir(dir, 0755, llb.WithParents(true)), opts...).
+		File(llb.Mkfile(filepath.Join(dir, spec.Name)+".spec", 0640, buf.Bytes()), opts...)
+
 }
 
-func SpecToBuildrootLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error) {
-	if err := ValidateSpec(spec); err != nil {
-		return llb.Scratch(), fmt.Errorf("invalid spec: %w", err)
-	}
+func BuildRoot(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Create RPM buildroot"))
-
-	sources, err := ToSourcesLLB(worker, spec, sOpt, opts...)
-	if err != nil {
-		return llb.Scratch(), err
-	}
-
-	return ToSpecLLB(spec, dalec.MergeAtPath(llb.Scratch(), sources, "SOURCES"), targetKey, "", opts...)
+	sources := Sources(worker, spec, sOpt, opts...)
+	return RPMSpec(spec, dalec.MergeAtPath(llb.Scratch(), sources, "SOURCES"), targetKey, "", opts...)
 }

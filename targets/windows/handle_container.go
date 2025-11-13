@@ -9,8 +9,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -18,6 +16,8 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -132,15 +132,9 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 		}
 
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
-		worker, err := distroConfig.Worker(sOpt, pg)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+		worker := distroConfig.Worker(sOpt, pg)
 
-		bin, err := buildBinaries(ctx, spec, worker, client, sOpt, targetKey)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("unable to build binary %w", err)
-		}
+		bin := buildBinaries(ctx, spec, worker, client, sOpt, targetKey)
 
 		bi := bases[idx]
 

@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets"
-	"github.com/moby/buildkit/client/llb"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 )
 
-func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) llb.State {
 	bi, err := spec.GetSingleBase(targetKey)
 	if err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(llb.Scratch(), err)
 	}
 
 	opts = append(opts, frontend.IgnoreCache(client))
@@ -25,7 +25,7 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, wor
 		baseImg = img
 	} else {
 		if c.DefaultOutputImage == "" {
-			return llb.Scratch(), fmt.Errorf("no output image ref specified, cannot build from scratch")
+			return dalec.ErrorState(worker, fmt.Errorf("no output image ref specified, cannot build from scratch"))
 		}
 		baseImg = llb.Image(c.DefaultOutputImage, llb.WithMetaResolver(sOpt.Resolver), dalec.WithConstraints(opts...))
 	}
@@ -57,10 +57,7 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, wor
 			},
 		}
 
-		basePkg, err := c.BuildPkg(ctx, client, worker, sOpt, basePkgSpec, targetKey, opts...)
-		if err != nil {
-			return llb.Scratch(), err
-		}
+		basePkg := c.BuildPkg(ctx, client, worker, sOpt, basePkgSpec, targetKey, opts...)
 
 		// Update the base image to include the base packages.
 		// This may include things that are necessary to even install the debSt package.
@@ -98,5 +95,5 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, wor
 		InstallLocalPkg(debSt, true, opts...),
 		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 	).Root().
-		With(dalec.InstallPostSymlinks(spec.GetImagePost(targetKey), worker, opts...)), nil
+		With(dalec.InstallPostSymlinks(spec.GetImagePost(targetKey), worker, opts...))
 }

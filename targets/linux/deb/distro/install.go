@@ -5,10 +5,9 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/packaging/linux/deb"
-	"github.com/moby/buildkit/client/llb"
-	"github.com/pkg/errors"
 )
 
 // AptInstall returns an [llb.RunOption] that uses apt to install the provided
@@ -148,15 +147,9 @@ func (d *Config) InstallBuildDeps(ctx context.Context, sOpt dalec.SourceOpts, sp
 		}
 
 		opts := append(opts, dalec.ProgressGroup("Install build dependencies"))
-		debRoot, err := deb.Debroot(ctx, sOpt, depsSpec, in, llb.Scratch(), targetKey, "", d.VersionID, deb.SourcePkgConfig{}, opts...)
-		if err != nil {
-			return dalec.ErrorState(in, err)
-		}
+		debRoot := deb.Debroot(ctx, sOpt, depsSpec, in, llb.Scratch(), targetKey, "", d.VersionID, deb.SourcePkgConfig{}, opts...)
 
-		pkg, err := deb.BuildDebBinaryOnly(in, depsSpec, debRoot, "", opts...)
-		if err != nil {
-			return dalec.ErrorState(in, errors.Wrap(err, "error creating intermediate package for installing build dependencies"))
-		}
+		pkg := deb.BuildDebBinaryOnly(in, depsSpec, debRoot, "", opts...)
 
 		repos := dalec.GetExtraRepos(d.ExtraRepos, "build")
 		repos = append(repos, spec.GetBuildRepos(targetKey)...)

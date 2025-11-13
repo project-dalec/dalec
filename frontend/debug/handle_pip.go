@@ -3,11 +3,11 @@ package debug
 import (
 	"context"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 const keyPipWorker = "context:pip-worker"
@@ -37,10 +37,7 @@ func Pip(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) 
 				Run(llb.Shlex("python3 -m pip --version")).Root()
 		}
 
-		pipDeps, err := spec.PipDeps(sOpt, worker, dalec.Platform(platform))
-		if err != nil {
-			return nil, nil, err
-		}
+		pipDeps := spec.PipDeps(sOpt, worker, dalec.Platform(platform))
 
 		var st llb.State
 		if pipDeps == nil {

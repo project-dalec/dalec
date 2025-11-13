@@ -70,23 +70,20 @@ func (s *Spec) cargohomeSources() map[string]Source {
 // CargohomeDeps returns an [llb.State] containing all the Cargo dependencies for the spec
 // for any sources that have a cargohome generator specified.
 // If there are no sources with a cargohome generator, this will return a nil state.
-func (s *Spec) CargohomeDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) (*llb.State, error) {
+func (s *Spec) CargohomeDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) *llb.State {
 	sources := s.cargohomeSources()
 	if len(sources) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	deps := llb.Scratch()
 
 	// Get the patched sources for the Cargo projects
 	// This is needed in case a patch includes changes to Cargo.toml or Cargo.lock
-	patched, err := s.getPatchedSources(sOpt, worker, func(name string) bool {
+	patched := s.getPatchedSources(sOpt, worker, func(name string) bool {
 		_, ok := sources[name]
 		return ok
 	}, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get patched sources")
-	}
 
 	sorted := SortMapKeys(patched)
 
@@ -104,7 +101,7 @@ func (s *Spec) CargohomeDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Cons
 		})
 	}
 
-	return &deps, nil
+	return &deps
 }
 
 func (gen *GeneratorCargohome) UnmarshalYAML(ctx context.Context, node ast.Node) error {
