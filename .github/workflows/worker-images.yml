@@ -79,9 +79,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: ./.github/actions/enable-containerd
-      - uses: ./.github/actions/setup-source-policy
-        name: Setup Source Policy
-        id: source-policy
+      
       - name: Setup environment
         run: |
           echo MAIN_CACHE_SCOPE=main.${{ matrix.target }} >> $GITHUB_ENV
@@ -90,7 +88,9 @@ jobs:
           tag="${tag//\//-}" # Replace slashes with dashes
           tag="${tag%.*}" # Trim off patch version if it exists
 
-          BASE_REPO="${{ steps.source-policy.outputs.formatted-repo }}/${{ matrix.target }}"
+          # Format repository name (lowercase)
+          FORMATTED_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          BASE_REPO="${FORMATTED_REPO}/${{ matrix.target }}"
           echo "BASE_REPO=${BASE_REPO}" >> $GITHUB_ENV
           echo "IMAGE_REPO=${BASE_REPO}:${tag}" >> $GITHUB_ENV
       - if: ${{ github.event_name == 'pull_request' }}
@@ -107,7 +107,9 @@ jobs:
 
           echo "EXTRA_FLAGS=${EXTRA_FLAGS}" >> $GITHUB_ENV
 
-          docker run -d --net=host ghcr.io/${{ steps.source-policy.outputs.formatted-repo }}/mirror/dockerhub/library/registry:latest
+          # Format repository name (lowercase) for registry mirror
+          FORMATTED_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          docker run -d --net=host ghcr.io/${FORMATTED_REPO}/mirror/dockerhub/library/registry:latest
       - if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
         name: Setup (tagged)
         env:
