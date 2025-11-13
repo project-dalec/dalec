@@ -14,7 +14,7 @@
 - **Assets:** Dalec’s BuildKit frontend runtime, target plugins, packaging templates, optional SBOM and provenance generation features, and the packages or container images created when users build with Dalec.
 - **Actors:** Dalec maintainers and trusted contributors; potentially malicious or compromised spec authors; adversaries controlling remote source origins; threat actors attempting to exploit vulnerabilities in Dalec’s runtime or generated artifacts.
 - **Attack vectors:** Injection of hostile build steps or packaging metadata through Dalec specs, compromise of external source artifacts fetched during builds, tampering with SBOM/provenance metadata when generated, misuse of plugin extension points to bypass sandboxing, and exploitation of defects in the frontend, packaging logic, or integration with BuildKit.
-- **Mitigations:** Declarative spec validation, BuildKit’s sandboxed execution with clearly defined mounts, optional signed-package/SBOM features available to spec authors, tests defined in specs and executed via the Dalec test runner, and ongoing dependency/static analysis to surface exploitable defects. (Note: official release artifacts do not yet ship with signatures or SBOM/provenance outputs; see “Residual Risks and Planned Enhancements”.)
+- **Mitigations:** Declarative spec validation, BuildKit’s sandboxed execution with clearly defined mounts, optional signed-package/SBOM features available to spec authors, tests defined in specs and executed via the Dalec test runner, and ongoing dependency/static analysis to surface exploitable defects. Official release artifacts also ship with signatures and SBOM/provenance outputs.
 
 ## Top-Level Claim (G0)
 > Dalec governance, development, build, and release practices provide sufficient assurance that released artifacts maintain expected security characteristics.
@@ -93,6 +93,3 @@ The remainder of this document decomposes G0 into supporting strategies, claims,
 - **Update cadence:** Review and refresh this assurance case at least once per release cycle or quarterly, whichever comes first.
 - **Responsibility:** [Dalec Maintainers](../MAINTAINERS.md#project-dalec-maintainers), using the standard pull-request workflow.
 - **Change tracking:** Each edit must reference any new evidence (workflow changes or policy updates) to preserve traceability.
-
-## Residual Risks and Planned Enhancements
-- Official release artifacts currently publish unsigned container images without accompanying SBOM or provenance attestations. The maintainer council tracks this gap and plans to extend the release workflow to emit signed, attestable outputs.
