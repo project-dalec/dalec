@@ -80,20 +80,17 @@ func (s *Spec) nodeModSources() map[string]Source {
 // for any sources that have a node module generator specified.
 // If there are no sources with a node module generator, this will return nil.
 // The returned states have node_modules installed for each relevant source, using sources as input.
-func (s *Spec) NodeModDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) (map[string]llb.State, error) {
+func (s *Spec) NodeModDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) map[string]llb.State {
 	sources := s.nodeModSources()
 	if len(sources) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	// Get the patched sources for the node modules
-	patched, err := s.getPatchedSources(sOpt, worker, func(name string) bool {
+	patched := s.getPatchedSources(sOpt, worker, func(name string) bool {
 		_, ok := sources[name]
 		return ok
 	}, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get patched sources")
-	}
 
 	result := make(map[string]llb.State)
 	sorted := SortMapKeys(patched)
@@ -109,7 +106,7 @@ func (s *Spec) NodeModDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constr
 		}
 		result[key] = merged
 	}
-	return result, nil
+	return result
 }
 
 func (gen *GeneratorNodeMod) UnmarshalYAML(ctx context.Context, node ast.Node) error {

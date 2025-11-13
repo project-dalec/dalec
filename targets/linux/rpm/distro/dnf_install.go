@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/packaging/linux/rpm"
-	"github.com/moby/buildkit/client/llb"
 )
 
 var dnfRepoPlatform = dalec.RepoPlatformConfig{
@@ -230,10 +230,7 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 			},
 		}
 
-		rpmSpec, err := rpm.ToSpecLLB(spec, in, targetKey, "", opts...)
-		if err != nil {
-			return dalec.ErrorState(in, err)
-		}
+		rpmSpec := rpm.RPMSpec(spec, in, targetKey, "", opts...)
 
 		specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
 		cacheInfo := rpm.CacheInfo{TargetKey: targetKey, Caches: spec.Build.Caches}

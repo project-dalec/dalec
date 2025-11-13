@@ -208,29 +208,27 @@ func (s *Spec) gomodSources() map[string]Source {
 // GomodDeps returns an [llb.State] containing all the go module dependencies for the spec
 // for any sources that have a gomod generator specified.
 // If there are no sources with a gomod generator, this will return a nil state.
-func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) (*llb.State, error) {
+func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) *llb.State {
 	sources := s.gomodSources()
 	if len(sources) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	deps := llb.Scratch()
 
 	// Get the patched sources for the go modules
 	// This is needed in case a patch includes changes to go.mod or go.sum
-	patched, err := s.getPatchedSources(sOpt, worker, func(name string) bool {
+	patched := s.getPatchedSources(sOpt, worker, func(name string) bool {
 		_, ok := sources[name]
 		return ok
 	}, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get patched sources")
-	}
 
 	sorted := SortMapKeys(patched)
 
 	credHelperRunOpt, err := sOpt.GitCredHelperOpt()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get git credential helper")
+		st := ErrorState(llb.Scratch(), errors.Wrap(err, "failed to get git credential helper"))
+		return &st
 	}
 
 	for _, key := range sorted {
@@ -247,7 +245,7 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 		})
 	}
 
-	return &deps, nil
+	return &deps
 }
 
 func (gen *GeneratorGomod) UnmarshalYAML(ctx context.Context, node ast.Node) error {

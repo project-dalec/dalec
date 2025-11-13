@@ -240,10 +240,7 @@ exit 0
 		},
 	}
 
-	st, err := spec.GomodDeps(sOpt, llb.Scratch())
-	if err != nil {
-		t.Fatalf("gomod generator failed: %s", err)
-	}
+	st := spec.GomodDeps(sOpt, llb.Scratch())
 	if st == nil {
 		t.Fatal("gomod generator succeeded but return value was nil")
 	}

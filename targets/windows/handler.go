@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
-	"github.com/project-dalec/dalec/targets/linux/deb/distro"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/targets/linux/deb/distro"
 )
 
 const (
@@ -76,11 +76,7 @@ func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result
 			return nil, nil, err
 		}
 
-		st, err := distroConfig.Worker(sOpt)
-		if err != nil {
-			return nil, nil, err
-		}
-
+		st := distroConfig.Worker(sOpt)
 		def, err := st.Marshal(ctx)
 		if err != nil {
 			return nil, nil, err

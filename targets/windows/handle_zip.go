@@ -8,14 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
-	"github.com/moby/buildkit/client/llb"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -33,15 +32,9 @@ func handleZip(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 		}
 
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
-		worker, err := distroConfig.Worker(sOpt, pg)
-		if err != nil {
-			return nil, nil, err
-		}
+		worker := distroConfig.Worker(sOpt, pg)
 
-		bin, err := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
-		if err != nil {
-			return nil, nil, fmt.Errorf("unable to build binaries: %w", err)
-		}
+		bin := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
 
 		st := getZipLLB(worker, platform, spec, bin, pg)
 
@@ -67,37 +60,23 @@ const (
 	pipDepsName   = "__pipdeps"
 )
 
-func specToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (map[string]llb.State, error) {
-	out, err := dalec.Sources(spec, sOpt, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error preparign spec sources")
-	}
+func sources(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) map[string]llb.State {
+	out := dalec.Sources(spec, sOpt, opts...)
 
 	opts = append(opts, dalec.ProgressGroup("Add gomod sources"))
-	gomodSt, err := spec.GomodDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding gomod sources")
-	}
 
-	cargohomeSt, err := spec.CargohomeDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding cargohome sources")
-	}
+	gomodSt := spec.GomodDeps(sOpt, worker, opts...)
 
-	srcsWithNodeMods, err := spec.NodeModDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error preparing node deps")
-	}
+	cargohomeSt := spec.CargohomeDeps(sOpt, worker, opts...)
+
+	srcsWithNodeMods := spec.NodeModDeps(sOpt, worker, opts...)
 	sorted := dalec.SortMapKeys(srcsWithNodeMods)
 
 	for _, key := range sorted {
 		out[key] = srcsWithNodeMods[key]
 	}
 
-	pipDepsSt, err := spec.PipDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding pip sources")
-	}
+	pipDepsSt := spec.PipDeps(sOpt, worker, opts...)
 
 	if gomodSt != nil {
 		out[gomodsName] = *gomodSt
@@ -111,7 +90,7 @@ func specToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts,
 		out[pipDepsName] = *pipDepsSt
 	}
 
-	return out, nil
+	return out
 }
 
 func withSourcesMounted(dst string, states map[string]llb.State, sources map[string]dalec.Source, opts ...llb.ConstraintsOpt) llb.RunOption {
@@ -173,7 +152,7 @@ func addGoCache(spec *dalec.Spec, targetKey string) {
 	})
 }
 
-func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, client gwclient.Client, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, client gwclient.Client, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))
 
 	deps := spec.GetPackageDeps(targetKey).GetBuild()
@@ -185,10 +164,7 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 	// Apply source map constraints for build steps
 	opts = append(opts, spec.Build.Steps.GetSourceLocation(worker))
 
-	sources, err := specToSourcesLLB(worker, spec, sOpt, opts...)
-	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "could not generate sources")
-	}
+	sources := sources(worker, spec, sOpt, opts...)
 
 	addGoCache(spec, targetKey)
 	// No automatic cargo cache setup - cargo cache is opt-in only due to security considerations

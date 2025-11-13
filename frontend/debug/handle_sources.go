@@ -3,11 +3,11 @@ package debug
 import (
 	"context"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 // Sources is a handler that outputs all the sources.
@@ -18,10 +18,7 @@ func Sources(ctx context.Context, client gwclient.Client) (*gwclient.Result, err
 			return nil, nil, err
 		}
 
-		sources, err := dalec.Sources(spec, sOpt)
-		if err != nil {
-			return nil, nil, err
-		}
+		sources := dalec.Sources(spec, sOpt)
 
 		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/").Marshal(ctx)
 		if err != nil {
@@ -64,11 +61,7 @@ func PatchedSources(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 		}
 
 		pc := dalec.Platform(platform)
-		sources, err := dalec.Sources(spec, sOpt, pc)
-		if err != nil {
-			return nil, nil, err
-		}
-
+		sources := dalec.Sources(spec, sOpt, pc)
 		sources = dalec.PatchSources(worker, spec, sources, pc)
 
 		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/").Marshal(ctx)

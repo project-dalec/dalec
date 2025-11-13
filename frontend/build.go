@@ -8,13 +8,13 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/project-dalec/dalec"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 type LoadConfig struct {

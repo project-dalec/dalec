@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/project-dalec/dalec"
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
@@ -14,6 +13,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (
@@ -178,10 +178,10 @@ func getSigningConfigFromContext(ctx context.Context, client gwclient.Client, cf
 	return pc.Signer, nil
 }
 
-func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
 	if signingDisabled(client) {
 		Warnf(ctx, client, st, "Signing disabled by build-arg %q", keySkipSigningArg)
-		return st, nil
+		return st
 	}
 
 	cfg, rootSigningSpecOverriddenByTarget := spec.GetSigner(targetKey)
@@ -189,14 +189,14 @@ func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *
 	if cfgPath == "" {
 		if cfg == nil {
 			// i.e. there's no signing config. not in the build context, not in the spec.
-			return st, nil
+			return st
 		}
 
 		if rootSigningSpecOverriddenByTarget {
 			Warnf(ctx, client, st, "Root signing spec overridden by target signing spec: target %q", targetKey)
 		}
 
-		return forwardToSigner(ctx, client, cfg, st, opts...)
+		return dalec.ErrorState(forwardToSigner(ctx, client, cfg, st, opts...))
 	}
 
 	configCtxName := getSignContextNameWithDefault(client)
@@ -206,10 +206,10 @@ func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *
 
 	cfg, err := getSigningConfigFromContext(ctx, client, cfgPath, configCtxName, sOpt)
 	if err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(llb.Scratch(), err)
 	}
 
-	return forwardToSigner(ctx, client, cfg, st, opts...)
+	return dalec.ErrorState(forwardToSigner(ctx, client, cfg, st, opts...))
 }
 
 func getSignContextNameWithDefault(client gwclient.Client) string {

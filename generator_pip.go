@@ -98,21 +98,18 @@ func (s *Spec) pipSources() map[string]Source {
 // for any sources that have a pip generator specified.
 // If there are no sources with a pip generator, this will return nil.
 // The returned state contains a merged cache of all downloaded pip packages.
-func (s *Spec) PipDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) (*llb.State, error) {
+func (s *Spec) PipDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) *llb.State {
 	sources := s.pipSources()
 	if len(sources) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	// Get the patched sources for the Python projects
 	// This is needed in case a patch includes changes to requirements.txt
-	patched, err := s.getPatchedSources(sOpt, worker, func(name string) bool {
+	patched := s.getPatchedSources(sOpt, worker, func(name string) bool {
 		_, ok := sources[name]
 		return ok
 	}, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get patched sources")
-	}
 
 	// Create a unified cache containing all pip packages
 	var cacheStates []llb.State
@@ -131,12 +128,12 @@ func (s *Spec) PipDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constraint
 	}
 
 	if len(cacheStates) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	// Merge all cache states into a single state
 	merged := MergeAtPath(llb.Scratch(), cacheStates, "/", opts...)
-	return &merged, nil
+	return &merged
 }
 
 func (gen *GeneratorPip) UnmarshalYAML(ctx context.Context, node ast.Node) error {

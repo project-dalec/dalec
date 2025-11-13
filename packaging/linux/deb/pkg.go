@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (
@@ -85,51 +85,33 @@ func nestState(dest string) llb.StateOption {
 	}
 }
 
-func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State, spec *dalec.Spec, targetKey, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State, spec *dalec.Spec, targetKey, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) llb.State {
 	if err := validateSpec(spec); err != nil {
-		return llb.Scratch(), err
-	}
-	dr, err := Debroot(ctx, sOpt, spec, worker, llb.Scratch(), targetKey, "", distroVersionID, cfg, opts...)
-	if err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(llb.Scratch(), err)
 	}
 
-	sources, err := dalec.Sources(spec, sOpt)
-	if err != nil {
-		return llb.Scratch(), err
-	}
+	dr := Debroot(ctx, sOpt, spec, worker, llb.Scratch(), targetKey, "", distroVersionID, cfg, opts...)
+	sources := dalec.Sources(spec, sOpt)
 
-	gomodSt, err := spec.GomodDeps(sOpt, worker, opts...)
-	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error preparing gomod deps")
-	}
+	gomodSt := spec.GomodDeps(sOpt, worker, opts...)
 	if gomodSt != nil {
 		st := gomodSt.With(nestState(gomodsName))
 		gomodSt = &st
 	}
 
-	cargohomeSt, err := spec.CargohomeDeps(sOpt, worker, opts...)
-	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error preparing cargohome deps")
-	}
+	cargohomeSt := spec.CargohomeDeps(sOpt, worker, opts...)
 	if cargohomeSt != nil {
 		st := cargohomeSt.With(nestState(cargohomeName))
 		cargohomeSt = &st
 	}
 
-	pipDepsSt, err := spec.PipDeps(sOpt, worker, opts...)
-	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error preparing pip deps")
-	}
+	pipDepsSt := spec.PipDeps(sOpt, worker, opts...)
 	if pipDepsSt != nil {
 		st := pipDepsSt.With(nestState(pipDepsName))
 		pipDepsSt = &st
 	}
 
-	srcsWithNodeMods, err := spec.NodeModDeps(sOpt, worker, opts...)
-	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error preparing node deps")
-	}
+	srcsWithNodeMods := spec.NodeModDeps(sOpt, worker, opts...)
 	sorted := dalec.SortMapKeys(srcsWithNodeMods)
 
 	for _, key := range sorted {
@@ -162,10 +144,10 @@ func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State,
 		dalec.WithConstraints(opts...),
 	)
 
-	return work.AddMount("/tmp/out", llb.Scratch()), nil
+	return work.AddMount("/tmp/out", llb.Scratch())
 }
 
-func BuildDebBinaryOnly(worker llb.State, spec *dalec.Spec, debroot llb.State, distroVersionID string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func BuildDebBinaryOnly(worker llb.State, spec *dalec.Spec, debroot llb.State, distroVersionID string, opts ...llb.ConstraintsOpt) llb.State {
 	dirName := filepath.Join("/work", spec.Name+"_"+spec.Version+"-"+spec.Revision)
 	st := worker.
 		Run(
@@ -175,10 +157,10 @@ func BuildDebBinaryOnly(worker llb.State, spec *dalec.Spec, debroot llb.State, d
 			dalec.WithConstraints(opts...),
 		).AddMount("/tmp/out", llb.Scratch())
 
-	return st, nil
+	return st
 }
 
-func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersionID string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersionID string, opts ...llb.ConstraintsOpt) llb.State {
 	dirName := filepath.Join("/work", spec.Name+"_"+spec.Version+"-"+spec.Revision)
 	buildRootRel := spec.Name + "-" + spec.Version
 	st := worker.
@@ -197,7 +179,7 @@ func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersio
 			}),
 		).AddMount("/tmp/out", llb.Scratch())
 
-	return dalec.MergeAtPath(llb.Scratch(), []llb.State{st, srcPkg}, "/"), nil
+	return dalec.MergeAtPath(llb.Scratch(), []llb.State{st, srcPkg}, "/")
 }
 
 func TarDebSources(work llb.State, spec *dalec.Spec, srcStates map[string]llb.State, dest string, sOpts dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {

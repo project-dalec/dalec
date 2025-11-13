@@ -13,11 +13,11 @@ import (
 
 	_ "embed"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 )
 
 const (
@@ -105,20 +105,20 @@ func AddPath(pre, post []string) SourcePkgConfig {
 // an upgrade even if it is technically the same underlying source.
 // It may be left blank but is highly recommended to set this.
 // Use [ReadDistroVersionID] to get a suitable value.
-func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worker, in llb.State, target, dir, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worker, in llb.State, target, dir, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) llb.State {
 	control, err := controlFile(spec, in, target, dir)
 	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error generating control file")
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating control file"))
 	}
 
 	rules, err := Rules(spec, in, dir, target)
 	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error generating rules file")
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating rules file"))
 	}
 
 	changelog, err := Changelog(spec, in, target, dir, distroVersionID)
 	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error generating changelog file")
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating changelog file"))
 	}
 
 	if dir == "" {
@@ -151,8 +151,9 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 
 	customEnable, err := customDHInstallSystemdPostinst(spec, target)
 	if err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating custom systemd postinst"))
 	}
+
 	if len(customEnable) > 0 {
 		// This is not meant to be executed on its own and will instead get added
 		// to a post inst file, so need to mark this as executable.
@@ -191,7 +192,7 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, spec.Name+".links"), 0o644, buf.Bytes()), opts...))
 	}
 
-	return dalec.MergeAtPath(in, states, "/"), nil
+	return dalec.MergeAtPath(in, states, "/")
 }
 
 func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) []byte {

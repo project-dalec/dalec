@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 func buildScriptSourceState(spec *dalec.Spec) *llb.State {
@@ -81,31 +80,17 @@ func buildScript(spec *dalec.Spec) string {
 	return b.String()
 }
 
-func ToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) ([]llb.State, error) {
-	sources, err := dalec.Sources(spec, sOpt)
-	if err != nil {
-		return nil, err
-	}
+func Sources(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) []llb.State {
+	sources := dalec.Sources(spec, sOpt)
 	out := make([]llb.State, 0, len(sources))
 
 	withPG := func(s string) []llb.ConstraintsOpt {
 		return append(opts, dalec.ProgressGroup(s))
 	}
 
-	gomodSt, err := spec.GomodDeps(sOpt, worker, withPG("Add gomod sources")...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding gomod sources")
-	}
-
-	cargohomeSt, err := spec.CargohomeDeps(sOpt, worker, withPG("Add cargohome sources")...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding cargohome sources")
-	}
-
-	pipDepsSt, err := spec.PipDeps(sOpt, worker, withPG("Add pip sources")...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding pip sources")
-	}
+	gomodSt := spec.GomodDeps(sOpt, worker, withPG("Add gomod sources")...)
+	cargohomeSt := spec.CargohomeDeps(sOpt, worker, withPG("Add cargohome sources")...)
+	pipDepsSt := spec.PipDeps(sOpt, worker, withPG("Add pip sources")...)
 
 	if gomodSt != nil {
 		out = append(out, gomodSt.With(sourceTar(worker, gomodsName, withPG("Tar gomod deps")...)))
@@ -119,10 +104,7 @@ func ToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opt
 		out = append(out, pipDepsSt.With(sourceTar(worker, pipDepsName, withPG("Tar pip deps")...)))
 	}
 
-	srcsWithNodeMods, err := spec.NodeModDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error preparing node deps")
-	}
+	srcsWithNodeMods := spec.NodeModDeps(sOpt, worker, opts...)
 
 	sorted := dalec.SortMapKeys(sources)
 	for _, k := range sorted {
@@ -141,7 +123,7 @@ func ToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opt
 		out = append(out, *scriptSt)
 	}
 
-	return out, nil
+	return out
 }
 
 func sourceTar(worker llb.State, key string, opts ...llb.ConstraintsOpt) llb.StateOption {

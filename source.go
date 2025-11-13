@@ -248,7 +248,7 @@ func PatchSources(worker llb.State, spec *Spec, sourceToState map[string]llb.Sta
 	return states
 }
 
-func (s *Spec) getPatchedSources(sOpt SourceOpts, worker llb.State, filterFunc func(string) bool, opts ...llb.ConstraintsOpt) (map[string]llb.State, error) {
+func (s *Spec) getPatchedSources(sOpt SourceOpts, worker llb.State, filterFunc func(string) bool, opts ...llb.ConstraintsOpt) map[string]llb.State {
 	states := map[string]llb.State{}
 	for name, src := range s.Sources {
 		if !filterFunc(name) {
@@ -260,13 +260,14 @@ func (s *Spec) getPatchedSources(sOpt SourceOpts, worker llb.State, filterFunc f
 		for _, p := range s.Patches[name] {
 			src, ok := s.Sources[p.Source]
 			if !ok {
-				return nil, errors.Errorf("patch source %q not found", p.Source)
+				states[p.Source] = ErrorState(llb.Scratch(), errors.Errorf("patch source %q not found", p.Source))
+				continue
 			}
 			states[p.Source] = src.ToState(p.Source, sOpt, opts...)
 		}
 	}
 
-	return PatchSources(worker, s, states, opts...), nil
+	return PatchSources(worker, s, states, opts...)
 }
 
 // Tar creates a tar+gz from the provided state and puts it in the provided dest.
@@ -303,7 +304,7 @@ func DefaultTarWorker(resolver llb.ImageMetaResolver, opts ...llb.ConstraintsOpt
 }
 
 // Sources gets all the source LLB states from the spec.
-func Sources(spec *Spec, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (map[string]llb.State, error) {
+func Sources(spec *Spec, sOpt SourceOpts, opts ...llb.ConstraintsOpt) map[string]llb.State {
 	states := make(map[string]llb.State, len(spec.Sources))
 
 	for k, src := range spec.Sources {
@@ -313,7 +314,7 @@ func Sources(spec *Spec, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (map[strin
 		st := src.ToState(k, sOpt, opts...)
 		states[k] = st
 	}
-	return states, nil
+	return states
 }
 
 func (g *SourceGenerator) fillDefaults(host string, authInfo *GitAuth) {

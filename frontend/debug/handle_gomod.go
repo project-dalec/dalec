@@ -6,11 +6,11 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 const keyGomodWorker = "gomod-worker"
@@ -37,10 +37,7 @@ func Gomods(ctx context.Context, client gwclient.Client) (*gwclient.Result, erro
 		}
 		worker = worker.With(addedHosts(client))
 
-		st, err := spec.GomodDeps(sOpt, worker, dalec.Platform(platform))
-		if err != nil {
-			return nil, nil, err
-		}
+		st := spec.GomodDeps(sOpt, worker, dalec.Platform(platform))
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

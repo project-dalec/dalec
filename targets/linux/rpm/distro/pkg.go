@@ -4,13 +4,13 @@ import (
 	"context"
 	"path/filepath"
 
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/packaging/linux/rpm"
 	"github.com/project-dalec/dalec/targets"
-	"github.com/moby/buildkit/client/llb"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -45,14 +45,11 @@ func needsAutoGocache(spec *dalec.Spec, targetKey string) bool {
 	return true
 }
 
-func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, frontend.IgnoreCache(client))
 	worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, opts...))
 
-	br, err := rpm.SpecToBuildrootLLB(worker, spec, sOpt, targetKey, opts...)
-	if err != nil {
-		return llb.Scratch(), err
-	}
+	br := rpm.BuildRoot(worker, spec, sOpt, targetKey, opts...)
 
 	specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
 
