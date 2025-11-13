@@ -35,6 +35,12 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 
 	worker = worker.With(d.InstallBuildDeps(ctx, sOpt, spec, targetKey, append(opts, frontend.IgnoreCache(client))...))
 
+	// Preprocess the spec to generate patches for gomod edits and other generators
+	// This must happen after build deps are installed so Go is available
+	if err := spec.Preprocess(client, sOpt, worker, opts...); err != nil {
+		return dalec.ErrorState(worker, err)
+	}
+
 	var cfg deb.SourcePkgConfig
 	extraPaths := prepareGo(ctx, client, &cfg, worker, spec, targetKey, opts...)
 
