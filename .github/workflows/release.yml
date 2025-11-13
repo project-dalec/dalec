@@ -52,6 +52,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # Required for cosign OIDC signing
+      attestations: write  # Required for GitHub attestations
 
     needs: tagList
     uses: ./.github/workflows/frontend-image.yml
