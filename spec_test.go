@@ -34,3 +34,121 @@ func TestDate(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Check(t, cmp.Equal(d3.Format(time.DateOnly), expect))
 }
+
+func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		gen               *SourceGenerator
+		expectErr         bool
+		expectedErrSubstr string
+	}{
+		{
+			name: "valid gomod edits",
+			gen: &SourceGenerator{
+				Gomod: &GeneratorGomod{
+					Edits: &GomodEdits{
+						Require: []GomodRequire{
+							{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
+						},
+						Replace: []GomodReplace{
+							{Old: "github.com/old/module", New: "github.com/new/module@v1.0.0"},
+						},
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "invalid require - missing @version",
+			gen: &SourceGenerator{
+				Gomod: &GeneratorGomod{
+					Edits: &GomodEdits{
+						Require: []GomodRequire{
+							{Module: "github.com/stretchr/testify", Version: "v1.8.0"}, // Missing @
+						},
+					},
+				},
+			},
+			expectErr:         true,
+			expectedErrSubstr: "version must include @version",
+		},
+		{
+			name: "invalid require - empty module",
+			gen: &SourceGenerator{
+				Gomod: &GeneratorGomod{
+					Edits: &GomodEdits{
+						Require: []GomodRequire{
+							{Module: "", Version: "github.com/stretchr/testify@v1.8.0"},
+						},
+					},
+				},
+			},
+			expectErr:         true,
+			expectedErrSubstr: "must be non-empty",
+		},
+		{
+			name: "invalid replace - empty old",
+			gen: &SourceGenerator{
+				Gomod: &GeneratorGomod{
+					Edits: &GomodEdits{
+						Replace: []GomodReplace{
+							{Old: "", New: "github.com/new/module@v1.0.0"},
+						},
+					},
+				},
+			},
+			expectErr:         true,
+			expectedErrSubstr: "must be non-empty",
+		},
+		{
+			name: "invalid replace - empty new",
+			gen: &SourceGenerator{
+				Gomod: &GeneratorGomod{
+					Edits: &GomodEdits{
+						Replace: []GomodReplace{
+							{Old: "github.com/old/module", New: ""},
+						},
+					},
+				},
+			},
+			expectErr:         true,
+			expectedErrSubstr: "must be non-empty",
+		},
+		{
+			name: "multiple errors",
+			gen: &SourceGenerator{
+				Gomod: &GeneratorGomod{
+					Edits: &GomodEdits{
+						Require: []GomodRequire{
+							{Module: "", Version: "v1.8.0"}, // Both invalid
+						},
+						Replace: []GomodReplace{
+							{Old: "", New: ""}, // Both invalid
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.gen.Validate()
+
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.expectedErrSubstr != "" {
+					assert.Check(t, cmp.Contains(err.Error(), tt.expectedErrSubstr))
+				}
+				return
+			}
+
+			assert.NilError(t, err)
+		})
+	}
+}
