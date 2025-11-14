@@ -1543,6 +1543,361 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		})
 	})
 
+	t.Run("gomod require directive", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-require",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod require directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: "module example.com/test\n\ngo 1.21\n"},
+								"main.go": {Contents: `package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`},
+							},
+						},
+					},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Require: []dalec.GomodRequire{
+										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify go.mod was patched with the exact version specified
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Build the code - will fail if require didn't work
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace directive", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-replace",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod replace directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: "module example.com/test\n\ngo 1.21\n\nrequire github.com/stretchr/testify v1.9.0\n"},
+								"main.go": {Contents: `package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`},
+							},
+						},
+					},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Old: "github.com/stretchr/testify", New: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify go.mod was patched with replace directive and correct version
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Build the code - will fail if replace didn't work
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod combined replace and require", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-combined",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod combined replace and require",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: "module example.com/test\n\ngo 1.21\n"},
+								"main.go": {Contents: `package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/objx"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+	m := objx.Map{"name": "test"}
+	fmt.Println(m.Get("name"))
+}
+`},
+							},
+						},
+					},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									// Require testify at v1.8.0
+									Require: []dalec.GomodRequire{
+										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
+									},
+									// Replace objx (another stretchr module) with a specific version
+									Replace: []dalec.GomodReplace{
+										{Old: "github.com/stretchr/objx", New: "github.com/stretchr/objx@v0.5.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify both directives were applied with correct versions
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					{Command: "grep -F 'replace github.com/stretchr/objx' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/objx v0.5.0' ./src/go.mod"},
+					// Build the code - will fail if edits didn't work
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod multi-module with paths", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// Create a multi-module repo with two modules
+		contextSt := llb.Scratch().
+			File(llb.Mkdir("/module1", 0755)).
+			File(llb.Mkfile("/module1/go.mod", 0644, []byte("module example.com/module1\n\ngo 1.21\n"))).
+			File(llb.Mkfile("/module1/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("module1")
+	assert.True(nil, true)
+}
+`))).
+			File(llb.Mkdir("/module2", 0755)).
+			File(llb.Mkfile("/module2/go.mod", 0644, []byte("module example.com/module2\n\ngo 1.21\n"))).
+			File(llb.Mkfile("/module2/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("module2")
+	assert.True(nil, true)
+}
+`)))
+
+		const contextName = "multi-module-edits"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-multi-module",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod multi-module with paths",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Paths: []string{"module1", "module2"},
+								Edits: &dalec.GomodEdits{
+									Require: []dalec.GomodRequire{
+										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify both modules were patched with the exact version
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/module1/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/module2/go.mod"},
+					{Command: "cd ./src/module1 && go build"},
+					{Command: "cd ./src/module2 && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod with subpath", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// Create a context with a subdirectory structure
+		contextSt := llb.Scratch().
+			File(llb.Mkdir("/subdir", 0755)).
+			File(llb.Mkfile("/subdir/go.mod", 0644, []byte("module example.com/test\n\ngo 1.21\n"))).
+			File(llb.Mkfile("/subdir/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)))
+
+		const contextName = "subpath-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-subpath",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod with subpath",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Subpath: "subdir",
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Require: []dalec.GomodRequire{
+										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify the go.mod in subdir was patched with the exact version
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/subdir/go.mod"},
+					{Command: "cd ./src/subdir && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("cargo home", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
