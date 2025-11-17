@@ -36,7 +36,7 @@ type Config struct {
 	DefaultOutputImage string
 
 	// ExtraRepos is used by distributions that want to enable extra repositories
-	// that are not inthe base worker config.
+	// that are not in the base worker config.
 	// A prime example of this is adding Debian backports on debian distributions.
 	ExtraRepos []dalec.PackageRepositoryConfig
 

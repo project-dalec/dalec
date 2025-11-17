@@ -3087,7 +3087,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 					Name: "Test that tests fail the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/usr/share/test-file": {},
-						// Make sure dir permissions are chcked correctly.
+						// Make sure dir permissions are checked correctly.
 						"/usr/share": {IsDir: true, Permissions: 0o755},
 					},
 				},
@@ -3328,7 +3328,7 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 			// This should make `strip` fail.
 			//
 			// Note: The test is specifically using ppc64le as GOARCH
-			// because it seems alma/rockylinux do not error ons trip except for ppc64le.
+			// because it seems alma/rockylinux do not error on strip except for ppc64le.
 			// Even this is a stretch as that does not even work as expected at version < v9.
 			{
 				Command: `cd src; if [ "${TARGETARCH}" = "ppc64le" ]; then export GOARCH=amd64; else export GOARCH=ppc64le; fi; go build -o ../bad-executable main.go`,

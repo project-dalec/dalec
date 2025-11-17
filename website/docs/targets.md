@@ -28,7 +28,7 @@ DALEC includes a number of built-in targets that you can either use in your spec
 
 When specifying a "target" to `docker build --target=<target>` DALEC treats
 `<target>` as a route (much like an HTTP path) and each of the above mentioned
-targets have subroutes you can specfiy as well, e.g. `jammy/deb` to have DALEC
+targets have subroutes you can specify as well, e.g. `jammy/deb` to have DALEC
 build and output just the deb package. What subroutes are available depend on
 the underlying target implementation.
 
