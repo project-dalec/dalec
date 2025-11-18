@@ -146,7 +146,7 @@ func (d Date) Compare(other Date) int {
 }
 
 func (d Date) MarshalYAML() ([]byte, error) {
-	return yaml.Marshal(d.String())
+	return yaml.Marshal(d.Format(time.DateOnly))
 }
 
 func (d *Date) UnmarshalYAML(dt []byte) error {
@@ -163,7 +163,7 @@ func (d *Date) UnmarshalYAML(dt []byte) error {
 }
 
 func (d Date) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.String())
+	return json.Marshal(d.Format(time.DateOnly))
 }
 
 func (d *Date) UnmarshalJSON(dt []byte) error {
