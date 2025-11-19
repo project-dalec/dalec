@@ -3,8 +3,8 @@ package test
 import (
 	"testing"
 
-	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 )
 
 func TestAlmalinux9(t *testing.T) {
@@ -90,7 +90,6 @@ func TestAlmalinux8(t *testing.T) {
 			ID:        "almalinux",
 			VersionID: "8",
 		},
-		SkipStripTest: true,
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},
