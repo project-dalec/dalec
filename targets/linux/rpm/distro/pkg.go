@@ -45,8 +45,10 @@ func needsAutoGocache(spec *dalec.Spec, targetKey string) bool {
 	return true
 }
 
-func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
+func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, frontend.IgnoreCache(client))
+
+	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 	worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, opts...))
 
 	br := rpm.BuildRoot(worker, spec, sOpt, targetKey, opts...)
@@ -68,7 +70,7 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 
 // runTests runs the package tests
 // The returned reference is the solved container state
-func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State, targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error) {
+func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State, targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error) {
 	def, err := ctr.Marshal(ctx, opts...)
 	if err != nil {
 		return nil, err
@@ -86,7 +88,7 @@ func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, worker 
 		return nil, err
 	}
 
-	withTestDeps := cfg.InstallTestDeps(worker, sOpt, targetKey, spec, opts...)
+	withTestDeps := cfg.InstallTestDeps(sOpt, targetKey, spec, opts...)
 	err = frontend.RunTests(ctx, client, spec, ref, withTestDeps, targetKey, sOpt.TargetPlatform)
 	return ref, errors.Wrap(err, "TESTS FAILED")
 }
@@ -105,7 +107,7 @@ func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.
 	return dalec.WithRunOptions(withRepos, withData, keyMounts), keyPaths
 }
 
-func (cfg *Config) InstallTestDeps(worker llb.State, sOpt dalec.SourceOpts, targetKey string, spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.StateOption {
+func (cfg *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.StateOption {
 	deps := spec.GetPackageDeps(targetKey).GetTest()
 	if len(deps) == 0 {
 		return dalec.NoopStateOption
@@ -117,6 +119,7 @@ func (cfg *Config) InstallTestDeps(worker llb.State, sOpt dalec.SourceOpts, targ
 		importRepos := []DnfInstallOpt{DnfAtRoot("/tmp/rootfs"), DnfWithMounts(repoMounts), DnfImportKeys(keyPaths)}
 
 		opts = append(opts, dalec.ProgressGroup("Install test dependencies"))
+		worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 		return worker.Run(
 			dalec.WithConstraints(opts...),
 			cfg.Install(dalec.SortMapKeys(deps), importRepos...),
@@ -125,11 +128,12 @@ func (cfg *Config) InstallTestDeps(worker llb.State, sOpt dalec.SourceOpts, targ
 	}
 }
 
-func (cfg *Config) ExtractPkg(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, rpmDir llb.State, opts ...llb.ConstraintsOpt) llb.State {
+func (cfg *Config) ExtractPkg(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, rpmDir llb.State, opts ...llb.ConstraintsOpt) llb.State {
 	deps := spec.GetPackageDeps(targetKey)
-	depRpms := cfg.DownloadDeps(worker, sOpt, spec, targetKey, deps.GetSysext(), opts...)
+	depRpms := cfg.DownloadDeps(sOpt, spec, targetKey, deps.GetSysext(), opts...)
 
 	opts = append(opts, dalec.ProgressGroup("Extracting RPMs"))
+	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
 	return worker.Run(
 		llb.Args([]string{"find", "/input", "-name", "*.rpm", "-exec", "sh", "-c", "rpm2cpio \"$1\" | cpio -idmv -D /output", "-", "{}", ";"}),

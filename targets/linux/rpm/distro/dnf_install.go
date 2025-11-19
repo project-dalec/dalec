@@ -255,12 +255,14 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 	}
 }
 
-func (cfg *Config) DownloadDeps(worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, constraints dalec.PackageDependencyList, opts ...llb.ConstraintsOpt) llb.State {
+func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, constraints dalec.PackageDependencyList, opts ...llb.ConstraintsOpt) llb.State {
 	if constraints == nil {
 		return llb.Scratch()
 	}
 
 	opts = append(opts, dalec.ProgressGroup("Downloading dependencies"))
+
+	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
 	worker = worker.Run(
 		dalec.WithConstraints(opts...),

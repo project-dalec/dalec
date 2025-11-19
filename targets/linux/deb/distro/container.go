@@ -11,7 +11,7 @@ import (
 	"github.com/project-dalec/dalec/targets"
 )
 
-func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) llb.State {
+func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) llb.State {
 	bi, err := spec.GetSingleBase(targetKey)
 	if err != nil {
 		return dalec.ErrorState(llb.Scratch(), err)
@@ -25,7 +25,7 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, wor
 		baseImg = img
 	} else {
 		if c.DefaultOutputImage == "" {
-			return dalec.ErrorState(worker, fmt.Errorf("no output image ref specified, cannot build from scratch"))
+			return dalec.ErrorState(llb.Scratch(), fmt.Errorf("no output image ref specified, cannot build from scratch"))
 		}
 		baseImg = llb.Image(c.DefaultOutputImage, llb.WithMetaResolver(sOpt.Resolver), dalec.WithConstraints(opts...))
 	}
@@ -57,7 +57,7 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, wor
 			},
 		}
 
-		basePkg := c.BuildPkg(ctx, client, worker, sOpt, basePkgSpec, targetKey, opts...)
+		basePkg := c.BuildPkg(ctx, client, sOpt, basePkgSpec, targetKey, opts...)
 
 		// Update the base image to include the base packages.
 		// This may include things that are necessary to even install the debSt package.
@@ -71,6 +71,8 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, wor
 			dalec.WithMountedAptCache(c.AptCachePrefix),
 		).Root()
 	}
+
+	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
 	return baseImg.Run(
 		dalec.WithConstraints(opts...),

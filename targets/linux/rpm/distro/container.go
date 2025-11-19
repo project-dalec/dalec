@@ -14,7 +14,7 @@ import (
 	"github.com/project-dalec/dalec/targets/linux"
 )
 
-func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, rpmDir llb.State, opts ...llb.ConstraintsOpt) llb.State {
+func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, rpmDir llb.State, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Install RPMs"))
 	opts = append(opts, frontend.IgnoreCache(client))
 
@@ -52,13 +52,15 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, w
 
 		var basePkgStates []llb.State
 		for _, spec := range cfg.BasePackages {
-			pkg := cfg.BuildPkg(ctx, client, worker, sOpt, &spec, targetKey, opts...)
+			pkg := cfg.BuildPkg(ctx, client, sOpt, &spec, targetKey, opts...)
 			basePkgStates = append(basePkgStates, pkg)
 		}
 
 		basePkgs = dalec.MergeAtPath(basePkgs, basePkgStates, "/")
 		pkgs = append(pkgs, filepath.Join(baseMountPath, "**/*.rpm"))
 	}
+
+	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
 	rootfs = worker.Run(
 		dalec.WithConstraints(opts...), // Make sure constraints (and platform specifically) are applied before install is set
@@ -99,7 +101,7 @@ func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (
 				DnfDownloadAllDeps("/tmp/rpms/RPMS/$(uname -m)"))).Root()
 		rpmDir := llb.Scratch().File(llb.Copy(withDownloads, "/tmp/rpms", "/", dalec.WithDirContentsOnly()), pg)
 
-		ctr := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, rpmDir, pg, pc)
+		ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, rpmDir, pg, pc)
 
 		def, err := ctr.Marshal(ctx, pc)
 		if err != nil {
