@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { TextDecoder, promisify } from 'util';
 import * as vscode from 'vscode';
+import YAML from 'yaml';
 
 const YAML_EXTENSION_ID = 'redhat.vscode-yaml';
 const SCHEMA_SCHEME = 'dalecspec';
@@ -138,51 +139,20 @@ class DalecDocumentTracker implements vscode.Disposable {
     clearCachedArgsSelection(uri);
   }
 
-  private extractTargets(document: vscode.TextDocument): string[] {
-    const targets = new Set<string>();
-    const lines = document.getText().split(/\r?\n/);
-    let inTargetsBlock = false;
-    let baseIndent = 0;
-
-    for (const rawLine of lines) {
-      const line = rawLine.replace(/\t/g, '  ');
-
-      if (!inTargetsBlock) {
-        const match = line.match(/^(\s*)targets\s*:/);
-        if (match) {
-          inTargetsBlock = true;
-          baseIndent = match[1].length;
-        }
-        continue;
-      }
-
-      if (!line.trim()) {
-        continue;
-      }
-
-      if (line.trimStart().startsWith('#')) {
-        continue;
-      }
-
-      const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
-      if (indent <= baseIndent) {
-        break;
-      }
-
-      const keyMatch = line.match(/^\s*([^\s:#]+)\s*:/);
-      if (keyMatch) {
-        targets.add(keyMatch[1]);
-      }
+  private buildMetadata(document: vscode.TextDocument): DalecDocumentMetadata {
+    const parsed = parseDalecSpec(document.getText());
+    if (!parsed) {
+      return {
+        targets: [],
+        contexts: [],
+        args: new Map<string, string | undefined>(),
+      };
     }
 
-    return [...targets];
-  }
-
-  private buildMetadata(document: vscode.TextDocument): DalecDocumentMetadata {
     return {
-      targets: this.extractTargets(document),
-      contexts: scanContextNames(document.getText()),
-      args: extractArgs(document.getText()),
+      targets: extractTargetsFromSpec(parsed),
+      contexts: extractContextNamesFromSpec(parsed),
+      args: extractArgsFromSpec(parsed),
     };
   }
 
@@ -533,6 +503,103 @@ interface DalecDocumentMetadata {
   targets: string[];
   contexts: string[];
   args: Map<string, string | undefined>;
+}
+
+type DalecSpecDocument = Record<string, unknown>;
+
+function parseDalecSpec(text: string): DalecSpecDocument | undefined {
+  if (!text.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = YAML.parse(text);
+    if (isRecordLike(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // Ignore parse errors; fall back to empty metadata.
+  }
+  return undefined;
+}
+
+function extractTargetsFromSpec(spec: DalecSpecDocument): string[] {
+  const rawTargets = spec.targets;
+  if (!isRecordLike(rawTargets)) {
+    return [];
+  }
+  return Object.keys(rawTargets);
+}
+
+function extractContextNamesFromSpec(spec: DalecSpecDocument): string[] {
+  const contexts = new Set<string>();
+  collectContextNames(spec, contexts);
+  return [...contexts];
+}
+
+function collectContextNames(value: unknown, results: Set<string>) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectContextNames(entry, results);
+    }
+    return;
+  }
+  if (!isRecordLike(value)) {
+    return;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(value, 'context')) {
+    const name = getContextName(value.context);
+    if (name) {
+      results.add(name);
+    }
+  }
+
+  for (const child of Object.values(value)) {
+    collectContextNames(child, results);
+  }
+}
+
+function getContextName(value: unknown): string | undefined {
+  if (value === null || value === undefined) {
+    return 'context';
+  }
+  if (typeof value === 'string') {
+    return sanitizeContextName(value);
+  }
+  if (isRecordLike(value)) {
+    const rawName = value.name;
+    if (typeof rawName === 'string') {
+      return sanitizeContextName(rawName);
+    }
+    return 'context';
+  }
+  return undefined;
+}
+
+function extractArgsFromSpec(spec: DalecSpecDocument): Map<string, string | undefined> {
+  const result = new Map<string, string | undefined>();
+  const rawArgs = spec.args;
+  if (!isRecordLike(rawArgs)) {
+    return result;
+  }
+
+  for (const [key, value] of Object.entries(rawArgs)) {
+    if (value === null || value === undefined) {
+      result.set(key, undefined);
+      continue;
+    }
+    if (typeof value === 'string') {
+      result.set(key, value);
+      continue;
+    }
+    result.set(key, String(value));
+  }
+  return result;
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function runDebugCommand(
@@ -887,7 +954,8 @@ async function collectContextSelection(
   cachedValue?: ContextSelection,
 ): Promise<ContextSelection | undefined> {
   const key = document.uri.toString();
-  const contextNames = new Set(scanContextNames(document.getText()));
+  const metadata = tracker.getMetadata(document);
+  const contextNames = new Set(metadata?.contexts ?? []);
 
   if (contextNames.size === 0) {
     const selection: ContextSelection = {
@@ -1069,57 +1137,6 @@ function isRemoteContextReference(value: string): boolean {
   return false;
 }
 
-function scanContextNames(text: string): string[] {
-  const contexts = new Set<string>();
-  const lines = text.split(/\r?\n/);
-
-  for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i];
-    const line = rawLine.replace(/\t/g, '  ');
-    if (line.trimStart().startsWith('#')) {
-      continue;
-    }
-
-    const match = line.match(/^(\s*)(?:-\s*)?context\s*:\s*(.*)$/i);
-    if (!match) {
-      continue;
-    }
-
-    const indent = match[1].length;
-    const remainder = match[2]?.trim() ?? '';
-    const inlineName = extractInlineContextName(remainder);
-    if (inlineName) {
-      contexts.add(inlineName);
-      continue;
-    }
-
-    const blockName = extractBlockContextName(lines, i + 1, indent);
-    contexts.add(blockName ?? 'context');
-  }
-
-  return [...contexts];
-}
-
-function extractInlineContextName(remainder: string): string | undefined {
-  if (!remainder) {
-    return undefined;
-  }
-  if (remainder === '{}' || remainder === 'null' || remainder === '~') {
-    return 'context';
-  }
-
-  if (!remainder.includes('{')) {
-    return undefined;
-  }
-
-  const withoutComment = remainder.split('#')[0];
-  const nameMatch = withoutComment.match(/name\s*:\s*([^,}]+)/i);
-  if (!nameMatch) {
-    return undefined;
-  }
-  return sanitizeContextName(nameMatch[1]);
-}
-
 async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDalecActionState) {
   const entry = lastAction.get();
   if (!entry) {
@@ -1134,7 +1151,7 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
 
   const metadata = tracker.getMetadata(document);
   const entryContexts = entry.contexts;
-  const specContextNames = scanContextNames(document.getText());
+  const specContextNames = metadata?.contexts ?? [];
   const contextSelection =
     contextsSatisfied(entryContexts, specContextNames)
       ? entryContexts
@@ -1195,31 +1212,6 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
   }
 }
 
-function extractBlockContextName(
-  lines: string[],
-  startIndex: number,
-  baseIndent: number,
-): string | undefined {
-  for (let i = startIndex; i < lines.length; i++) {
-    const candidate = lines[i].replace(/\t/g, '  ');
-    const trimmed = candidate.trim();
-    if (!trimmed || trimmed.startsWith('#')) {
-      continue;
-    }
-
-    const indent = candidate.match(/^\s*/)?.[0].length ?? 0;
-    if (indent <= baseIndent) {
-      break;
-    }
-
-    const nameMatch = candidate.match(/^\s*name\s*:\s*(.+)$/i);
-    if (nameMatch) {
-      return sanitizeContextName(nameMatch[1]);
-    }
-  }
-  return undefined;
-}
-
 function contextsSatisfied(selection: ContextSelection, requiredNames: string[]): boolean {
   const available = new Set(selection.additionalContexts.keys());
   available.add('context');
@@ -1246,59 +1238,6 @@ function argsSatisfied(selection: ArgsSelection, definedArgs?: Map<string, strin
   return true;
 }
 
-function extractArgs(text: string): Map<string, string | undefined> {
-  const args = new Map<string, string | undefined>();
-  const lines = text.split(/\r?\n/);
-
-  for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i];
-    const line = rawLine.replace(/\t/g, '  ');
-    if (line.trimStart().startsWith('#')) {
-      continue;
-    }
-    const match = line.match(/^(\s*)args\s*:/);
-    if (!match) {
-      continue;
-    }
-    const baseIndent = match[1].length;
-    for (let j = i + 1; j < lines.length; j++) {
-      const candidateRaw = lines[j];
-      const candidate = candidateRaw.replace(/\t/g, '  ');
-      const trimmed = candidate.trim();
-      if (!trimmed) {
-        continue;
-      }
-      if (trimmed.startsWith('#')) {
-        continue;
-      }
-      const indent = candidate.match(/^\s*/)?.[0].length ?? 0;
-      if (indent <= baseIndent) {
-        break;
-      }
-
-      const keyMatch = candidate.match(/^\s*([^\s:#]+)\s*:\s*(.*)$/);
-      if (!keyMatch) {
-        continue;
-      }
-      const key = keyMatch[1];
-      let value = keyMatch[2]?.trim() ?? '';
-      if (value.includes('#')) {
-        value = value.split('#')[0]?.trim() ?? '';
-      }
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      args.set(key, value === '' ? undefined : value);
-    }
-    break;
-  }
-
-  return args;
-}
-
 function groupTargets(targets: BuildTargetInfo[]): Map<string, BuildTargetInfo[]> {
   const grouped = new Map<string, BuildTargetInfo[]>();
   for (const info of targets) {
@@ -1311,35 +1250,6 @@ function groupTargets(targets: BuildTargetInfo[]): Map<string, BuildTargetInfo[]
   return grouped;
 }
 
-type TargetQuickPickItem = vscode.QuickPickItem & { target?: string };
-
-function createGroupHeader(scope: string): TargetQuickPickItem {
-  return {
-    label: ` ${scope}`,
-    kind: vscode.QuickPickItemKind.Separator,
-  };
-}
-
 function isDebugScope(value: string): boolean {
   return value.toLowerCase() === 'debug';
-}
-
-function isDebugTarget(value?: string): boolean {
-  if (!value) {
-    return false;
-  }
-  const lower = value.toLowerCase();
-  return (
-    lower.startsWith('debug/') ||
-    lower === 'debug' ||
-    lower.includes('/debug/') ||
-    lower.endsWith('/debug')
-  );
-}
-
-function isNestedTarget(value?: string): boolean {
-  if (!value) {
-    return false;
-  }
-  return value.split('/').length > 2;
 }
