@@ -65,7 +65,7 @@ though behavior may differ between different OS's/distros.
 
 Libexec files are additional executable files that may be executed by one of
 the main package executables. On Linux these would typically get installed into
-`/usr/libexec/` or `/usr/libexec/<main-executable-name>`.
+`/usr/libexec/` or `/usr/libexec/<main-executable-name>/`.
 
 Files under libexec are a mapping of file path to [artifact configuration](#artifact-configuration).
 If `subpath` is not supplied, the artifact will be installed in `/usr/libexec`
@@ -133,7 +133,8 @@ artifacts:
 Directories allows you to create new directories when installing the package.
 Two types of directory artifacts are supported:
 
-1. *config*: This is a directory where configuration files typically go, e.g. /etc/my_package2. *State*: This is directory for persistent state, typically in `/var/lib` on Linux.
+1. *config*: This is a directory where configuration files typically go, e.g. `/etc/my_package`.
+2. *State*: This is directory for persistent state, typically in `/var/lib` on Linux.
 
 
 Unlike many other artifact types, this does not reference any file produced
