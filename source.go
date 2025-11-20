@@ -152,6 +152,9 @@ type SourceOpts struct {
 	GetContext       func(string, ...llb.LocalOption) (*llb.State, error)
 	TargetPlatform   *ocispecs.Platform
 	GitCredHelperOpt func() (llb.RunOption, error)
+	// GeneratedStates stores LLB states generated during preprocessing (e.g., gomod patches)
+	// that can be referenced by name in context sources
+	GeneratedStates map[string]llb.State
 }
 
 var errInvalidMountConfig = errors.New("invalid mount config")

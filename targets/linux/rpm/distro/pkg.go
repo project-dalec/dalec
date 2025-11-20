@@ -49,6 +49,12 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 	opts = append(opts, frontend.IgnoreCache(client))
 	worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, opts...))
 
+	// Preprocess the spec to generate patches for gomod edits and other generators
+	// This must happen after build deps are installed so Go is available
+	if err := spec.Preprocess(client, sOpt, worker, opts...); err != nil {
+		return llb.Scratch()
+	}
+
 	br := rpm.BuildRoot(worker, spec, sOpt, targetKey, opts...)
 
 	specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")

@@ -9,11 +9,12 @@ import (
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
+
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 type DistroConfig interface {
@@ -104,9 +105,7 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 
 			worker := c.Worker(sOpt, opts...)
 
-			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
-
-			// Pre-built package wasn't found so we need to build it.
+			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt) // Pre-built package wasn't found so we need to build it.
 			if !foundPrebuiltPkg {
 				pkgSt = c.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, opts...)
 			}
@@ -141,9 +140,7 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 
 			worker := c.Worker(sOpt, opts...)
 
-			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
-
-			// Pre-built package wasn't found so we need to build it.
+			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt) // Pre-built package wasn't found so we need to build it.
 			if !foundPrebuiltPkg {
 				pkgSt = c.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, opts...)
 			}
