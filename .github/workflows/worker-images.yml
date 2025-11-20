@@ -182,8 +182,7 @@ jobs:
           fi
           
           echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
-          echo "image-name=ghcr.io/${IMAGE_REPO}" >> $GITHUB_OUTPUT
-      
+          echo "image-name=ghcr.io/${BASE_REPO}" >> $GITHUB_OUTPUT      
       - name: Attest build provenance
         if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
         uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v2.0.0
