@@ -66,7 +66,7 @@ target "maps-dep" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -81,7 +81,7 @@ target "maps-buildstep" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -96,7 +96,7 @@ target "maps-test" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -111,7 +111,7 @@ target "maps-source" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
