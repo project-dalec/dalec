@@ -11,6 +11,7 @@ import (
 )
 
 func init() {
+	targets.RegisterBuildTarget(debian.TrixieDefaultTargetKey, debian.TrixieConfig.Handle)
 	targets.RegisterBuildTarget(debian.BookwormDefaultTargetKey, debian.BookwormConfig.Handle)
 	targets.RegisterBuildTarget(debian.BullseyeDefaultTargetKey, debian.BullseyeConfig.Handle)
 

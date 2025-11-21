@@ -100,10 +100,11 @@ jobs:
           - Almalinux9
           - Rockylinux8
           - Rockylinux9
+          - Trixie
           - other
         include:
           - suite: other
-            skip: Mariner2|Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9
+            skip: Mariner2|Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
 
     # TODO: support diff/merge
     # Right now this is handled by the e2e suite, but we can migrate that here.

@@ -9,6 +9,21 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 )
 
+func TestTrixie(t *testing.T) {
+	t.Parallel()
+
+	ctx := startTestSpan(baseCtx, t)
+	testConf := debLinuxTestConfigFor(
+		debian.TrixieDefaultTargetKey,
+		debian.TrixieConfig,
+		withPackageOverride("rust", "rust-all"),
+		withPackageOverride("bazel", "bazel-bootstrap"),
+	)
+
+	testLinuxDistro(ctx, t, testConf)
+	testDebianBaseDependencies(t, testConf.Target)
+}
+
 func TestBookworm(t *testing.T) {
 	t.Parallel()
 

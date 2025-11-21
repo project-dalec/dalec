@@ -61,6 +61,10 @@ rockylinux9/container/depsonly   Builds a container image with only the runtime 
 rockylinux9/rpm                  Builds an rpm and src.rpm.
 rockylinux9/rpm/debug            Debug options for rpm builds.
 rockylinux9/worker               Builds the base worker image responsible for building the rpm
+trixie/deb (default)             Builds a deb package.
+trixie/dsc                       Builds a Debian source package.
+trixie/testing/container         Builds a container image for testing purposes only.
+trixie/worker                    Builds the worker image.
 windowscross/container (default) Builds binaries and installs them into a Windows base image
 windowscross/worker              Builds the base worker image responsible for building the package
 windowscross/zip                 Builds binaries combined into a zip file

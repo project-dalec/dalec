@@ -30,6 +30,7 @@ var (
 	}
 
 	targets = map[string]gwclient.BuildFunc{
+		TrixieDefaultTargetKey: TrixieConfig.Handle,
 		BookwormDefaultTargetKey: BookwormConfig.Handle,
 		BullseyeDefaultTargetKey: BullseyeConfig.Handle,
 	}
