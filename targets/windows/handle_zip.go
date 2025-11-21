@@ -164,7 +164,7 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 	// Preprocess the spec to generate patches for gomod edits and other generators
 	// This must happen after build deps are installed so Go is available
 	if err := spec.Preprocess(client, sOpt, worker, opts...); err != nil {
-		return llb.Scratch()
+		return dalec.ErrorState(worker, err)
 	}
 
 	// Apply source map constraints for build steps

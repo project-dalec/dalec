@@ -187,11 +187,11 @@ new: github.com/cpuguy83/tar2go@v0.3.1
 				t.Fatalf("failed to unmarshal: %v", err)
 			}
 
-			if repl.Old != tt.expectedOld {
-				t.Errorf("expected Old=%q, got %q", tt.expectedOld, repl.Old)
+			if repl.Original != tt.expectedOld {
+				t.Errorf("expected Old=%q, got %q", tt.expectedOld, repl.Original)
 			}
-			if repl.New != tt.expectedNew {
-				t.Errorf("expected New=%q, got %q", tt.expectedNew, repl.New)
+			if repl.Update != tt.expectedNew {
+				t.Errorf("expected New=%q, got %q", tt.expectedNew, repl.Update)
 			}
 		})
 	}
@@ -267,8 +267,8 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 		{
 			name: "valid replace",
 			repl: GomodReplace{
-				Old: "github.com/stretchr/testify",
-				New: "github.com/stretchr/testify@v1.8.0",
+				Original: "github.com/stretchr/testify",
+				Update:      "github.com/stretchr/testify@v1.8.0",
 			},
 			expectErr:   false,
 			expectedArg: "github.com/stretchr/testify=github.com/stretchr/testify@v1.8.0",
@@ -276,16 +276,16 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 		{
 			name: "empty old",
 			repl: GomodReplace{
-				Old: "",
-				New: "github.com/stretchr/testify@v1.8.0",
+				Original: "",
+				Update:      "github.com/stretchr/testify@v1.8.0",
 			},
 			expectErr: true,
 		},
 		{
 			name: "empty new",
 			repl: GomodReplace{
-				Old: "github.com/stretchr/testify",
-				New: "",
+				Original: "github.com/stretchr/testify",
+				Update:      "",
 			},
 			expectErr: true,
 		},

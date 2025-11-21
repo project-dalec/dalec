@@ -53,7 +53,7 @@ func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
 							{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
 						},
 						Replace: []GomodReplace{
-							{Old: "github.com/old/module", New: "github.com/new/module@v1.0.0"},
+							{Original: "github.com/old/module", Update: "github.com/new/module@v1.0.0"},
 						},
 					},
 				},
@@ -94,7 +94,7 @@ func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
 				Gomod: &GeneratorGomod{
 					Edits: &GomodEdits{
 						Replace: []GomodReplace{
-							{Old: "", New: "github.com/new/module@v1.0.0"},
+							{Original: "", Update: "github.com/new/module@v1.0.0"},
 						},
 					},
 				},
@@ -108,7 +108,7 @@ func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
 				Gomod: &GeneratorGomod{
 					Edits: &GomodEdits{
 						Replace: []GomodReplace{
-							{Old: "github.com/old/module", New: ""},
+							{Original: "github.com/old/module", Update: ""},
 						},
 					},
 				},
@@ -125,7 +125,7 @@ func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
 							{Module: "", Version: "v1.8.0"}, // Both invalid
 						},
 						Replace: []GomodReplace{
-							{Old: "", New: ""}, // Both invalid
+							{Original: "", Update: ""}, // Both invalid
 						},
 					},
 				},

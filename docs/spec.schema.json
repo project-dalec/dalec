@@ -1207,13 +1207,13 @@
 					"type": [
 						"string"
 					],
-					"description": "New is the replacement module path or local directory"
+					"description": "Update is the replacement module path or local directory"
 				},
 				"old": {
 					"type": [
 						"string"
 					],
-					"description": "Old is the module path to replace (can include @version)"
+					"description": "Original is the module path to replace (can include @version)"
 				}
 			},
 			"additionalProperties": {

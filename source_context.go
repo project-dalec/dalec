@@ -30,13 +30,6 @@ func (src *SourceContext) IsDir() bool {
 
 func (src *SourceContext) baseState(opts fetchOptions) llb.State {
 	return llb.Scratch().Async(func(ctx context.Context, _ llb.State, _ *llb.Constraints) (llb.State, error) {
-		// Check if this is a generated state (e.g., from preprocessing)
-		if opts.SourceOpt.GeneratedStates != nil {
-			if st, ok := opts.SourceOpt.GeneratedStates[src.Name]; ok {
-				return st, nil
-			}
-		}
-
 		if opts.SourceOpt.GetContext == nil {
 			panic("SourceOpt.GetContext is not set, cannot fetch source context")
 		}

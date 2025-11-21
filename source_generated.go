@@ -31,6 +31,9 @@ func (s *Source) validateSourceVariants() error {
 	if s.Inline != nil {
 		count++
 	}
+	if s.LLB != nil {
+		count++
+	}
 
 	switch count {
 	case 0:
@@ -57,6 +60,8 @@ func (s *Source) toInterface() source {
 		return s.HTTP
 	case s.Inline != nil:
 		return s.Inline
+	case s.LLB != nil:
+		return s.LLB
 	default:
 		panic(errNoSourceVariant)
 	}
@@ -166,6 +171,24 @@ func (s *SourceInline) UnmarshalYAML(ctx context.Context, node ast.Node) error {
 	}
 
 	*s = SourceInline(i)
+	s._sourceMap = newSourceMap(ctx, node)
+	return nil
+}
+
+func (s *SourceLLB) sourceMap() *sourceMap {
+	return s._sourceMap
+}
+
+func (s *SourceLLB) UnmarshalYAML(ctx context.Context, node ast.Node) error {
+	type internal SourceLLB
+	var i internal
+
+	dec := getDecoder(ctx)
+	if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
+		return err
+	}
+
+	*s = SourceLLB(i)
 	s._sourceMap = newSourceMap(ctx, node)
 	return nil
 }
