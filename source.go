@@ -38,6 +38,7 @@ type Source struct {
 	Context     *SourceContext     `yaml:"context,omitempty" json:"context,omitempty"`
 	Build       *SourceBuild       `yaml:"build,omitempty" json:"build,omitempty"`
 	Inline      *SourceInline      `yaml:"inline,omitempty" json:"inline,omitempty"`
+	LLB         *SourceLLB         `yaml:"-" json:"-"` // Internal only, not exposed to users
 	// === End Source Variants ===
 
 	// Path is the path to the source after fetching it based on the identifier.
@@ -627,4 +628,42 @@ func (p *PatchSpec) UnmarshalYAML(ctx context.Context, node ast.Node) error {
 	*p = PatchSpec(i)
 	p._sourceMap = newSourceMap(ctx, node)
 	return nil
+}
+
+// SourceLLB is an internal-only source type that wraps an LLB state.
+// It is not exposed to users via YAML/JSON marshaling (note the tags with "-").
+// This is used for programmatically generated sources like gomod patches.
+type SourceLLB struct {
+	state      llb.State
+	_sourceMap *sourceMap
+}
+
+// newSourceLLB creates an internal SourceLLB from an LLB state.
+// This is not exposed to users and is used for programmatically generated sources.
+func newSourceLLB(st llb.State) *SourceLLB {
+	return &SourceLLB{
+		state: st,
+	}
+}
+
+func (s *SourceLLB) IsDir() bool {
+	return true // Treat as directory since it can contain files
+}
+
+func (s *SourceLLB) doc(io.Writer, string) {}
+
+func (s *SourceLLB) fillDefaults([]*SourceGenerator) {}
+
+func (s *SourceLLB) validate(fetchOptions) error { return nil }
+
+func (s *SourceLLB) processBuildArgs(*shell.Lex, map[string]string, func(string) bool) error {
+	return nil
+}
+
+func (s *SourceLLB) toMount(opt fetchOptions) (llb.State, []llb.MountOption) {
+	return s.state, nil
+}
+
+func (s *SourceLLB) toState(opt fetchOptions) llb.State {
+	return s.state
 }
