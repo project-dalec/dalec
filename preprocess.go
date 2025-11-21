@@ -1,6 +1,7 @@
 package dalec
 
 import (
+	_ "embed"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,14 +11,16 @@ import (
 	"github.com/pkg/errors"
 )
 
+//go:embed scripts/gomod-patch.sh
+var gomodPatchScript string
+
 const (
 	// Gomod preprocessing constants
-	gomodPatchContextPrefix = "dalec-gomod-patch-"
-	gomodPatchSourcePrefix  = "__gomod_patch_"
-	gomodPatchFilename      = "gomod.patch"
-	gomodFilename           = "go.mod"
-	gosumFilename           = "go.sum"
-	defaultGitUsername      = "git"
+	gomodPatchSourcePrefix = "__gomod_patch_"
+	gomodPatchFilename     = "gomod.patch"
+	gomodFilename          = "go.mod"
+	gosumFilename          = "go.sum"
+	defaultGitUsername     = "git"
 )
 
 // Preprocess performs preprocessing on the spec after loading.
@@ -53,11 +56,6 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 		return errors.Wrap(err, "failed to get git credential helper")
 	}
 
-	// Initialize GeneratedStates map if not already done
-	if sOpt.GeneratedStates == nil {
-		sOpt.GeneratedStates = make(map[string]llb.State)
-	}
-
 	// Generate patch states for each source with gomod generators
 	for sourceName, src := range gomodSources {
 		baseState, ok := baseSources[sourceName]
@@ -81,23 +79,14 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 				continue
 			}
 
-			// Create a unique context name for this patch
-			patchContextName := fmt.Sprintf(gomodPatchContextPrefix+"%s", sourceName)
-
-			// Store the patch state in GeneratedStates
-			sOpt.GeneratedStates[patchContextName] = *patchSt
-
-			// Create context source for the patch
-			// Context sources are always treated as directories, so we use PatchSpec.Path to point to the file
+			// Create internal LLB source with the patch state
 			patchSourceName := fmt.Sprintf(gomodPatchSourcePrefix+"%s", sourceName)
 			s.Sources[patchSourceName] = Source{
-				Context: &SourceContext{
-					Name: patchContextName,
-				},
+				LLB: newSourceLLB(*patchSt),
 			}
 
 			// Inject patch reference into spec.Patches
-			// Use PatchSpec.Path to point to the patch file within the context
+			// Don't set Path - the patch file is the entire source (single file)
 			if s.Patches == nil {
 				s.Patches = make(map[string][]PatchSpec)
 			}
@@ -105,7 +94,7 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 			strip := 1
 			s.Patches[sourceName] = append(s.Patches[sourceName], PatchSpec{
 				Source: patchSourceName,
-				Path:   gomodPatchFilename, // The patch file within the context
+				// Path is empty - the entire source is the patch file
 				Strip:  &strip,
 			})
 		}
@@ -147,6 +136,98 @@ func gomodEditCommand(g *GeneratorGomod) (string, error) {
 	return "go mod edit " + strings.Join(args, " "), nil
 }
 
+// buildGomodPatchEnv generates environment variables for the gomod patch script
+func buildGomodPatchEnv(editCmd string, paths []string, gen *SourceGenerator, sourceName string, patchOutputDir string) (map[string]string, error) {
+	const (
+		workDir = "/work/src"
+	)
+
+	patchPath := filepath.Join(patchOutputDir, gomodPatchFilename)
+	joinedWorkDir := filepath.Join(workDir, sourceName, gen.Subpath)
+
+	// Build git config section
+	gitConfig := &strings.Builder{}
+	var goPrivate, goInsecure string
+
+	sortedHosts := SortMapKeys(gen.Gomod.Auth)
+	if len(sortedHosts) > 0 {
+		goPrivateHosts := make([]string, 0, len(sortedHosts))
+		for _, host := range sortedHosts {
+			auth := gen.Gomod.Auth[host]
+			gpHost, _, _ := strings.Cut(host, ":")
+			goPrivateHosts = append(goPrivateHosts, gpHost)
+
+			if sshConfig := auth.SSH; sshConfig != nil {
+				username := defaultGitUsername
+				if sshConfig.Username != "" {
+					username = sshConfig.Username
+				}
+				fmt.Fprintf(gitConfig, "git config --global url.\"ssh://%[1]s@%[2]s/\".insteadOf https://%[3]s/\n", username, host, gpHost)
+				continue
+			}
+
+			var kind string
+			switch {
+			case auth.Token != "":
+				kind = "token"
+			case auth.Header != "":
+				kind = "header"
+			default:
+				kind = ""
+			}
+
+			if kind != "" {
+				fmt.Fprintf(gitConfig, "git config --global credential.\"https://%[1]s.helper\" \"/usr/local/bin/frontend credential-helper --kind=%[2]s\"\n", host, kind)
+			}
+		}
+
+		joined := strings.Join(goPrivateHosts, ",")
+		goPrivate = joined
+		goInsecure = joined
+	}
+
+	// Build module info for each path
+	// Format: rel_module_path|gomod_path|gosum_path|module_dir|rel_gomod_path|rel_gosum_path
+	var modulePaths []string
+	for _, relPath := range paths {
+		moduleDir := filepath.Clean(filepath.Join(joinedWorkDir, relPath))
+		relModulePath := filepath.Clean(filepath.Join(gen.Subpath, relPath))
+		if relModulePath == "." {
+			relModulePath = ""
+		}
+
+		relGoModPath := filepath.ToSlash(filepath.Join(relModulePath, gomodFilename))
+		relGoSumPath := filepath.ToSlash(filepath.Join(relModulePath, gosumFilename))
+
+		goModPath := filepath.Join(moduleDir, gomodFilename)
+		goSumPath := filepath.Join(moduleDir, gosumFilename)
+
+		moduleInfo := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+			relModulePath, goModPath, goSumPath, moduleDir, relGoModPath, relGoSumPath)
+		modulePaths = append(modulePaths, moduleInfo)
+	}
+
+	env := map[string]string{
+		"PATCH_PATH":     patchPath,
+		"EDIT_CMD":       editCmd,
+		"GOMOD_FILENAME": gomodFilename,
+		"GOSUM_FILENAME": gosumFilename,
+		"MODULE_PATHS":   strings.Join(modulePaths, ":"),
+	}
+
+	if gitConfig.Len() > 0 {
+		env["GIT_CONFIG_SCRIPT"] = gitConfig.String()
+	}
+	if goPrivate != "" {
+		env["GOPRIVATE"] = goPrivate
+	}
+	if goInsecure != "" {
+		env["GOINSECURE"] = goInsecure
+	}
+
+	return env, nil
+}
+
 // generateGomodPatchStateForSource generates a single merged patch LLB state for all paths
 // in a gomod generator by running go mod edit + tidy and capturing the diff.
 // Returns the LLB state containing the patch file, or nil if no changes are needed.
@@ -170,96 +251,27 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 		proxyPath = "/go/pkg/mod" // Standard Go module cache path
 	)
 
-	// Create a unique directory name for this patch within the patch output
+	// Create a temporary directory for patch generation
 	patchOutputDir := "/tmp/patch-work"
-	// Put the patch at a fixed filename within the mounted directory
-	patchPath := filepath.Join(patchOutputDir, gomodPatchFilename)
-	joinedWorkDir := filepath.Join(workDir, sourceName, gen.Subpath)
 
-	// Build script to apply gomod edits and capture all diffs
-	script := &strings.Builder{}
-	script.WriteString("set -e\n")
-	script.WriteString("export GOMODCACHE=\"${TMP_GOMODCACHE}\"\n")
-	script.WriteString(": > " + patchPath + "\n\n") // Create empty patch file
-
-	// Setup git auth if needed
-	sortedHosts := SortMapKeys(gen.Gomod.Auth)
-	if len(sortedHosts) > 0 {
-		goPrivateHosts := make([]string, 0, len(sortedHosts))
-		for _, host := range sortedHosts {
-			auth := gen.Gomod.Auth[host]
-			gpHost, _, _ := strings.Cut(host, ":")
-			goPrivateHosts = append(goPrivateHosts, gpHost)
-
-			if sshConfig := auth.SSH; sshConfig != nil {
-				username := defaultGitUsername
-				if sshConfig.Username != "" {
-					username = sshConfig.Username
-				}
-				fmt.Fprintf(script, "git config --global url.\"ssh://%[1]s@%[2]s/\".insteadOf https://%[3]s/\n", username, host, gpHost)
-				continue
-			}
-
-			var kind string
-			switch {
-			case auth.Token != "":
-				kind = "token"
-			case auth.Header != "":
-				kind = "header"
-			default:
-				kind = ""
-			}
-
-			if kind != "" {
-				fmt.Fprintf(script, "git config --global credential.\"https://%[1]s.helper\" \"/usr/local/bin/frontend credential-helper --kind=%[2]s\"\n", host, kind)
-			}
-		}
-
-		joined := strings.Join(goPrivateHosts, ",")
-		fmt.Fprintf(script, "export GOPRIVATE=%q\n", joined)
-		fmt.Fprintf(script, "export GOINSECURE=%q\n\n", joined)
+	// Generate environment variables for the script
+	envVars, err := buildGomodPatchEnv(editCmd, paths, gen, sourceName, patchOutputDir)
+	if err != nil {
+		return nil, err
 	}
 
-	// Process each path
-	for _, relPath := range paths {
-		moduleDir := filepath.Clean(filepath.Join(joinedWorkDir, relPath))
-		relModulePath := filepath.Clean(filepath.Join(gen.Subpath, relPath))
-		if relModulePath == "." {
-			relModulePath = ""
-		}
-
-		relGoModPath := filepath.ToSlash(filepath.Join(relModulePath, gomodFilename))
-		relGoSumPath := filepath.ToSlash(filepath.Join(relModulePath, gosumFilename))
-
-		goModPath := filepath.Join(moduleDir, gomodFilename)
-		goSumPath := filepath.Join(moduleDir, gosumFilename)
-
-		// Save originals, apply edits, capture diff
-		fmt.Fprintf(script, "# Process %s\n", relModulePath)
-		fmt.Fprintf(script, "if [ -f %q ]; then\n", goModPath)
-		fmt.Fprintf(script, "  tmpdir=$(mktemp -d)\n")
-		fmt.Fprintf(script, "  cp %q \"$tmpdir/%s\"\n", goModPath, gomodFilename)
-		fmt.Fprintf(script, "  if [ -f %[1]q ]; then cp %[1]q \"$tmpdir/%[2]s\"; else : > \"$tmpdir/%[2]s\"; fi\n", goSumPath, gosumFilename)
-		fmt.Fprintf(script, "  cd %q\n", moduleDir)
-		fmt.Fprintf(script, "  %s\n", editCmd)
-		fmt.Fprintf(script, "  go mod tidy\n")
-		fmt.Fprintf(script, "  cd -\n")
-		fmt.Fprintf(script, "  if [ ! -f %[1]q ]; then touch %[1]q; fi\n", goSumPath)
-
-		// Capture diffs and append to patch file
-		fmt.Fprintf(script, "  diff -u --label a/%[1]s --label b/%[1]s \"$tmpdir/%s\" %q >> %s || true\n", relGoModPath, gomodFilename, goModPath, patchPath)
-		fmt.Fprintf(script, "  if [ -f %q ] || [ -s \"$tmpdir/%s\" ]; then\n", goSumPath, gosumFilename)
-		fmt.Fprintf(script, "    diff -u --label a/%[1]s --label b/%[1]s \"$tmpdir/%s\" %q >> %s || true\n", relGoSumPath, gosumFilename, goSumPath, patchPath)
-		fmt.Fprintf(script, "  fi\n")
-		fmt.Fprintf(script, "  rm -rf \"$tmpdir\"\n")
-		fmt.Fprintf(script, "fi\n\n")
-	}
+	// Create a state with the script file
+	scriptState := llb.Scratch().File(
+		llb.Mkfile("/gomod-patch.sh", 0755, []byte(gomodPatchScript)),
+		WithConstraints(opts...),
+	)
 
 	// Create a scratch state to capture the patch output
 	patchOutput := llb.Scratch()
 
 	runOpts := []llb.RunOption{
-		ShArgs(script.String()),
+		llb.Args([]string{"/gomod-patch.sh"}),
+		llb.AddMount("/gomod-patch.sh", scriptState, llb.SourcePath("/gomod-patch.sh")),
 		llb.AddMount(workDir, baseState),
 		llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
 		llb.AddMount(patchOutputDir, patchOutput), // Mount scratch state to capture patch file
@@ -267,6 +279,12 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 		llb.AddEnv("TMP_GOMODCACHE", proxyPath),
 		llb.AddEnv("GIT_SSH_COMMAND", "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"),
 		WithConstraints(opts...),
+		ProgressGroup("Generate gomod patch for source: " + sourceName),
+	}
+
+	// Add environment variables from the script
+	for key, value := range envVars {
+		runOpts = append(runOpts, llb.AddEnv(key, value))
 	}
 
 	if credHelper != nil {
@@ -277,9 +295,15 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 	}
 
 	// Generate the LLB state that captures the patch output mount
-	// The AddMount call returns the state of the patchOutput scratch at the mount point
-	// The returned state will have the patch file at /gomod.patch
-	patchSt := worker.Run(runOpts...).AddMount(patchOutputDir, patchOutput)
+	// The AddMount call returns the state of the patchOutput scratch.
+	// Since we mounted at patchOutputDir and wrote to patchPath,
+	// the file in the mount will be at gomodPatchFilename (path relative to mount point)
+	patchMount := worker.Run(runOpts...).AddMount(patchOutputDir, patchOutput)
+
+	// Create a scratch state with the patch file at a generic location
+	// The sourceFilters will handle renaming it to the final source name
+	patchSt := llb.Scratch().
+		File(llb.Copy(patchMount, "/"+gomodPatchFilename, "/patch"), WithConstraints(opts...))
 
 	return &patchSt, nil
 }

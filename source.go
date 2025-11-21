@@ -38,6 +38,7 @@ type Source struct {
 	Context     *SourceContext     `yaml:"context,omitempty" json:"context,omitempty"`
 	Build       *SourceBuild       `yaml:"build,omitempty" json:"build,omitempty"`
 	Inline      *SourceInline      `yaml:"inline,omitempty" json:"inline,omitempty"`
+	LLB         *SourceLLB         `yaml:"-" json:"-"` // Internal only, not exposed to users
 	// === End Source Variants ===
 
 	// Path is the path to the source after fetching it based on the identifier.
@@ -152,9 +153,6 @@ type SourceOpts struct {
 	GetContext       func(string, ...llb.LocalOption) (*llb.State, error)
 	TargetPlatform   *ocispecs.Platform
 	GitCredHelperOpt func() (llb.RunOption, error)
-	// GeneratedStates stores LLB states generated during preprocessing (e.g., gomod patches)
-	// that can be referenced by name in context sources
-	GeneratedStates map[string]llb.State
 }
 
 var errInvalidMountConfig = errors.New("invalid mount config")

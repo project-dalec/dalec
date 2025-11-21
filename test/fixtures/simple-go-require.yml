@@ -13,24 +13,6 @@ license: MIT
 description: A tool to convert markdown into man pages (roff).
 website: https://github.com/cpuguy83/go-md2man
 
-x-vars:
-  msft-key: &msft-key
-    msft.asc:
-      http:
-        url: https://packages.microsoft.com/keys/microsoft.asc
-        digest: sha256:2fa9c05d591a1582a9aba276272478c262e95ad00acf60eaee1644d93941e3c6
-        permissions: 0o644
-  msft-repo-envs: &msft-repo-envs
-    - build
-  jammy-repo: &jammy-repo
-    - keys: *msft-key
-      config:
-        microsoft-prod.list:
-          inline:
-            file:
-              contents: deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/msft.asc] https://packages.microsoft.com/ubuntu/22.04/prod jammy main
-      envs: *msft-repo-envs
-
 sources:
   src:
     generate:
@@ -63,10 +45,9 @@ targets:
   jammy:
     dependencies:
       build:
-        msft-golang:
+        golang:
           version:
             - ">= 1.24.0"
-      extra_repos: *jammy-repo
 
 build:
   env:

@@ -221,63 +221,6 @@ target "examples" {
     tags = ["local/dalec/examples/${f}:${distro}"]
 }
 
-target "go-stuff" {
-    name = "examples-${f}-${tgt}"
-    matrix = {
-        distro = ["azlinux3"]
-        f = ["simple-go-require"]
-        tgt = ["sources", "patched-sources"]
-    }
-    args = {
-        "BUILDKIT_SYNTAX" = "dalec_frontend"
-    }
-    contexts = {
-        "dalec_frontend" = "target:frontend"
-    }
-    // target = "${distro}/container"
-    // target = "debug/sources"
-    target = "debug/${tgt}"
-    dockerfile = "test/fixtures/${f}.yml"
-    // tags = ["local/dralec/examples/${f}:${distro}"]
-    output = [ "_output/_src_${tgt}" ]
-
-}
-target "go-azl3-container-stuff" {
-    name = "examples-${f}-${tgt}"
-    matrix = {
-        distro = ["azlinux3"]
-        f = ["simple-go-require"]
-        tgt = ["rpm"]
-    }
-    args = {
-        "BUILDKIT_SYNTAX" = "dalec_frontend"
-    }
-    contexts = {
-        "dalec_frontend" = "target:frontend"
-    }
-    target = "${distro}/${tgt}"
-    dockerfile = "test/fixtures/${f}.yml"
-    tags = ["local/dalec/examples/${f}:${distro}"]
-    output = [ "_output/_src_${tgt}" ]
-
-}
-target "godebugmod" {
-    name = "godebugmod-examples-${replace(tgt, "/", "-")}-${f}"
-    matrix = {
-        f = ["simple-go-require"]
-        tgt = ["azlinux3/rpm/debug/sources", "jammy/deb","jammy/dsc"]
-    }
-    args = {
-        "BUILDKIT_SYNTAX" = "dalec_frontend"
-    }
-    contexts = {
-        "dalec_frontend" = "target:frontend"
-    }
-    target = tgt
-    dockerfile = "test/fixtures/${f}.yml"
-    output = [ "_output/_src_debug_gomods_${replace(tgt, "/", "-")}" ]
-}
-
 target "deps-only" {
     name = "deps-only-${distro}"
     matrix = {
