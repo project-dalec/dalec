@@ -190,9 +190,6 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := ref.Evaluate(ctx); err != nil {
-				return ref, nil, err
-			}
 
 			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pc)
 			if ref, err := c.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, pc); err != nil {
@@ -277,9 +274,6 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			ref, err := res.SingleRef()
 			if err != nil {
 				return nil, nil, err
-			}
-			if err := ref.Evaluate(ctx); err != nil {
-				return ref, nil, err
 			}
 
 			ctr := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
