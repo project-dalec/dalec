@@ -432,6 +432,82 @@ sources:
 
 In the above example, there are 4 hosts that have git authorization configured. The auth configuration for the host `github.com` (from the `git` source) will automatically be applied to the gomod auth configuration (no need to repeat it). In the `gomod` generator, `gitlab.com` is configured to use the build secret `GITLAB_GIT_AUTH_HEADER`, and `dev.azure.com` will use the build secret `AZURE_GIT_AUTH_TOKEN`. Finally, `anotherhost.com` is configured to use the ssh auth socket with id `default`, and ssh username `william_james_spode`. These build secrets and/or auth sockets must be supplied at build time. See [Git](#git) for more information on git auth in general.
 
+#### Gomod Replace and Require Directives
+
+The `gomod` generator supports modifying go.mod files using `replace` and `require` directives. This is useful for:
+- Replacing dependencies with local paths or forks
+- Adding or updating specific module versions
+- Working with multi-module repositories that have inter-module dependencies
+
+When replace or require directives are specified, Dalec automatically:
+1. Applies the edits using `go mod edit`
+2. Runs `go mod tidy` to update go.sum
+3. Generates a unified diff patch
+4. Applies the patch to the source before building
+
+**Example using replace directive:**
+
+```yaml
+sources:
+  myapp:
+    git:
+      url: https://github.com/example/myapp.git
+      commit: v1.0.0
+    generate:
+      - gomod:
+          edits:
+            replace:
+              # String format: "old@version=new@version"
+              - "github.com/old/pkg@v1.0.0=github.com/new/pkg@v2.0.0"
+              # Struct format for more complex replacements
+              - old: github.com/another/pkg
+                new: ../local/path  # Can use local paths
+```
+
+**Example using require directive:**
+
+```yaml
+sources:
+  myapp:
+    git:
+      url: https://github.com/example/myapp.git
+      commit: v1.0.0
+    generate:
+      - gomod:
+          edits:
+            require:
+              # String format: "module@version"
+              - "github.com/some/pkg@v1.2.3"
+              # Struct format
+              - module: github.com/another/pkg
+                version: v2.0.0
+```
+
+**Example with multiple modules and mixed directives:**
+
+```yaml
+sources:
+  monorepo:
+    git:
+      url: https://github.com/example/monorepo.git
+      commit: main
+    generate:
+      - gomod:
+          paths:
+            - module1
+            - module2
+          edits:
+            replace:
+              - "example.com/internal/shared@v0.0.0=../../shared"
+            require:
+              - "github.com/new/dependency@v1.5.0"
+```
+
+The edits are applied to all modules specified in the `paths` field (or the root module if no paths are specified). This allows you to make consistent changes across a multi-module repository.
+
+:::note
+The generated patches are created during preprocessing and are treated as internal sources. You don't need to manually create or maintain these patch files - Dalec handles this automatically based on your replace/require directives.
+:::
 
 ### Cargohome
 

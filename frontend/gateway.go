@@ -128,7 +128,6 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 			return st, err
 		},
 		GitCredHelperOpt: withCredHelper(c),
-		GeneratedStates:  make(map[string]llb.State), // Initialize map for generated states
 	}
 }
 

@@ -12,12 +12,11 @@ import (
 
 const (
 	// Gomod preprocessing constants
-	gomodPatchContextPrefix = "dalec-gomod-patch-"
-	gomodPatchSourcePrefix  = "__gomod_patch_"
-	gomodPatchFilename      = "gomod.patch"
-	gomodFilename           = "go.mod"
-	gosumFilename           = "go.sum"
-	defaultGitUsername      = "git"
+	gomodPatchSourcePrefix = "__gomod_patch_"
+	gomodPatchFilename     = "gomod.patch"
+	gomodFilename          = "go.mod"
+	gosumFilename          = "go.sum"
+	defaultGitUsername     = "git"
 )
 
 // Preprocess performs preprocessing on the spec after loading.
@@ -53,11 +52,6 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 		return errors.Wrap(err, "failed to get git credential helper")
 	}
 
-	// Initialize GeneratedStates map if not already done
-	if sOpt.GeneratedStates == nil {
-		sOpt.GeneratedStates = make(map[string]llb.State)
-	}
-
 	// Generate patch states for each source with gomod generators
 	for sourceName, src := range gomodSources {
 		baseState, ok := baseSources[sourceName]
@@ -81,19 +75,10 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 				continue
 			}
 
-			// Create a unique context name for this patch
-			patchContextName := fmt.Sprintf(gomodPatchContextPrefix+"%s", sourceName)
-
-			// Store the patch state in GeneratedStates
-			sOpt.GeneratedStates[patchContextName] = *patchSt
-
-			// Create context source for the patch
-			// Context sources are always treated as directories, so we use PatchSpec.Path to point to the file
+			// Create internal LLB source with the patch state
 			patchSourceName := fmt.Sprintf(gomodPatchSourcePrefix+"%s", sourceName)
 			s.Sources[patchSourceName] = Source{
-				Context: &SourceContext{
-					Name: patchContextName,
-				},
+				LLB: newSourceLLB(*patchSt),
 			}
 
 			// Inject patch reference into spec.Patches
