@@ -1,10 +1,10 @@
 import { execFile, type ExecFileOptionsWithStringEncoding } from 'child_process';
-import { promises as fs } from 'fs';
+import { promises as fs, readFileSync, statSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { TextDecoder, promisify } from 'util';
 import * as vscode from 'vscode';
-import YAML from 'yaml';
+import YAML, { LineCounter, Pair, visit } from 'yaml';
 
 const YAML_EXTENSION_ID = 'redhat.vscode-yaml';
 const SCHEMA_SCHEME = 'dalecspec';
@@ -488,7 +488,7 @@ class DalecDebugAdapterTrackerFactory implements vscode.DebugAdapterTrackerFacto
   createDebugAdapterTracker(_session: vscode.DebugSession): vscode.DebugAdapterTracker {
     return {
       onWillReceiveMessage: (message) => {
-        // rewriteSourcePathsForBreakpoints(message);
+        rewriteSourcePathsForBreakpoints(message);
         logDapTraffic('client->server', message);
       },
       onDidSendMessage: (message) => logDapTraffic('server->client', message),
@@ -695,7 +695,277 @@ function safeSerialize(payload: unknown): string {
   }
 }
 
-function rewriteSourcePathsForBreakpoints(_message: unknown) {}
+function rewriteSourcePathsForBreakpoints(message: unknown) {
+  if (!message || typeof message !== 'object') {
+    return;
+  }
+
+  const isSetBreakpoints = (message as { command?: string }).command === 'setBreakpoints';
+  const isLoadedSource = (message as { event?: string }).event === 'loadedSource';
+
+  if (!isSetBreakpoints && !isLoadedSource) {
+    return;
+  }
+
+  if (isLoadedSource) {
+    const source = (message as { body?: { source?: { name?: string; path?: string } } }).body?.source;
+    const sourcePath = source?.path;
+    if (sourcePath) {
+      lastLoadedSources.set(source.name ?? sourcePath, sourcePath);
+    }
+    return;
+  }
+
+  const args = (message as { arguments?: Record<string, unknown> }).arguments;
+  if (!args || typeof args !== 'object') {
+    return;
+  }
+
+  const source = args.source as { name?: string; path?: string } | undefined;
+  if (!source) {
+    return;
+  }
+
+  const key = source.name ?? source.path;
+  const preferredPath = key ? lastLoadedSources.get(key) : undefined;
+  if (preferredPath) {
+    source.path = preferredPath;
+  }
+
+  const fileContent = source.path ? getFileContent(source.path) : undefined;
+  const lines = fileContent?.lines;
+  const mappingRanges =
+    source.path && fileContent ? getYamlMappingRanges(source.path, fileContent) : undefined;
+
+  let breakpoints = Array.isArray(args.breakpoints)
+    ? (args.breakpoints as { line?: number; column?: number; }[])
+    : undefined;
+
+  if (!breakpoints && Array.isArray(args.lines)) {
+    breakpoints = (args.lines as number[]).map((line) => ({ line }));
+    args.breakpoints = breakpoints;
+  }
+
+  if (!Array.isArray(breakpoints)) {
+    return;
+  }
+
+  for (const bp of breakpoints) {
+    if (!bp || typeof bp.line !== 'number' || bp.line <= 0) {
+      continue;
+    }
+    const bpLine = bp.line;
+    const lineText = lines?.[bpLine - 1];
+    const colonIdx = lineText?.indexOf(':') ?? -1;
+    const approxColumn = colonIdx >= 0 ? colonIdx + 1 : findFirstContentColumn(lineText ?? '');
+    const matchingRanges = mappingRanges?.filter(
+      (range) => range.startLine === bpLine,
+    );
+    if (matchingRanges && matchingRanges.length > 0) {
+      matchingRanges.sort(
+        (a, b) => scoreRange(a, bpLine, approxColumn) - scoreRange(b, bpLine, approxColumn),
+      );
+      const resolved = matchingRanges[0];
+      const startColumn =
+        bpLine === resolved.startLine
+          ? resolved.startColumn
+          : Math.max(resolved.startColumn, approxColumn);
+      bp.column = startColumn;
+      continue;
+    }
+
+    const derivedRange = deriveRangeFromText(lines, bpLine);
+    if (derivedRange) {
+      bp.column = derivedRange.startColumn;
+      continue;
+    }
+
+    const column = approxColumn;
+    bp.column = column;
+  }
+
+  delete args.lines;
+}
+
+const lastLoadedSources = new Map<string, string>();
+function scoreRange(range: MappingRange, line: number, approxColumn: number): number {
+  if (range.startLine === line) {
+    return Math.abs(range.startColumn - approxColumn);
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function deriveRangeFromText(lines: string[] | undefined, line: number): MappingRange | undefined {
+  if (!lines || line <= 0 || line > lines.length) {
+    return undefined;
+  }
+
+  const current = lines[line - 1];
+  const colonIdx = current.indexOf(':');
+  if (colonIdx >= 0) {
+    const startColumn = colonIdx + 1;
+    return {
+      startLine: line,
+      startColumn,
+    };
+  }
+
+  return findParentMapping(lines, line);
+}
+
+function findParentMapping(lines: string[], line: number): MappingRange | undefined {
+  const current = lines[line - 1];
+  const currentIndent = leadingWhitespace(current);
+  for (let idx = line - 1; idx >= 1; idx--) {
+    const candidate = lines[idx - 1];
+    if (!candidate.trim()) {
+      continue;
+    }
+    const colonIdx = candidate.indexOf(':');
+    if (colonIdx === -1) {
+      continue;
+    }
+    const candidateIndent = leadingWhitespace(candidate);
+    if (currentIndent > candidateIndent) {
+      const startColumn = colonIdx + 1;
+      return {
+        startLine: idx,
+        startColumn,
+      };
+    }
+  }
+  return undefined;
+}
+
+function leadingWhitespace(value: string): number {
+  const match = value.match(/^\s*/);
+  return match ? match[0].length : 0;
+}
+
+interface FileContent {
+  lines: string[];
+  text: string;
+  cacheKey: string;
+}
+
+function getFileContent(filePath: string): FileContent | undefined {
+  const openDocument = vscode.workspace.textDocuments.find(
+    (doc) => doc.uri.scheme === 'file' && doc.uri.fsPath === filePath,
+  );
+  if (openDocument) {
+    const text = openDocument.getText();
+    return {
+      lines: text.split(/\r?\n/),
+      text,
+      cacheKey: `doc:${openDocument.version}`,
+    };
+  }
+
+  try {
+    const text = readFileSync(filePath, 'utf8');
+    const stat = statSync(filePath);
+    return {
+      lines: text.split(/\r?\n/),
+      text,
+      cacheKey: `fs:${stat.mtimeMs}:${stat.size}`,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+interface MappingRange {
+  startLine: number;
+  startColumn: number;
+}
+
+const yamlRangeCache = new Map<string, MappingRange[]>();
+
+function getYamlMappingRanges(filePath: string, content: FileContent): MappingRange[] | undefined {
+  const cacheKey = `${filePath}:${content.cacheKey}`;
+  const cached = yamlRangeCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const lineCounter = new LineCounter();
+    const doc = YAML.parseDocument(content.text, {
+      keepSourceTokens: true,
+      lineCounter,
+    });
+
+    const ranges: MappingRange[] = [];
+    visit(doc, {
+      Pair(_key, pair: Pair) {
+        if (!pair?.srcToken) {
+          return;
+        }
+        const colonToken = pair.srcToken.sep?.find(
+          (token) => token.type === 'map-value-ind' && typeof token.offset === 'number',
+        );
+        if (!colonToken) {
+          return;
+        }
+        const start = lineCounter.linePos(colonToken.offset);
+        const resolved = resolveNodeEnd(
+          pair.value,
+          pair.srcToken.value,
+          lineCounter,
+          content.lines,
+          start.line,
+        );
+        if (!resolved) {
+          return;
+        }
+        ranges.push({
+          startLine: start.line,
+          startColumn: start.col + 1,
+        });
+      },
+    });
+
+    yamlRangeCache.set(cacheKey, ranges);
+    return ranges;
+  } catch {
+    return undefined;
+  }
+}
+
+type LinePosition = { line: number; col: number };
+
+function resolveNodeEnd(
+  node: unknown,
+  tokenValue: { offset?: number; source?: string; type?: string } | undefined,
+  lineCounter: LineCounter,
+  lines: string[],
+  startLine: number,
+): LinePosition | undefined {
+  const range = (node as { range?: [number, number] })?.range;
+  if (Array.isArray(range) && typeof range[1] === 'number') {
+    return lineCounter.linePos(range[1]);
+  }
+
+  if (
+    tokenValue &&
+    typeof tokenValue.offset === 'number' &&
+    typeof tokenValue.source === 'string'
+  ) {
+    return lineCounter.linePos(tokenValue.offset + tokenValue.source.length);
+  }
+
+  return undefined;
+}
+
+function findFirstContentColumn(line: string): number {
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch !== ' ' && ch !== '\t') {
+      return i + 1;
+    }
+  }
+  return 1;
+}
 
 async function runDebugCommand(
   uri: vscode.Uri | undefined,

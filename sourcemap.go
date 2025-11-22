@@ -113,14 +113,25 @@ func (v *endPosVisitor) Visit(n ast.Node) ast.Visitor {
 
 	setEndChar := func(ns string) {
 		newlines := strings.Count(ns, "\n")
-		v.endLine += newlines - 1
 		if newlines == 0 {
 			v.endChar = pos.Column + len(ns)
 			return
 		}
 
+		// If the string ends with a newline, we want to end at the last character
+		// of the last line with content, not at character 1 of the next line
+		if strings.HasSuffix(ns, "\n") {
+			ns = strings.TrimSuffix(ns, "\n")
+			newlines--
+		}
+
+		v.endLine += newlines
 		last := strings.LastIndex(ns, "\n")
-		if last != -1 {
+		if last == -1 {
+			// Single line (or what's left after trimming trailing newline)
+			v.endChar = pos.Column + len(ns)
+		} else {
+			// Multiple lines - end character is the length of the last line
 			v.endChar = len(ns) - last
 		}
 	}
