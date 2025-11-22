@@ -803,10 +803,9 @@ function deriveRangeFromText(lines: string[] | undefined, line: number): Mapping
   const current = lines[line - 1];
   const colonIdx = current.indexOf(':');
   if (colonIdx >= 0) {
-    const startColumn = colonIdx + 1;
     return {
       startLine: line,
-      startColumn,
+      startColumn: indexToColumn(colonIdx),
     };
   }
 
@@ -827,10 +826,9 @@ function findParentMapping(lines: string[], line: number): MappingRange | undefi
     }
     const candidateIndent = leadingWhitespace(candidate);
     if (currentIndent > candidateIndent) {
-      const startColumn = colonIdx + 1;
       return {
         startLine: idx,
-        startColumn,
+        startColumn: indexToColumn(colonIdx),
       };
     }
   }
@@ -920,7 +918,7 @@ function getYamlMappingRanges(filePath: string, content: FileContent): MappingRa
         }
         ranges.push({
           startLine: start.line,
-          startColumn: start.col + 1,
+          startColumn: indexToColumn(start.col),
         });
       },
     });
@@ -965,6 +963,11 @@ function findFirstContentColumn(line: string): number {
     }
   }
   return 1;
+}
+
+function indexToColumn(index: number): number {
+  // Convert 0-based index to 1-based column number
+  return index + 1;
 }
 
 async function runDebugCommand(
