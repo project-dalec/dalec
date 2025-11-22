@@ -11,8 +11,6 @@ const SCHEMA_SCHEME = 'dalecspec';
 const DEBUG_TYPE = 'dalec-buildx';
 const DEBUG_COMMAND = 'dalec.debugCurrentSpec';
 const BUILD_COMMAND = 'dalec.buildCurrentSpec';
-const DEBUG_DISABLED_MESSAGE =
-  'Dalec BuildKit debugging is temporarily disabled. Set DALEC_ENABLE_DEBUG=1 before starting VS Code to re-enable it for development.';
 const SYNTAX_REGEX = /^#\s*(?:syntax|sytnax)\s*=\s*(?<image>ghcr\.io\/(?:project-dalec|azure)\/dalec\/frontend:[^\s#]+|[^\s#]*dalec[^\s#]*)/i;
 const FALLBACK_SCHEMA_RELATIVE_PATH = ['schemas', 'spec.schema.json'];
 const FRONTEND_TARGET_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -23,6 +21,7 @@ let emptyContextDirReady: Promise<string> | undefined;
 const contextSelectionCache = new Map<string, ContextSelection>();
 const argsSelectionCache = new Map<string, ArgsSelection>();
 let dalecOutputChannel: vscode.OutputChannel | undefined;
+let workspaceRoot: string | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   const tracker = new DalecDocumentTracker();
@@ -30,6 +29,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const lastAction = new LastDalecActionState();
   dalecOutputChannel = vscode.window.createOutputChannel('Dalec Spec');
   context.subscriptions.push(dalecOutputChannel);
+
+  workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
   const schemaProvider = new DalecSchemaProvider(context, tracker);
   await schemaProvider.initialize();
@@ -41,14 +42,18 @@ export async function activate(context: vscode.ExtensionContext) {
     codeLensProvider,
   );
 
-    const debugProvider = new DalecDebugConfigurationProvider(tracker);
-    context.subscriptions.push(
-      vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, debugProvider),
-      vscode.debug.registerDebugAdapterDescriptorFactory(
-        DEBUG_TYPE,
-        new DalecDebugAdapterDescriptorFactory(),
-      ),
-    );
+  const debugProvider = new DalecDebugConfigurationProvider(tracker);
+  context.subscriptions.push(
+    vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, debugProvider),
+    vscode.debug.registerDebugAdapterDescriptorFactory(
+      DEBUG_TYPE,
+      new DalecDebugAdapterDescriptorFactory(),
+    ),
+    vscode.debug.registerDebugAdapterTrackerFactory(
+      DEBUG_TYPE,
+      new DalecDebugAdapterTrackerFactory(),
+    ),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(DEBUG_COMMAND, (uri?: vscode.Uri) => {
@@ -58,6 +63,12 @@ export async function activate(context: vscode.ExtensionContext) {
       runBuildCommand(uri, tracker, lastAction),
     ),
     vscode.commands.registerCommand('dalec.rerunLastAction', () => rerunLastAction(tracker, lastAction)),
+    vscode.commands.registerCommand('dalec.rerunLastActionBuild', () =>
+      rerunLastAction(tracker, lastAction, 'build'),
+    ),
+    vscode.commands.registerCommand('dalec.rerunLastActionDebug', () =>
+      rerunLastAction(tracker, lastAction, 'debug'),
+    ),
   );
 }
 
@@ -280,24 +291,26 @@ class DalecCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposabl
       }),
     ];
 
-      lenses.unshift(
-        new vscode.CodeLens(range, {
-          command: DEBUG_COMMAND,
-          title: 'Dalec: Debug',
-          arguments: [document.uri],
-        }),
-      );
+    lenses.unshift(
+      new vscode.CodeLens(range, {
+        command: DEBUG_COMMAND,
+        title: 'Dalec: Debug',
+        arguments: [document.uri],
+      }),
+    );
 
     const last = this.lastAction.get();
     if (last && last.specUri.toString() === document.uri.toString()) {
-      const label =
-        last.type === 'build'
-          ? `Prev Dalec: Build (${last.target})`
-          : `Prev Dalec: Debug (${last.target})`;
       lenses.push(
         new vscode.CodeLens(range, {
-          command: 'dalec.rerunLastAction',
-          title: label,
+          command: 'dalec.rerunLastActionDebug',
+          title: `Dalec: Debug (${last.target})`,
+        }),
+      );
+      lenses.push(
+        new vscode.CodeLens(range, {
+          command: 'dalec.rerunLastActionBuild',
+          title: `Dalec: Build (${last.target})`,
         }),
       );
     }
@@ -367,6 +380,7 @@ class DalecDebugConfigurationProvider implements vscode.DebugConfigurationProvid
     }
 
     const resolvedSpec = this.resolvePath(specFile, folder);
+    // const resolvedSpec = specFile;
     try {
       await vscode.workspace.fs.stat(vscode.Uri.file(resolvedSpec));
     } catch {
@@ -375,6 +389,10 @@ class DalecDebugConfigurationProvider implements vscode.DebugConfigurationProvid
     }
 
     config.specFile = resolvedSpec;
+
+    if (typeof config.cwd === 'string' && config.cwd.trim()) {
+      config.cwd = this.resolvePath(config.cwd, folder);
+    }
 
     if (config.buildArgs && typeof config.buildArgs !== 'object') {
       void vscode.window.showWarningMessage('Ignoring buildArgs – value must be an object map.');
@@ -450,12 +468,12 @@ class DalecDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescripto
       context: config.context,
       buildArgs: mapFromRecord(config.buildArgs),
       buildContexts: mapFromRecord(config.buildContexts),
-      noCache: true,
+      noCache: false,
     });
     logDockerCommand('Debug command', dockerCommand, { toDebugConsole: true });
 
     const options: vscode.DebugAdapterExecutableOptions = {
-      cwd: config.context,
+      cwd: config.cwd ?? config.workspaceFolder ?? getWorkspaceRootForPath(config.specFile) ?? process.cwd(),
       env: {
         ...process.env,
         BUILDX_EXPERIMENTAL: '1',
@@ -466,6 +484,20 @@ class DalecDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescripto
   }
 }
 
+class DalecDebugAdapterTrackerFactory implements vscode.DebugAdapterTrackerFactory {
+  createDebugAdapterTracker(_session: vscode.DebugSession): vscode.DebugAdapterTracker {
+    return {
+      onWillReceiveMessage: (message) => {
+        // rewriteSourcePathsForBreakpoints(message);
+        logDapTraffic('client->server', message);
+      },
+      onDidSendMessage: (message) => logDapTraffic('server->client', message),
+      onError: (error) => logDapTraffic('error', error),
+      onExit: (code, signal) => logDapTraffic('exit', { code, signal }),
+    };
+  }
+}
+
 interface DalecDebugConfiguration extends vscode.DebugConfiguration {
   target: string;
   specFile: string;
@@ -473,6 +505,8 @@ interface DalecDebugConfiguration extends vscode.DebugConfiguration {
   buildArgs?: Record<string, string>;
   buildContexts?: Record<string, string>;
   dalecContextResolved?: boolean;
+  workspaceFolder?: string;
+  cwd?: string;
 }
 
 interface BuildTargetInfo {
@@ -601,13 +635,16 @@ function isRecordLike(value: unknown): value is Record<string, unknown> {
 }
 
 function createDockerBuildxCommand(inputs: DockerCommandInputs): DockerCommand {
-  const args = ['buildx'];
+  const buildxSetting = vscode.workspace.getConfiguration('dalec-spec').get('buildxCommand', 'docker buildx').trim();
+  const parts = buildxSetting.split(/\s+/);
+  const binary = parts.shift() || 'docker';
+  const args = parts;
   if (inputs.mode === 'dap') {
     args.push('dap', 'build');
   } else {
     args.push('build');
   }
-  args.push('--target', inputs.target, '-f', inputs.specFile);
+  args.push('--target', inputs.target, '-f', getWorkspaceRelativeFsPath(inputs.specFile));
   if (inputs.buildArgs && inputs.buildArgs.size > 0) {
     args.push(...formatBuildArgs(inputs.buildArgs));
   }
@@ -617,8 +654,11 @@ function createDockerBuildxCommand(inputs: DockerCommandInputs): DockerCommand {
   if (inputs.noCache) {
     args.push('--no-cache');
   }
-  args.push(inputs.context);
-  return { binary: 'docker', args };
+  const contextPathArg = isRemoteContextReference(inputs.context)
+    ? inputs.context
+    : getWorkspaceRelativeFsPath(inputs.context);
+  args.push(contextPathArg);
+  return { binary, args };
 }
 
 function formatDockerCommand(command: DockerCommand): string {
@@ -641,6 +681,21 @@ function mapFromRecord(record?: Record<string, string>): Map<string, string> {
   }
   return new Map(Object.entries(record));
 }
+
+function logDapTraffic(direction: string, payload: unknown) {
+  const serialized = safeSerialize(payload);
+  dalecOutputChannel?.appendLine(`[Dalec][DAP][${direction}] ${serialized}`);
+}
+
+function safeSerialize(payload: unknown): string {
+  try {
+    return typeof payload === 'string' ? payload : JSON.stringify(payload, undefined, 2);
+  } catch {
+    return String(payload);
+  }
+}
+
+function rewriteSourcePathsForBreakpoints(_message: unknown) {}
 
 async function runDebugCommand(
   uri: vscode.Uri | undefined,
@@ -669,16 +724,19 @@ async function runDebugCommand(
   }
 
   const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const workspacePath = getWorkspaceRootForUri(document.uri);
   const configuration: DalecDebugConfiguration = {
     type: DEBUG_TYPE,
     name: `Dalec: Debug (${target})`,
     request: 'launch',
     target,
-    specFile: document.uri.fsPath,
+    specFile: getWorkspaceRelativeSpecPath(document.uri),
     context: contextSelection.defaultContextPath,
     buildContexts: recordFromMap(contextSelection.additionalContexts),
     dalecContextResolved: true,
     buildArgs: recordFromMap(argsSelection.values),
+    workspaceFolder: workspacePath,
+    cwd: workspacePath,
   };
   lastAction.record({
     type: 'debug',
@@ -727,6 +785,7 @@ async function runBuildCommand(
   const formattedCommand = logDockerCommand('Build command', dockerCommand);
   const terminal = vscode.window.createTerminal({
     name: `Dalec Build (${target})`,
+    cwd: getWorkspaceRootForUri(document.uri),
     env: {
       ...process.env,
       BUILDX_EXPERIMENTAL: '1',
@@ -835,11 +894,43 @@ function getSpecWorkspacePath(document: vscode.TextDocument): string {
   return folder?.uri.fsPath ?? path.dirname(document.uri.fsPath);
 }
 
+function getWorkspaceRelativeSpecPath(uri: vscode.Uri): string {
+  return uri.fsPath;
+}
+
+function getWorkspaceRelativeFsPath(filePath: string): string {
+  return filePath;
+}
+
+function getWorkspaceRootForPath(filePath?: string): string | undefined {
+  if (filePath) {
+    const uri = vscode.Uri.file(filePath);
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (folder) {
+      return folder.uri.fsPath;
+    }
+  }
+  return workspaceRoot ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+function getWorkspaceRootForUri(uri?: vscode.Uri): string | undefined {
+  if (uri) {
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (folder) {
+      return folder.uri.fsPath;
+    }
+  }
+  return workspaceRoot ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
 function buildContextArgs(contexts: Map<string, string>): string[] {
   const entries = [...contexts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   const args: string[] = [];
   for (const [name, ctxPath] of entries) {
-    args.push('--build-context', `${name}=${ctxPath}`);
+    const value = isRemoteContextReference(ctxPath)
+      ? ctxPath
+      : getWorkspaceRelativeFsPath(ctxPath);
+    args.push('--build-context', `${name}=${value}`);
   }
   return args;
 }
@@ -1174,7 +1265,11 @@ function isRemoteContextReference(value: string): boolean {
   return false;
 }
 
-async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDalecActionState) {
+async function rerunLastAction(
+  tracker: DalecDocumentTracker,
+  lastAction: LastDalecActionState,
+  overrideType?: 'build' | 'debug',
+) {
   const entry = lastAction.get();
   if (!entry) {
     void vscode.window.showInformationMessage('Dalec: no previous action to rerun.');
@@ -1207,17 +1302,22 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
 
   const folder = vscode.workspace.getWorkspaceFolder(entry.specUri);
 
-  if (entry.type === 'debug') {
+  const actionType = overrideType ?? entry.type;
+
+  if (actionType === 'debug') {
+    const workspacePath = getWorkspaceRootForUri(entry.specUri);
     const configuration: DalecDebugConfiguration = {
       type: DEBUG_TYPE,
       name: `Dalec: Debug (${entry.target})`,
       request: 'launch',
       target: entry.target,
-      specFile: entry.specUri.fsPath,
+      specFile: getWorkspaceRelativeSpecPath(entry.specUri),
       context: contextSelection.defaultContextPath,
       buildContexts: recordFromMap(contextSelection.additionalContexts),
       buildArgs: recordFromMap(argsSelection.values),
       dalecContextResolved: true,
+      workspaceFolder: workspacePath,
+      cwd: workspacePath,
     };
     await vscode.debug.startDebugging(folder, configuration);
   } else {
@@ -1232,6 +1332,7 @@ async function rerunLastAction(tracker: DalecDocumentTracker, lastAction: LastDa
     const formattedCommand = logDockerCommand('Build command', dockerCommand);
     const terminal = vscode.window.createTerminal({
       name: `Dalec Build (${entry.target})`,
+      cwd: getWorkspaceRootForUri(entry.specUri),
       env: {
         ...process.env,
         BUILDX_EXPERIMENTAL: '1',

@@ -50,6 +50,16 @@
         "language": "yaml"
       }
     ],
+    "configuration": {
+      "title": "Dalec Spec",
+      "properties": {
+        "dalec-spec.buildxCommand": {
+          "type": "string",
+          "default": "docker buildx",
+          "description": "Command used to invoke buildx (e.g. 'docker buildx' or '/path/to/buildx')."
+        }
+      }
+    },
     "debuggers": [
       {
         "type": "dalec-buildx",
