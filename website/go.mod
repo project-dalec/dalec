@@ -3,7 +3,7 @@ module github.com/project-dalec/dalec/website
 go 1.24.0
 
 require (
-	dagger.io/dagger v0.19.6
+	dagger.io/dagger v0.19.7
 	github.com/pkg/errors v0.9.1
 )
 
