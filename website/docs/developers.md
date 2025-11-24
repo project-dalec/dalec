@@ -256,7 +256,7 @@ go test -race ./...
 
 1. Create a new target directory under `targets/`
 2. Implement the target interface
-3. Register the target in `targets/register.go`
+3. Register the target in `targets/plugin/init.go`
 4. Add integration tests in `test/target_<name>_test.go`
 5. Run `make verify` and `make test-integration SUITE=<YourTarget>`
 6. Update documentation
