@@ -102,7 +102,7 @@ jobs:
           ref="ghcr.io/${IMAGE_REPO}"
 
    
-          # Don't need o care about cache-from in this case as this is the "prod" image, better to build it from scratch
+          # Don't need to care about cache-from in this case as this is the "prod" image, better to build it from scratch
           # Inline the cache with the image so others can use it as a cache-from for their own builds.
           EXTRA_FLAGS="--set worker.cache-to=type=inline,mode=max --set worker.tags=${ref} --push"
 
