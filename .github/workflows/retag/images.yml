@@ -13,9 +13,6 @@
 - source: "debian:bookworm"
   dest: mirror/dockerhub/library/debian:bookworm
 
-- source: "debian:trixie"
-  dest: mirror/dockerhub/library/debian:trixie
-
 - source: "ubuntu:bionic"
   dest: mirror/dockerhub/library/ubuntu:bionic
 
