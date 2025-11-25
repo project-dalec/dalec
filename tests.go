@@ -116,13 +116,29 @@ type FileCheckOutput struct {
 	IsDir bool `yaml:"is_dir,omitempty" json:"is_dir,omitempty"`
 	// NotExist is used to check that the file does not exist.
 	NotExist bool `yaml:"not_exist,omitempty" json:"not_exist,omitempty"`
+
+	// NoFollow indicates whether to follow symlinks when performing file checks.
+	// If true, symlinks will not be followed and checks will be performed on the symlink itself.
+	// If the file is not a symlink this has no effect.
+	//
+	// This is only used for file metadata resolution.
+	// Content checks (equals/contains/...) will always follow symlinks.
+	// This is generally only useful for checking existence of symlinks themselves.
+	// In the future other metadata checks (like user/group ownership) would also be useful.
+	NoFollow bool `yaml:"no_follow,omitempty" json:"no_follow,omitempty"`
+
+	// LinkTarget is used to specify a link target for symlink checks.
+	// This only checks the target path of the symlink and does not follow symlink chains.
+	// This behaves the same regardless of NoFollow.
+	LinkTarget string `yaml:"link_target,omitempty" json:"link_target,omitempty"`
+
+	// TODO: Add user/group ownership checks
+
 	// field-level source maps for file-specific attributes
 	permissionsSourceMap *sourceMap `json:"-" yaml:"-"`
 	isDirSourceMap       *sourceMap `json:"-" yaml:"-"`
 	notExistSourceMap    *sourceMap `json:"-" yaml:"-"`
-
-	// TODO: Support checking symlinks
-	// This is not currently possible with buildkit as it does not expose information about the symlink
+	linkTargetSourceMap  *sourceMap `json:"-" yaml:"-"`
 }
 
 func (check *FileCheckOutput) UnmarshalYAML(ctx context.Context, node ast.Node) error {
@@ -137,6 +153,8 @@ func (check *FileCheckOutput) UnmarshalYAML(ctx context.Context, node ast.Node) 
 		Permissions sourceMappedValue[fs.FileMode] `yaml:"permissions,omitempty" json:"permissions"`
 		IsDir       sourceMappedValue[bool]        `yaml:"is_dir,omitempty" json:"is_dir"`
 		NotExist    sourceMappedValue[bool]        `yaml:"not_exist,omitempty" json:"not_exist"`
+		NoFollow    bool                           `yaml:"no_follow,omitempty" json:"no_follow"`
+		LinkTarget  sourceMappedValue[string]      `yaml:"link_target,omitempty" json:"link_target"`
 
 		Equals     ast.Node `yaml:"equals,omitempty" json:"equals"`
 		Contains   ast.Node `yaml:"contains,omitempty" json:"contains"`
@@ -160,7 +178,7 @@ func (check *FileCheckOutput) UnmarshalYAML(ctx context.Context, node ast.Node) 
 	var values []*ast.MappingValueNode
 	for _, v := range node.(*ast.MappingNode).Values {
 		switch key := v.Key.(*ast.StringNode); key.Value {
-		case "permissions", "is_dir", "not_exist":
+		case "permissions", "is_dir", "not_exist", "link_target", "no_follow":
 		default:
 			values = append(values, v)
 		}
@@ -177,11 +195,14 @@ func (check *FileCheckOutput) UnmarshalYAML(ctx context.Context, node ast.Node) 
 		Permissions: i.Permissions.Value,
 		IsDir:       i.IsDir.Value,
 		NotExist:    i.NotExist.Value,
+		NoFollow:    i.NoFollow,
+		LinkTarget:  i.LinkTarget.Value,
 		CheckOutput: i2,
 
 		permissionsSourceMap: i.Permissions.sourceMap,
 		isDirSourceMap:       i.IsDir.sourceMap,
 		notExistSourceMap:    i.NotExist.sourceMap,
+		linkTargetSourceMap:  i.LinkTarget.sourceMap,
 	}
 
 	// a file check that does not set NotExist (explicitly) will not have a source map set
@@ -248,7 +269,7 @@ type CheckOutputError struct {
 }
 
 func (c *CheckOutputError) Error() string {
-	return fmt.Sprintf("expected %q %s %q, got %q", c.Path, c.Kind, c.Expected, c.Actual)
+	return fmt.Sprintf("%q: check_type=%s expected: %q, got %q", c.Path, c.Kind, c.Expected, c.Actual)
 }
 
 // IsEmpty is used to determine if there are any checks to perform.
@@ -437,8 +458,15 @@ func (c CheckOutput) Check(dt string, p string) (retErr error) {
 }
 
 // Check is used to check the output file.
-func (c FileCheckOutput) Check(dt string, mode fs.FileMode, isDir bool, p string) error {
+func (c FileCheckOutput) Check(dt string, mode fs.FileMode, isDir bool, p, target string) error {
 	var errs []error
+
+	if c.LinkTarget != "" {
+		if c.LinkTarget != target {
+			errs = append(errs, &CheckOutputError{Kind: CheckFileLinkTargetPathKind, Expected: c.LinkTarget, Actual: target, Path: p})
+		}
+	}
+
 	if c.IsDir && !isDir {
 		errs = append(errs, &CheckOutputError{Kind: CheckFileIsDirKind, Expected: "ModeDir", Actual: "ModeFile", Path: p})
 	}
@@ -466,6 +494,8 @@ func (c FileCheckOutput) GetErrSource(err *CheckOutputError) *errdefs.Source {
 		return c.isDirSourceMap.GetErrdefsSource()
 	case CheckFileNotExistsKind:
 		return c.notExistSourceMap.GetErrdefsSource()
+	case CheckFileLinkTargetPathKind:
+		return c.linkTargetSourceMap.GetErrdefsSource()
 	default:
 		// Delegate to embedded CheckOutput (equals/contains/...)
 		return c.CheckOutput.GetErrSource(err)
@@ -501,13 +531,14 @@ func (c CheckOutput) GetErrSource(err *CheckOutputError) *errdefs.Source {
 }
 
 const (
-	CheckFileNotExistsKind    = "not_exist"
-	CheckFilePermissionsKind  = "permissions"
-	CheckFileIsDirKind        = "is_dir"
-	CheckOutputEmptyKind      = "empty"
-	CheckOutputEqualsKind     = "equals"
-	CheckOutputContainsKind   = "contains"
-	CheckOutputMatchesKind    = "matches"
-	CheckOutputStartsWithKind = "starts_with"
-	CheckOutputEndsWithKind   = "ends_with"
+	CheckFileNotExistsKind      = "not_exist"
+	CheckFilePermissionsKind    = "permissions"
+	CheckFileLinkTargetPathKind = "link_target_path"
+	CheckFileIsDirKind          = "is_dir"
+	CheckOutputEmptyKind        = "empty"
+	CheckOutputEqualsKind       = "equals"
+	CheckOutputContainsKind     = "contains"
+	CheckOutputMatchesKind      = "matches"
+	CheckOutputStartsWithKind   = "starts_with"
+	CheckOutputEndsWithKind     = "ends_with"
 )
