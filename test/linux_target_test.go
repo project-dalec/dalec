@@ -2999,6 +2999,39 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			Dependencies: &dalec.PackageDependencies{
 				Test: map[string]dalec.PackageConstraints{"bash": {}},
 			},
+			Image: &dalec.ImageConfig{
+				Post: &dalec.PostInstall{
+					Symlinks: map[string]dalec.SymlinkTarget{
+						"/usr/bin/a-thing-for-symlinking": {Paths: []string{"/some_symlink1"}},
+					},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{
+						Command: "touch a-thing-for-symlinking",
+					},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"a-thing-for-symlinking": {},
+				},
+				Links: []dalec.ArtifactSymlinkConfig{
+					{
+						Source: "/usr/bin/a-thing-for-symlinking",
+						Dest:   "/some_symlink2",
+					},
+					{
+						Source: "/not-a-real-path3",
+						Dest:   "/some_symlink3",
+					},
+					{
+						Source: "/not-a-real-path4",
+						Dest:   "/some_symlink4",
+					},
+				},
+			},
 			Tests: []*dalec.TestSpec{
 				{
 					Name: "Test that tests fail the build",
@@ -3038,27 +3071,61 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 						},
 					},
 				},
+				{
+					Name: "Test that incorrect symlink path targets fail the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink1": {
+							LinkTarget: "/not-a-real-path1",
+						},
+						"/some_symlink2": {
+							LinkTarget: "/not-a-real-path2",
+						},
+						// check that a symlink pointing to a non-existant path with NoFollow=false should error (with a CheckFileNotExistsKind)
+						"/some_symlink3": {},
+						// And then that we can check symlink target with NoFollow=true when the target doesn't exist
+						"/some_symlink4": {NoFollow: true, LinkTarget: "/incorrect-target"},
+					},
+				},
 			},
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			checkErr := func(err error) {
+
+				v := (&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
+				assert.ErrorContains(t, err, v)
+
+				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}).Error()
+				assert.ErrorContains(t, err, v)
+
+				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "ModeFile", Actual: "ModeDir"}).Error()
+				assert.ErrorContains(t, err, v)
+
+				v = (&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
+				assert.ErrorContains(t, err, v)
+
+				v = (&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
+				assert.ErrorContains(t, err, v)
+
+				v = (&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
+				assert.ErrorContains(t, err, v)
+
+				v = (&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}).Error()
+				assert.ErrorContains(t, err, v)
+
+				assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
+				assert.ErrorContains(t, err, "stdout not hello")
+				assert.ErrorContains(t, err, "stderr not hello")
+
+			}
+
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			_, err := client.Solve(ctx, sr)
-			assert.ErrorContains(t, err, "expected \"/non-existing-file\" not_exist \"exists=false\"")
-			assert.ErrorContains(t, err, "expected \"/\" permissions \"-rw-r--r--\", got \"-rwxr-xr-x\"")
-			assert.ErrorContains(t, err, "expected \"/\" is_dir \"ModeFile\", got \"ModeDir\"")
-			assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
-			assert.ErrorContains(t, err, "stdout not hello")
-			assert.ErrorContains(t, err, "stderr not hello")
+			checkErr(err)
 
 			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			_, err = client.Solve(ctx, sr)
-			assert.ErrorContains(t, err, "expected \"/non-existing-file\" not_exist \"exists=false\"")
-			assert.ErrorContains(t, err, "expected \"/\" permissions \"-rw-r--r--\", got \"-rwxr-xr-x\"")
-			assert.ErrorContains(t, err, "expected \"/\" is_dir \"ModeFile\", got \"ModeDir\"")
-			assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
-			assert.ErrorContains(t, err, "stdout not hello")
-			assert.ErrorContains(t, err, "stderr not hello")
+			checkErr(err)
 		})
 	})
 
@@ -3084,9 +3151,26 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			Dependencies: &dalec.PackageDependencies{
 				Test: map[string]dalec.PackageConstraints{"bash": {}, "grep": {}},
 			},
+			Image: &dalec.ImageConfig{
+				Post: &dalec.PostInstall{
+					Symlinks: map[string]dalec.SymlinkTarget{
+						"/usr/share/test-file": {Paths: []string{"/some_symlink1"}},
+					},
+				},
+			},
 			Artifacts: dalec.Artifacts{
 				DataDirs: map[string]dalec.ArtifactConfig{
 					"test-file": {},
+				},
+				Links: []dalec.ArtifactSymlinkConfig{
+					{
+						Source: "/usr/share/test-file",
+						Dest:   "/some_symlink2",
+					},
+					{
+						Source: "/not-a-real-file",
+						Dest:   "/some_symlink3",
+					},
 				},
 			},
 			Tests: []*dalec.TestSpec{
@@ -3095,7 +3179,10 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 					Files: map[string]dalec.FileCheckOutput{
 						"/usr/share/test-file": {},
 						// Make sure dir permissions are checked correctly.
-						"/usr/share": {IsDir: true, Permissions: 0o755},
+						"/usr/share":     {IsDir: true, Permissions: 0o755},
+						"/some_symlink1": {LinkTarget: "/usr/share/test-file"},
+						"/some_symlink2": {LinkTarget: "/usr/share/test-file"},
+						"/some_symlink3": {LinkTarget: "/not-a-real-file", NoFollow: true},
 					},
 				},
 				{

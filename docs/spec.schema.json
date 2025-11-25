@@ -845,6 +845,13 @@
 					],
 					"description": "IsDir is used to set the expected file mode to a directory."
 				},
+				"link_target": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "LinkTarget is used to specify a link target for symlink checks.\nThis only checks the target path of the symlink and does not follow symlink chains.\nThis behaves the same regardless of NoFollow."
+				},
 				"matches": {
 					"items": {
 						"type": [
@@ -855,6 +862,12 @@
 						"array"
 					],
 					"description": "Matches is the list of regular expressions to match the output against."
+				},
+				"no_follow": {
+					"type": [
+						"boolean"
+					],
+					"description": "NoFollow indicates whether to follow symlinks when performing file checks.\nIf true, symlinks will not be followed and checks will be performed on the symlink itself.\nIf the file is not a symlink this has no effect.\n\nThis is only used for file metadata resolution.\nContent checks (equals/contains/...) will always follow symlinks.\nThis is generally only useful for checking existence of symlinks themselves.\nIn the future other metadata checks (like user/group ownership) would also be useful."
 				},
 				"not_exist": {
 					"type": [

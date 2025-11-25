@@ -7,9 +7,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const CheckFilesCmdName = "test-checkfiles"
@@ -94,20 +94,39 @@ func checkFiles(files map[string]dalec.FileCheckOutput) []FileCheckErrResult {
 }
 
 func checkFile(p string, check dalec.FileCheckOutput) error {
-	stat, err := os.Lstat(p)
+	var (
+		stat os.FileInfo
+		err  error
+	)
+
+	if check.NoFollow {
+		stat, err = os.Lstat(p)
+	} else {
+		stat, err = os.Stat(p)
+	}
+
 	if err != nil {
 		if os.IsNotExist(err) {
 			if check.NotExist {
 				return nil
 			}
+
 			return &dalec.CheckOutputError{
 				Kind:     dalec.CheckFileNotExistsKind,
 				Path:     p,
-				Expected: "exists=false",
-				Actual:   "exists=true",
+				Expected: "exists=true",
+				Actual:   "exists=false",
 			}
 		}
 		return errors.Wrapf(err, "checking file %s", p)
+	}
+
+	var target string
+	if check.LinkTarget != "" {
+		target, err = os.Readlink(p)
+		if err != nil {
+			return errors.Wrapf(err, "reading symlink %s", p)
+		}
 	}
 
 	if check.NotExist {
@@ -120,7 +139,7 @@ func checkFile(p string, check dalec.FileCheckOutput) error {
 	}
 
 	var v string
-	if !stat.IsDir() {
+	if !stat.IsDir() && !check.IsEmpty() {
 		f, err := os.Open(p)
 		if err != nil {
 			return errors.Wrapf(err, "opening file %s", p)
@@ -133,8 +152,8 @@ func checkFile(p string, check dalec.FileCheckOutput) error {
 		v = string(dt)
 	}
 
-	if err := check.Check(v, stat.Mode(), stat.IsDir(), p); err != nil {
-		return errors.Wrapf(err, "checking file %s", p)
+	if err := check.Check(v, stat.Mode(), stat.IsDir(), p, target); err != nil {
+		return err
 	}
 	return nil
 }
@@ -177,7 +196,10 @@ func getFileCheckErrs(err error) []*dalec.CheckOutputError {
 	var ce *dalec.CheckOutputError
 	ok := errors.As(err, &ce)
 	if !ok {
-		return nil
+		ce = &dalec.CheckOutputError{
+			Kind:   "unknown",
+			Actual: err.Error(),
+		}
 	}
 	return []*dalec.CheckOutputError{ce}
 }
