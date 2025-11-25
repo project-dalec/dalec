@@ -139,7 +139,7 @@
 				"object",
 				"null"
 			],
-			"description": "ArtifactCapability represents a Linux capability to set on an artifact"
+			"description": "ArtifactCapability represents a Linux Capability to set on an artifact"
 		},
 		"ArtifactConfig": {
 			"properties": {
@@ -150,7 +150,7 @@
 					"type": [
 						"array"
 					],
-					"description": "Capabilities is the list of Linux capabilities to set on the artifact"
+					"description": "Capabilities is the list of Linux Capabilities to set on the artifact"
 				},
 				"group": {
 					"type": [
