@@ -4055,7 +4055,7 @@ echo "This is a third test binary"
 					{
 						Command: "getcap /usr/bin/ping",
 						Stdout: dalec.CheckOutput{
-							Equals: "/usr/bin/ping cap_net_raw=ep,cap_net_admin=eip\n",
+							Equals: "/usr/bin/ping cap_net_admin=eip cap_net_raw+ep \n",
 						},
 					},
 					{
