@@ -135,11 +135,11 @@ type ArtifactConfig struct {
 	User string `yaml:"user,omitempty" json:"user,omitempty"`
 	// Group is the group name that should own the artifact
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
-	// Capabilities is the list of Linux capabilities to set on the artifact
+	// Capabilities is the list of Linux Capabilities to set on the artifact
 	Capabilities []ArtifactCapability `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
 }
 
-// ArtifactCapability represents a Linux capability to set on an artifact
+// ArtifactCapability represents a Linux Capability to set on an artifact
 type ArtifactCapability struct {
 	// Name is the capability name (e.g., "cap_net_raw", "cap_net_bind_service")
 	Name string `yaml:"name" json:"name"`
