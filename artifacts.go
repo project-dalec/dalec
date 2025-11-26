@@ -136,7 +136,7 @@ type ArtifactConfig struct {
 	// Group is the group name that should own the artifact
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
 	// LinuxCapabilities is the list of Linux capabilities to set on the artifact
-	LinuxCapabilities []ArtifactCapability `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	LinuxCapabilities []ArtifactCapability `yaml:"linux_capabilities,omitempty" json:"linux_capabilities,omitempty"`
 }
 
 // ArtifactCapability represents a Linux Capability to set on an artifact

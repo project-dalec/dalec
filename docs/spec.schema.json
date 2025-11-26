@@ -143,7 +143,14 @@
 		},
 		"ArtifactConfig": {
 			"properties": {
-				"capabilities": {
+				"group": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Group is the group name that should own the artifact"
+				},
+				"linux_capabilities": {
 					"items": {
 						"$ref": "#/$defs/ArtifactCapability"
 					},
@@ -151,13 +158,6 @@
 						"array"
 					],
 					"description": "LinuxCapabilities is the list of Linux capabilities to set on the artifact"
-				},
-				"group": {
-					"type": [
-						"string",
-						"null"
-					],
-					"description": "Group is the group name that should own the artifact"
 				},
 				"name": {
 					"type": [
