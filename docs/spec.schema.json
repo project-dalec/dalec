@@ -102,6 +102,45 @@
 			],
 			"description": "ArtifactBuild configures a group of steps that are run sequentially along with their outputs to build the artifact(s)."
 		},
+		"ArtifactCapability": {
+			"required": [
+				"name"
+			],
+			"properties": {
+				"effective": {
+					"type": [
+						"boolean"
+					],
+					"description": "Effective grants the capability in the effective set"
+				},
+				"inheritable": {
+					"type": [
+						"boolean"
+					],
+					"description": "Inheritable grants the capability in the inheritable set"
+				},
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the capability name (e.g., \"cap_net_raw\", \"cap_net_bind_service\")"
+				},
+				"permitted": {
+					"type": [
+						"boolean"
+					],
+					"description": "Permitted grants the capability in the permitted set"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ArtifactCapability represents a Linux Capability to set on an artifact"
+		},
 		"ArtifactConfig": {
 			"properties": {
 				"group": {
@@ -110,6 +149,15 @@
 						"null"
 					],
 					"description": "Group is the group name that should own the artifact"
+				},
+				"linux_capabilities": {
+					"items": {
+						"$ref": "#/$defs/ArtifactCapability"
+					},
+					"type": [
+						"array"
+					],
+					"description": "LinuxCapabilities is the list of Linux capabilities to set on the artifact"
 				},
 				"name": {
 					"type": [

@@ -165,6 +165,7 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 	writeUsersPostInst(postinst, artifacts.Users)
 	writeGroupsPostInst(postinst, artifacts.Groups)
 	setArtifactOwnershipPostInst(postinst, spec, target)
+	setArtifactCapabilitiesPostInst(postinst, spec, target)
 
 	if postinst.Len() > 0 {
 		dt := []byte("#!/usr/bin/env sh\nset -e\n")
@@ -728,4 +729,29 @@ func setArtifactOwnershipPostInst(w *bytes.Buffer, spec *dalec.Spec, target stri
 			}
 		}
 	}
+}
+
+func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target string) {
+	artifacts := spec.GetArtifacts(target)
+
+	apply := func(artifacts map[string]dalec.ArtifactConfig, root string) {
+		if artifacts == nil {
+			return
+		}
+		sorted := dalec.SortMapKeys(artifacts)
+		for _, key := range sorted {
+			cfg := artifacts[key]
+			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+			if capString == "" {
+				continue
+			}
+			resolved := cfg.ResolveName(key)
+			p := filepath.Join(root, cfg.SubPath, resolved)
+			fmt.Fprintf(w, "setcap '%s' \"$DESTDIR%s\"\n", capString, p)
+		}
+	}
+
+	apply(artifacts.Binaries, BinariesPath)
+	apply(artifacts.Libs, LibsPath)
+	apply(artifacts.Libexec, LibexecPath)
 }

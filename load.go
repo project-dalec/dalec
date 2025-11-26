@@ -575,6 +575,10 @@ func (s Spec) Validate() error {
 		errs = append(errs, errors.Wrap(err, "build"))
 	}
 
+	if err := s.Artifacts.validate(); err != nil {
+		errs = append(errs, errors.Wrap(err, "artifacts"))
+	}
+
 	return goerrors.Join(errs...)
 }
 

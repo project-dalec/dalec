@@ -2390,6 +2390,12 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		ctx := startTestSpan(baseCtx, t)
 		testDisableAutoRequire(ctx, t, testConfig.Target)
 	})
+
+	t.Run("artifact capabilities", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testArtifactCapabilities(ctx, t, testConfig)
+	})
 }
 
 func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetConfig, opts ...srOpt) {
@@ -3902,5 +3908,205 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			assert.Assert(t, contents == nil, "marker file should not be present in the container")
 			assert.ErrorContains(t, err, "open /etc/marker.txt: no such file or directory")
 		})
+	})
+}
+
+func testArtifactCapabilities(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	rpmTarget := dalec.Target{
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+				"libcap":    {},
+			},
+			Build: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+				"libcap":    {},
+			},
+			Test: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+				"libcap":    {},
+			},
+		},
+	}
+
+	debTarget := dalec.Target{
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"libcap2-bin": {},
+			},
+			Build: map[string]dalec.PackageConstraints{
+				"libcap2-bin": {},
+			},
+		},
+	}
+
+	spec := &dalec.Spec{
+		Name:        "test-capabilities",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Description: "Testing file capabilities on artifacts",
+		Sources: map[string]dalec.Source{
+			"ping": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is a test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+			"ping2": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is another test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+			"ping3": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is a third test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+		},
+		Build: dalec.ArtifactBuild{
+			Steps: []dalec.BuildStep{
+				{
+					Command: "cp ping /tmp/ping && cp ping2 /tmp/ping2 && cp ping3 /tmp/ping3",
+				},
+			},
+		},
+		Artifacts: dalec.Artifacts{
+			Binaries: map[string]dalec.ArtifactConfig{
+				"/tmp/ping": {
+					Name: "ping",
+					LinuxCapabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_raw",
+							Effective: true,
+							Permitted: true,
+						},
+						{
+							Name:        "cap_net_admin",
+							Effective:   true,
+							Permitted:   true,
+							Inheritable: true,
+						},
+					},
+				},
+				"/tmp/ping2": {
+					Name: "ping2",
+					User: "testuser",
+					LinuxCapabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_raw",
+							Effective: true,
+							Permitted: true,
+						},
+					},
+				},
+				"/tmp/ping3": {
+					Name:  "ping3",
+					Group: "testgroup",
+					LinuxCapabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_bind_service",
+							Effective: true,
+							Permitted: true,
+						},
+					},
+				},
+			},
+			Users: []dalec.AddUserConfig{
+				{
+					Name: "testuser",
+				},
+			},
+			Groups: []dalec.AddGroupConfig{
+				{
+					Name: "testgroup",
+				},
+			},
+		},
+		Targets: map[string]dalec.Target{
+			"azlinux3":    rpmTarget,
+			"mariner2":    rpmTarget,
+			"almalinux8":  rpmTarget,
+			"almalinux9":  rpmTarget,
+			"rockylinux8": rpmTarget,
+			"rockylinux9": rpmTarget,
+			"bookworm":    debTarget,
+			"bullseye":    debTarget,
+			"bionic":      debTarget,
+			"focal":       debTarget,
+			"jammy":       debTarget,
+			"noble":       debTarget,
+			"trixie":      debTarget,
+		},
+		Tests: []*dalec.TestSpec{
+			{
+				Name: "Check binary capabilities",
+				Steps: []dalec.TestStep{
+					{
+						Command: "getcap /usr/bin/ping",
+						Stdout: dalec.CheckOutput{
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping", "cap_net_admin", "eip", "cap_net_raw", "ep",
+							},
+						},
+					},
+					{
+						Command: "getcap /usr/bin/ping2",
+						Stdout: dalec.CheckOutput{
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping2", "cap_net_raw", "ep",
+							},
+						},
+					},
+					{
+						Command: "stat -c '%U' /usr/bin/ping2",
+						Stdout: dalec.CheckOutput{
+							Equals: "testuser\n",
+						},
+					},
+					{
+						Command: "getcap /usr/bin/ping3",
+						Stdout: dalec.CheckOutput{
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping3", "cap_net_bind_service", "ep",
+							},
+						},
+					},
+					{
+						Command: "stat -c '%G' /usr/bin/ping3",
+						Stdout: dalec.CheckOutput{
+							Contains: []string{"testgroup\n"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+		res := solveT(ctx, t, client, req)
+
+		_, err := res.SingleRef()
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 }

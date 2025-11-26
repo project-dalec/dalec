@@ -1,9 +1,12 @@
 package dalec
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"path/filepath"
+	"strings"
 )
 
 // Artifacts describes all the artifacts to include in the package.
@@ -132,6 +135,56 @@ type ArtifactConfig struct {
 	User string `yaml:"user,omitempty" json:"user,omitempty"`
 	// Group is the group name that should own the artifact
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
+	// LinuxCapabilities is the list of Linux capabilities to set on the artifact
+	LinuxCapabilities []ArtifactCapability `yaml:"linux_capabilities,omitempty" json:"linux_capabilities,omitempty"`
+}
+
+// ArtifactCapability represents a Linux Capability to set on an artifact
+type ArtifactCapability struct {
+	// Name is the capability name (e.g., "cap_net_raw", "cap_net_bind_service")
+	Name string `yaml:"name" json:"name"`
+	// Effective grants the capability in the effective set
+	Effective bool `yaml:"effective,omitempty" json:"effective,omitempty"`
+	// Permitted grants the capability in the permitted set
+	Permitted bool `yaml:"permitted,omitempty" json:"permitted,omitempty"`
+	// Inheritable grants the capability in the inheritable set
+	Inheritable bool `yaml:"inheritable,omitempty" json:"inheritable,omitempty"`
+}
+
+// String converts the capability to setcap format (e.g., "cap_net_raw=ep")
+func (c ArtifactCapability) String() string {
+	var flags string
+	if c.Effective {
+		flags += "e"
+	}
+	if c.Inheritable {
+		flags += "i"
+	}
+	if c.Permitted {
+		flags += "p"
+	}
+	if flags == "" {
+		return ""
+	}
+	return c.Name + "=" + flags
+}
+
+// CapabilitiesString converts a list of capabilities to setcap format
+// Returns empty string if no capabilities or all capabilities have no flags set
+func CapabilitiesString(caps []ArtifactCapability) string {
+	if len(caps) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, cap := range caps {
+		if s := cap.String(); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
 }
 
 func (a *ArtifactConfig) ResolveName(path string) string {
@@ -202,4 +255,45 @@ func (a Artifacts) HasDocs() bool {
 		return true
 	}
 	return false
+}
+
+// validate checks for errors in artifact configuration
+func (a *Artifacts) validate() error {
+	var errs []error
+
+	// Check for capabilities on non-executable artifacts
+	checkCapabilities := func(artifactType string, artifacts map[string]ArtifactConfig) {
+		for path, cfg := range artifacts {
+			if len(cfg.LinuxCapabilities) > 0 {
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on %s '%s'", artifactType, path))
+			}
+		}
+	}
+
+	// These artifact types should not have capabilities
+	checkCapabilities("manpages", a.Manpages)
+	checkCapabilities("data_dirs", a.DataDirs)
+	checkCapabilities("configFiles", a.ConfigFiles)
+	checkCapabilities("docs", a.Docs)
+	checkCapabilities("licenses", a.Licenses)
+	checkCapabilities("headers", a.Headers)
+
+	// Check systemd units and dropins
+	if a.Systemd != nil {
+		for path, cfg := range a.Systemd.Units {
+			if artifact := cfg.Artifact(); artifact != nil && len(artifact.LinuxCapabilities) > 0 {
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd unit '%s'", path))
+			}
+		}
+		for path, cfg := range a.Systemd.Dropins {
+			if artifact := cfg.Artifact(); artifact != nil && len(artifact.LinuxCapabilities) > 0 {
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd dropin '%s'", path))
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }

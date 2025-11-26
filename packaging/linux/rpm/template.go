@@ -181,6 +181,30 @@ func getUserPostRequires(users []dalec.AddUserConfig, groups []dalec.AddGroupCon
 	return out
 }
 
+// We need this because AlmaLinux9 do not have chown/chgrp at install time.
+// However, AzureLinux cannot resolve the /usr/bin/chown requirement.
+// Thus, we just require coreutils which provides chown/chgrp on all distros hopefully.
+func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
+	out := "Requires(post): coreutils\n"
+	for _, cfg := range artifacts.Binaries {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+	for _, cfg := range artifacts.Libs {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+	for _, cfg := range artifacts.Libexec {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+
+	return ""
+}
+
 func (w *specWrapper) Requires() fmt.Stringer {
 	b := &strings.Builder{}
 
@@ -192,6 +216,7 @@ func (w *specWrapper) Requires() fmt.Stringer {
 	// package names... something to consider as we expand functionality.
 	b.WriteString(getSystemdRequires(artifacts.Systemd))
 	b.WriteString(getUserPostRequires(artifacts.Users, artifacts.Groups))
+	b.WriteString(getOwnershipPostRequires(artifacts))
 
 	deps := w.GetPackageDeps(w.Target)
 	buildDeps := deps.GetBuild()
@@ -509,8 +534,9 @@ func (w *specWrapper) Post() fmt.Stringer {
 	symlinkOwnership := w.getSymlinkOwnership()
 	artifactOwnership := w.getArtifactOwnership()
 	directoryOwnership := w.getDirectoryOwnership()
+	artifactCapabilities := w.getArtifactCapabilities()
 
-	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" && artifactOwnership == "" && directoryOwnership == "" {
+	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" && artifactOwnership == "" && directoryOwnership == "" && artifactCapabilities == "" {
 		return b
 	}
 
@@ -532,6 +558,9 @@ func (w *specWrapper) Post() fmt.Stringer {
 	}
 	if directoryOwnership != "" {
 		b.WriteString(directoryOwnership)
+	}
+	if artifactCapabilities != "" {
+		b.WriteString(artifactCapabilities)
 	}
 
 	b.WriteString("\n")
@@ -650,6 +679,55 @@ func (w *specWrapper) getArtifactOwnership() string {
 		for _, p := range binKeys {
 			cfg := artifacts.Binaries[p]
 			setArtifactOwnership(`/%{_bindir}`, p, &cfg)
+		}
+	}
+
+	return b.String()
+}
+
+func (w *specWrapper) getArtifactCapabilities() string {
+	artifacts := w.Spec.GetArtifacts(w.Target)
+	b := &strings.Builder{}
+
+	// Only use setcap in postinstall if there's also a chown/chgrp
+	// (since chown clears capabilities). Otherwise, use %caps macro in %files.
+	setArtifactCapabilities := func(root, p string, cfg *dalec.ArtifactConfig) {
+		if cfg == nil {
+			return
+		}
+		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+		if capString == "" {
+			return
+		}
+		// Only add setcap if there's a user/group ownership change
+		if cfg.User == "" && cfg.Group == "" {
+			return
+		}
+		targetDir := filepath.Join(root, cfg.SubPath)
+		file := cfg.ResolveName(p)
+		targetPath := filepath.Join(targetDir, file)
+		fmt.Fprintf(b, "setcap '%s' %s\n", capString, targetPath)
+	}
+
+	if artifacts.Libs != nil {
+		libs := dalec.SortMapKeys(artifacts.Libs)
+		for _, l := range libs {
+			cfg := artifacts.Libs[l]
+			setArtifactCapabilities(`/%{_libdir}`, l, &cfg)
+		}
+	}
+	if artifacts.Binaries != nil {
+		binKeys := dalec.SortMapKeys(artifacts.Binaries)
+		for _, p := range binKeys {
+			cfg := artifacts.Binaries[p]
+			setArtifactCapabilities(`/%{_bindir}`, p, &cfg)
+		}
+	}
+	if artifacts.Libexec != nil {
+		libexecKeys := dalec.SortMapKeys(artifacts.Libexec)
+		for _, k := range libexecKeys {
+			cfg := artifacts.Libexec[k]
+			setArtifactCapabilities(`/%{_libexecdir}`, k, &cfg)
 		}
 	}
 
@@ -878,7 +956,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 		for _, p := range binKeys {
 			cfg := artifacts.Binaries[p]
 			full := filepath.Join(`%{_bindir}/`, cfg.SubPath, cfg.ResolveName(p))
-			fmt.Fprintln(b, full)
+			// Use %caps macro if capabilities are set and there's no chown
+			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+			if capString != "" && cfg.User == "" && cfg.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, full)
+			} else {
+				fmt.Fprintln(b, full)
+			}
 		}
 	}
 
@@ -915,7 +999,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 			le := artifacts.Libexec[k]
 			targetDir := filepath.Join(`%{_libexecdir}`, le.SubPath)
 			fullPath := filepath.Join(targetDir, le.ResolveName(k))
-			fmt.Fprintln(b, fullPath)
+			// Use %caps macro if capabilities are set and there's no chown
+			capString := dalec.CapabilitiesString(le.LinuxCapabilities)
+			if capString != "" && le.User == "" && le.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
+			} else {
+				fmt.Fprintln(b, fullPath)
+			}
 		}
 	}
 
@@ -992,7 +1082,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 	for _, l := range libKeys {
 		cfg := artifacts.Libs[l]
 		path := filepath.Join(`%{_libdir}`, cfg.SubPath, cfg.ResolveName(l))
-		fmt.Fprintln(b, path)
+		// Use %caps macro if capabilities are set and there's no chown
+		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+		if capString != "" && cfg.User == "" && cfg.Group == "" {
+			fmt.Fprintf(b, "%%caps(%s) %s\n", capString, path)
+		} else {
+			fmt.Fprintln(b, path)
+		}
 	}
 
 	for _, l := range artifacts.Links {
