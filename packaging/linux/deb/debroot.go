@@ -741,11 +741,6 @@ func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target s
 		sorted := dalec.SortMapKeys(artifacts)
 		for _, key := range sorted {
 			cfg := artifacts[key]
-			// We use the %cap macro when possible and only use setcap postinstall
-			// if there is a user/group because chmod clear any capabilities previously set.
-			if cfg.Group == "" && cfg.User == "" {
-				continue
-			}
 			capString := dalec.CapabilitiesString(cfg.Capabilities)
 			if capString == "" {
 				continue

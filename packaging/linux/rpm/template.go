@@ -181,6 +181,30 @@ func getUserPostRequires(users []dalec.AddUserConfig, groups []dalec.AddGroupCon
 	return out
 }
 
+// We need this because AlmaLinux9 do not have chown/chgrp at install time.
+// However, AzureLinux cannot resolve the /usr/bin/chown requirement.
+// Thus, we just require coreutils which provides chown/chgrp on all distros hopefully.
+func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
+	out := "Requires(post): coreutils\n"
+	for _, cfg := range artifacts.Binaries {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+	for _, cfg := range artifacts.Libs {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+	for _, cfg := range artifacts.Libexec {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+
+	return ""
+}
+
 func (w *specWrapper) Requires() fmt.Stringer {
 	b := &strings.Builder{}
 
@@ -192,6 +216,7 @@ func (w *specWrapper) Requires() fmt.Stringer {
 	// package names... something to consider as we expand functionality.
 	b.WriteString(getSystemdRequires(artifacts.Systemd))
 	b.WriteString(getUserPostRequires(artifacts.Users, artifacts.Groups))
+	b.WriteString(getOwnershipPostRequires(artifacts))
 
 	deps := w.GetPackageDeps(w.Target)
 	buildDeps := deps.GetBuild()

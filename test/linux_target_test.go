@@ -3915,13 +3915,16 @@ func testArtifactCapabilities(ctx context.Context, t *testing.T, testConfig test
 	rpmTarget := dalec.Target{
 		Dependencies: &dalec.PackageDependencies{
 			Runtime: map[string]dalec.PackageConstraints{
-				"libcap": {},
+				"coreutils": {},
+				"libcap":    {},
 			},
 			Build: map[string]dalec.PackageConstraints{
-				"libcap": {},
+				"coreutils": {},
+				"libcap":    {},
 			},
 			Test: map[string]dalec.PackageConstraints{
 				"coreutils": {},
+				"libcap":    {},
 			},
 		},
 	}
@@ -4012,7 +4015,7 @@ echo "This is a third test binary"
 					},
 				},
 				"/tmp/ping3": {
-					Name: "ping3",
+					Name:  "ping3",
 					Group: "testgroup",
 					Capabilities: []dalec.ArtifactCapability{
 						{
@@ -4047,6 +4050,7 @@ echo "This is a third test binary"
 			"focal":       debTarget,
 			"jammy":       debTarget,
 			"noble":       debTarget,
+			"trixie":      debTarget,
 		},
 		Tests: []*dalec.TestSpec{
 			{
@@ -4055,13 +4059,19 @@ echo "This is a third test binary"
 					{
 						Command: "getcap /usr/bin/ping",
 						Stdout: dalec.CheckOutput{
-							Equals: "/usr/bin/ping cap_net_admin=eip cap_net_raw+ep \n",
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping", "cap_net_admin", "eip", "cap_net_raw", "ep",
+							},
 						},
 					},
 					{
 						Command: "getcap /usr/bin/ping2",
 						Stdout: dalec.CheckOutput{
-							Equals: "/usr/bin/ping2 cap_net_raw=ep\n",
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping2", "cap_net_raw", "ep",
+							},
 						},
 					},
 					{
@@ -4073,13 +4083,16 @@ echo "This is a third test binary"
 					{
 						Command: "getcap /usr/bin/ping3",
 						Stdout: dalec.CheckOutput{
-							Equals: "/usr/bin/ping3 cap_net_bind_service=ep\n",
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping3", "cap_net_bind_service", "ep",
+							},
 						},
 					},
 					{
 						Command: "stat -c '%G' /usr/bin/ping3",
 						Stdout: dalec.CheckOutput{
-							Equals: "testgroup\n",
+							Contains: []string{"testgroup\n"},
 						},
 					},
 				},
