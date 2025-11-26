@@ -695,7 +695,7 @@ func (w *specWrapper) getArtifactCapabilities() string {
 		if cfg == nil {
 			return
 		}
-		capString := dalec.CapabilitiesString(cfg.Capabilities)
+		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
 		if capString == "" {
 			return
 		}
@@ -957,7 +957,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 			cfg := artifacts.Binaries[p]
 			full := filepath.Join(`%{_bindir}/`, cfg.SubPath, cfg.ResolveName(p))
 			// Use %caps macro if capabilities are set and there's no chown
-			capString := dalec.CapabilitiesString(cfg.Capabilities)
+			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
 			if capString != "" && cfg.User == "" && cfg.Group == "" {
 				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, full)
 			} else {
@@ -1000,7 +1000,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 			targetDir := filepath.Join(`%{_libexecdir}`, le.SubPath)
 			fullPath := filepath.Join(targetDir, le.ResolveName(k))
 			// Use %caps macro if capabilities are set and there's no chown
-			capString := dalec.CapabilitiesString(le.Capabilities)
+			capString := dalec.CapabilitiesString(le.LinuxCapabilities)
 			if capString != "" && le.User == "" && le.Group == "" {
 				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
 			} else {
@@ -1083,7 +1083,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 		cfg := artifacts.Libs[l]
 		path := filepath.Join(`%{_libdir}`, cfg.SubPath, cfg.ResolveName(l))
 		// Use %caps macro if capabilities are set and there's no chown
-		capString := dalec.CapabilitiesString(cfg.Capabilities)
+		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
 		if capString != "" && cfg.User == "" && cfg.Group == "" {
 			fmt.Fprintf(b, "%%caps(%s) %s\n", capString, path)
 		} else {

@@ -3989,7 +3989,7 @@ echo "This is a third test binary"
 			Binaries: map[string]dalec.ArtifactConfig{
 				"/tmp/ping": {
 					Name: "ping",
-					Capabilities: []dalec.ArtifactCapability{
+					LinuxCapabilities: []dalec.ArtifactCapability{
 						{
 							Name:      "cap_net_raw",
 							Effective: true,
@@ -4006,7 +4006,7 @@ echo "This is a third test binary"
 				"/tmp/ping2": {
 					Name: "ping2",
 					User: "testuser",
-					Capabilities: []dalec.ArtifactCapability{
+					LinuxCapabilities: []dalec.ArtifactCapability{
 						{
 							Name:      "cap_net_raw",
 							Effective: true,
@@ -4017,7 +4017,7 @@ echo "This is a third test binary"
 				"/tmp/ping3": {
 					Name:  "ping3",
 					Group: "testgroup",
-					Capabilities: []dalec.ArtifactCapability{
+					LinuxCapabilities: []dalec.ArtifactCapability{
 						{
 							Name:      "cap_net_bind_service",
 							Effective: true,

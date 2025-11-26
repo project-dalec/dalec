@@ -135,8 +135,8 @@ type ArtifactConfig struct {
 	User string `yaml:"user,omitempty" json:"user,omitempty"`
 	// Group is the group name that should own the artifact
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
-	// Capabilities is the list of Linux Capabilities to set on the artifact
-	Capabilities []ArtifactCapability `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	// LinuxCapabilities is the list of Linux capabilities to set on the artifact
+	LinuxCapabilities []ArtifactCapability `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
 }
 
 // ArtifactCapability represents a Linux Capability to set on an artifact
@@ -264,7 +264,7 @@ func (a *Artifacts) validate() error {
 	// Check for capabilities on non-executable artifacts
 	checkCapabilities := func(artifactType string, artifacts map[string]ArtifactConfig) {
 		for path, cfg := range artifacts {
-			if len(cfg.Capabilities) > 0 {
+			if len(cfg.LinuxCapabilities) > 0 {
 				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on %s '%s'", artifactType, path))
 			}
 		}
@@ -281,12 +281,12 @@ func (a *Artifacts) validate() error {
 	// Check systemd units and dropins
 	if a.Systemd != nil {
 		for path, cfg := range a.Systemd.Units {
-			if artifact := cfg.Artifact(); artifact != nil && len(artifact.Capabilities) > 0 {
+			if artifact := cfg.Artifact(); artifact != nil && len(artifact.LinuxCapabilities) > 0 {
 				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd unit '%s'", path))
 			}
 		}
 		for path, cfg := range a.Systemd.Dropins {
-			if artifact := cfg.Artifact(); artifact != nil && len(artifact.Capabilities) > 0 {
+			if artifact := cfg.Artifact(); artifact != nil && len(artifact.LinuxCapabilities) > 0 {
 				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd dropin '%s'", path))
 			}
 		}

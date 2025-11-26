@@ -2050,7 +2050,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Binaries: map[string]ArtifactConfig{
 					"/tmp/mybinary": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true, Permitted: true},
 						},
 					},
@@ -2062,7 +2062,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Libs: map[string]ArtifactConfig{
 					"/tmp/mylib.so": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true},
 						},
 					},
@@ -2074,7 +2074,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Libexec: map[string]ArtifactConfig{
 					"/tmp/helper": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_bind_service", Effective: true, Permitted: true},
 						},
 					},
@@ -2086,7 +2086,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Docs: map[string]ArtifactConfig{
 					"README.md": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true},
 						},
 					},
@@ -2099,7 +2099,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				ConfigFiles: map[string]ArtifactConfig{
 					"config.yaml": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_bind_service", Effective: true},
 						},
 					},
@@ -2112,7 +2112,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Manpages: map[string]ArtifactConfig{
 					"tool.1": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true},
 						},
 					},
@@ -2125,7 +2125,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				DataDirs: map[string]ArtifactConfig{
 					"data": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true},
 						},
 					},
@@ -2138,7 +2138,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Licenses: map[string]ArtifactConfig{
 					"LICENSE": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true},
 						},
 					},
@@ -2151,7 +2151,7 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Headers: map[string]ArtifactConfig{
 					"myheader.h": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true},
 						},
 					},
@@ -2164,14 +2164,14 @@ func TestArtifactsValidation(t *testing.T) {
 			artifacts: Artifacts{
 				Docs: map[string]ArtifactConfig{
 					"README.md": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_raw", Effective: true},
 						},
 					},
 				},
 				ConfigFiles: map[string]ArtifactConfig{
 					"config.yaml": {
-						Capabilities: []ArtifactCapability{
+						LinuxCapabilities: []ArtifactCapability{
 							{Name: "cap_net_bind_service", Effective: true},
 						},
 					},

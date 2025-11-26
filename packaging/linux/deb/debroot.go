@@ -741,7 +741,7 @@ func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target s
 		sorted := dalec.SortMapKeys(artifacts)
 		for _, key := range sorted {
 			cfg := artifacts[key]
-			capString := dalec.CapabilitiesString(cfg.Capabilities)
+			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
 			if capString == "" {
 				continue
 			}
