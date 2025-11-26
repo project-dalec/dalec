@@ -303,6 +303,7 @@ func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.Constr
 		buf.WriteString("set -ex\n")
 
 		sortedKeys := SortMapKeys(post.Symlinks)
+		var needsMount bool
 		for _, oldpath := range sortedKeys {
 			cfg := post.Symlinks[oldpath]
 			newpaths := cfg.Paths
@@ -312,9 +313,11 @@ func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.Constr
 				fmt.Fprintf(buf, "mkdir -p %q\n", filepath.Join(rootfsPath, filepath.Dir(newpath)))
 				fmt.Fprintf(buf, "ln -s %q %q\n", oldpath, filepath.Join(rootfsPath, newpath))
 				if cfg.User != "" {
+					needsMount = true
 					fmt.Fprintf(buf, "chown -h %s %q\n", cfg.User, filepath.Join(rootfsPath, newpath))
 				}
 				if cfg.Group != "" {
+					needsMount = true
 					fmt.Fprintf(buf, "chgrp -h %s %q\n", cfg.Group, filepath.Join(rootfsPath, newpath))
 				}
 			}
@@ -326,8 +329,12 @@ func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.Constr
 		return worker.Run(
 			ShArgs("/tmp/add_symlink.sh"),
 			llb.AddMount("/tmp/add_symlink.sh", script, llb.SourcePath(name)),
-			llb.AddMount("/etc/group", in, llb.SourcePath("/etc/group")),
-			llb.AddMount("/etc/passwd", in, llb.SourcePath("/etc/passwd")),
+			RunOptFunc(func(ei *llb.ExecInfo) {
+				if needsMount {
+					llb.AddMount("/etc/group", in, llb.SourcePath("/etc/group")).SetRunOption(ei)
+					llb.AddMount("/etc/passwd", in, llb.SourcePath("/etc/passwd")).SetRunOption(ei)
+				}
+			}),
 			withConstraints(opts),
 			ProgressGroup("Add post-install symlinks"),
 		).AddMount(rootfsPath, in)
