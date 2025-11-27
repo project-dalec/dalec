@@ -127,8 +127,8 @@ func (m *BuildMux) handleSubrequest(ctx context.Context, client gwclient.Client,
 	case bktargets.SubrequestsTargetsDefinition.Name:
 		res, err := m.list(ctx, client, opts[keyTarget])
 		return res, true, err
-	case keyTopLevelTarget:
-		return nil, false, nil
+	// case keyTopLevelTarget:
+	//	return nil, false, nil
 	case keyResolveSpec:
 		res, err := handleResolveSpec(ctx, client)
 		return res, true, err
