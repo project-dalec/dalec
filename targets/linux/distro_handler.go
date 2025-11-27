@@ -49,8 +49,7 @@ type DistroConfig interface {
 
 	// RunTests runts the tests specified in a dalec spec against a built container, which may be the target container.
 	// Some distros may need to pass in a separate worker before mounting the target container.
-	RunTests(ctx context.Context, client gwclient.Client, worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State,
-		targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error)
+	RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, target string, opts ...llb.ConstraintsOpt) llb.StateOption
 }
 
 func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
@@ -117,7 +116,25 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			}
 
 			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, opts...)
-			ref, err := c.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, opts...)
+			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
+
+			def, err := ctr.With(runTests).Marshal(ctx, dalec.Platform(platform))
+			if err != nil {
+				return nil, nil, err
+			}
+
+			res, err := client.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+
+			ref, err := res.SingleRef()
+			if err != nil {
+				return nil, nil, err
+			}
+
 			return ref, img, err
 		})
 	}
@@ -179,6 +196,13 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
 			}
 
+			// TODO: Need to figure this out...
+			// How can I put the test runs as a dependency of erofs without really hacky stuff
+			// that like copying the states around?
+			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pc)
+			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey)
+			ctr.With(runTests)
+
 			res, err := client.Solve(ctx, gwclient.SolveRequest{
 				Definition: def.ToPB(),
 			})
@@ -189,12 +213,6 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 			ref, err := res.SingleRef()
 			if err != nil {
 				return nil, nil, err
-			}
-
-			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pc)
-			if ref, err := c.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, pc); err != nil {
-				cfg, _ := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
-				return ref, cfg, err
 			}
 
 			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, nil
@@ -259,6 +277,16 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 
 			pkgSt := cfg.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, pg, pc)
 
+			ctr := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
+			runTests := cfg.RunTests(ctx, client, sOpt, spec, targetKey, pg)
+
+			copyDir := "/tmp/internal/dalec/pkg/final_copy/"
+			st := ctr.With(runTests).
+				File(llb.Mkdir(copyDir, 0o55, llb.WithParents(true)), pg).
+				File(llb.Copy(pkgSt, "/", copyDir), pg)
+
+			pkgSt = llb.Scratch().File(llb.Copy(st, copyDir, "/", dalec.WithDirContentsOnly()), pg)
+
 			def, err := pkgSt.Marshal(ctx, pc)
 			if err != nil {
 				return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
@@ -274,12 +302,6 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			ref, err := res.SingleRef()
 			if err != nil {
 				return nil, nil, err
-			}
-
-			ctr := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
-			if ref, err := cfg.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, pg, pc); err != nil {
-				cfg, _ := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
-				return ref, cfg, err
 			}
 
 			if platform == nil {

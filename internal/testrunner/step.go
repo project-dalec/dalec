@@ -1,23 +1,24 @@
 package testrunner
 
 import (
-	"bytes"
 	"context"
+	_ "crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/project-dalec/dalec"
 	"github.com/google/shlex"
 	"github.com/moby/buildkit/client/llb"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (
@@ -63,7 +64,7 @@ func StepCmd(args []string) {
 		return
 	}
 
-	results, err := runStep(ctx, &step, os.Stdout, os.Stderr, stepIndex)
+	err = runStep(ctx, &step, os.Stdout, os.Stderr, outputPath)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -73,20 +74,9 @@ func StepCmd(args []string) {
 		os.Exit(2)
 	}
 
-	dt, err = json.Marshal(results)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error marshalling results:", err)
-		os.Exit(2)
-	}
-
-	if err := writeFileAppend(outputPath, dt, 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, "error writing test results:", err)
-		os.Exit(2)
-	}
 }
 
-// WithRunStep returns an llb.RunOption that executes the provided test step.
-func WithTestStep(frontend llb.State, step *dalec.TestStep, index int, outputPath string) llb.RunOption {
+func stepRunner(frontend llb.State, step *dalec.TestStep, index int, outputPath string) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 		llb.WithCustomName(step.Command).SetRunOption(ei)
 
@@ -109,6 +99,85 @@ func WithTestStep(frontend llb.State, step *dalec.TestStep, index int, outputPat
 	})
 }
 
+func withTestStep(frontend llb.State, step *dalec.TestStep, index int, opts ...llb.ConstraintsOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		const outputPath = "/tmp/internal/dalec/testrunner/step/output"
+		out := in.Run(stepRunner(in, step, index, outputPath), dalec.WithConstraints(opts...), step.GetSourceLocation(in)).Root()
+
+		var states []llb.State
+
+		if !step.Stdout.IsEmpty() {
+			st := out.With(withCheckOutput(frontend, filepath.Join(outputPath, "stdout"), &step.Stdout, opts...))
+			st = st.File(llb.Rm(outputPath))
+			states = append(states, st)
+		}
+
+		if !step.Stderr.IsEmpty() {
+			st := out.With(withCheckOutput(frontend, filepath.Join(outputPath, "stderr"), &step.Stderr, opts...))
+			st = st.File(llb.Rm(outputPath))
+			states = append(states, st)
+		}
+
+		if len(states) > 0 {
+			out = dalec.MergeAtPath(in, states, "/", opts...)
+		}
+
+		return out
+	}
+}
+
+func withCheckOutput(frontend llb.State, filename string, checker *dalec.CheckOutput, opts ...llb.ConstraintsOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		out := in
+		var states []llb.State
+
+		newCheck := func(kind, filename, checkValue string, index int, opts ...llb.ConstraintsOpt) llb.StateOption {
+			return func(in llb.State) llb.State {
+				return in.Run(
+					llb.AddMount(testRunnerPath, frontend, llb.SourcePath("/frontend")),
+					llb.Args([]string{testRunnerPath, FileCheckerCmdName, kind, filename, checkValue}),
+					dalec.WithConstraints(opts...),
+					checker.GetSourceLocation(in, kind, index),
+				).Root()
+			}
+		}
+
+		if checker.Empty {
+			st := out.With(newCheck(dalec.CheckOutputEmptyKind, filename, "", 0, opts...))
+			states = append(states, st)
+		}
+
+		if len(checker.Contains) > 0 {
+			for i, v := range checker.Contains {
+				st := out.With(newCheck(dalec.CheckOutputContainsKind, filename, v, i, opts...))
+				states = append(states, st)
+			}
+		}
+
+		if len(checker.Matches) > 0 {
+			for i, v := range checker.Matches {
+				st := out.With(newCheck(dalec.CheckOutputMatchesKind, filename, v, i, opts...))
+				states = append(states, st)
+			}
+		}
+
+		if checker.StartsWith != "" {
+			st := out.With(newCheck(dalec.CheckOutputStartsWithKind, filename, checker.StartsWith, 0, opts...))
+			states = append(states, st)
+		}
+
+		if checker.EndsWith != "" {
+			st := out.With(newCheck(dalec.CheckOutputEndsWithKind, filename, checker.EndsWith, 0, opts...))
+			states = append(states, st)
+		}
+
+		if len(states) > 0 {
+			out = dalec.MergeAtPath(in, states, "/", opts...)
+		}
+		return out
+	}
+}
+
 // FilterStepError removes extraneous/internal context from errors caused by
 // a test step command returning a non-zero exit code.
 func FilterStepError(err error) error {
@@ -127,10 +196,10 @@ func FilterStepError(err error) error {
 // This should only be called from inside a container where the test is meant to run.
 //
 // Provide the desired stdout and stderr writers to capture output.
-func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer, stepIndex int) ([]FileCheckErrResult, error) {
+func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer, outputPath string) error {
 	args, err := shlex.Split(step.Command)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -147,38 +216,35 @@ func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer
 		name    string
 	}
 
-	var checks []check
-
 	if !step.Stdout.IsEmpty() {
-		buf := bytes.NewBuffer(nil)
-		var w io.Writer = buf
-		if cmd.Stdout != nil {
-			w = io.MultiWriter(cmd.Stdout, buf)
+		if err := os.MkdirAll(outputPath, 0o700); err != nil {
+			return err
 		}
-		cmd.Stdout = w
-		checks = append(checks, check{buf, step.Stdout, "stdout"})
+		f, err := os.OpenFile(filepath.Join(outputPath, "stdout"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		cmd.Stdout = io.MultiWriter(cmd.Stdout, f)
 	}
 
 	if !step.Stderr.IsEmpty() {
-		buf := bytes.NewBuffer(nil)
-		var w io.Writer = buf
-		if cmd.Stderr != nil {
-			w = io.MultiWriter(cmd.Stderr, buf)
+		if err := os.MkdirAll(outputPath, 0o700); err != nil {
+			return err
 		}
-		cmd.Stderr = w
-		checks = append(checks, check{buf, step.Stderr, "stderr"})
-	}
-	if err := cmd.Run(); err != nil {
-		return nil, err
+		f, err := os.OpenFile(filepath.Join(outputPath, "stderr"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		cmd.Stderr = io.MultiWriter(cmd.Stderr, f)
 	}
 
-	var results []FileCheckErrResult
-	for _, c := range checks {
-		if err := c.checker.Check(c.buf.String(), c.name); err != nil {
-			results = append(results, FileCheckErrResult{Filename: c.name, StepIndex: &stepIndex, Checks: getFileCheckErrs(err)})
-		}
+	if err := cmd.Run(); err != nil {
+		return err
 	}
-	return results, nil
+
+	return nil
 }
 
 type stepCmdError struct {
