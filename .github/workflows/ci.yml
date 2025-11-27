@@ -25,6 +25,7 @@ on:
       - '.github/workflows/dependabot.yml'
       - '.github/workflows/release.yml'
       - '.github/workflows/deploy-docs.yml'
+      - 'tools/vscode/**'
 
   push:
     branches:

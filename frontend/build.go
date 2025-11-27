@@ -54,7 +54,7 @@ func LoadSpec(ctx context.Context, client *dockerui.Client, platform *ocispecs.P
 		o(&cfg)
 	}
 
-	src, err := client.ReadEntrypoint(ctx, "Dockerfile")
+	src, err := client.ReadEntrypoint(ctx, "dalec")
 	if err != nil {
 		return nil, fmt.Errorf("could not read spec file: %w", err)
 	}

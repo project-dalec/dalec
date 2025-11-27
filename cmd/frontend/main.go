@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/project-dalec/dalec/frontend"
-	"github.com/project-dalec/dalec/frontend/debug"
-	"github.com/project-dalec/dalec/internal/testrunner"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/frontend/debug"
+	"github.com/project-dalec/dalec/internal/testrunner"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
 )
@@ -52,9 +52,9 @@ func main() {
 	case testrunner.StepRunnerCmdName:
 		args := flag.Args()[2:]
 		testrunner.StepCmd(args)
-	case testrunner.CheckFilesCmdName:
+	case testrunner.FileCheckerCmdName:
 		args := flag.Args()[2:]
-		testrunner.CheckFilesCmd(args)
+		testrunner.FileCheckCmd(args)
 	default:
 		dalecMain()
 	}
