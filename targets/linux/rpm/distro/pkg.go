@@ -6,7 +6,6 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/packaging/linux/rpm"
@@ -68,27 +67,13 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 
 // runTests runs the package tests
 // The returned reference is the solved container state
-func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State, targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error) {
-	def, err := ctr.Marshal(ctx, opts...)
-	if err != nil {
-		return nil, err
+func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		worker := cfg.Worker(sOpt, opts...)
+		withTestDeps := cfg.InstallTestDeps(worker, sOpt, targetKey, spec, opts...)
+		runTests := frontend.RunTests(ctx, client, sOpt, spec, withTestDeps, targetKey, opts...)
+		return in.With(runTests)
 	}
-
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
-		Definition: def.ToPB(),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	ref, err := res.SingleRef()
-	if err != nil {
-		return nil, err
-	}
-
-	withTestDeps := cfg.InstallTestDeps(worker, sOpt, targetKey, spec, opts...)
-	err = frontend.RunTests(ctx, client, spec, ref, withTestDeps, targetKey, sOpt.TargetPlatform)
-	return ref, errors.Wrap(err, "TESTS FAILED")
 }
 
 func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.RunOption, []string) {

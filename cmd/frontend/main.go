@@ -1,25 +1,28 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
-	"github.com/project-dalec/dalec/frontend"
-	"github.com/project-dalec/dalec/frontend/debug"
-	"github.com/project-dalec/dalec/internal/testrunner"
+	"github.com/containerd/plugin"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/frontend/debug"
+	"github.com/project-dalec/dalec/internal/plugins"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
+
+	_ "github.com/project-dalec/dalec/internal/commands"
 )
 
 const (
 	Package = "github.com/project-dalec/dalec/cmd/frontend"
-
-	credHelperSubcmd = "credential-helper"
 )
 
 func init() {
@@ -28,41 +31,59 @@ func init() {
 }
 
 func main() {
-	fs := flag.CommandLine
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `usage: %s [subcommand [args...]]`, os.Args[0])
-	}
+	flags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
 
-	if err := fs.Parse(os.Args); err != nil {
+	if err := flags.Parse(os.Args[1:]); err != nil {
 		bklog.L.WithError(err).Fatal("error parsing frontend args")
 		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
-
 	}
 
-	subCmd := fs.Arg(1)
-
-	// NOTE: for subcommands we take args[2:]
-	// skip args[0] (the executable) and args[1] (the subcommand)
-
-	// each "sub-main" function handles its own exit
-	switch subCmd {
-	case credHelperSubcmd:
-		args := flag.Args()[2:]
-		gomodMain(args)
-	case testrunner.StepRunnerCmdName:
-		args := flag.Args()[2:]
-		testrunner.StepCmd(args)
-	case testrunner.CheckFilesCmdName:
-		args := flag.Args()[2:]
-		testrunner.CheckFilesCmd(args)
-	default:
-		dalecMain()
-	}
-}
-
-func dalecMain() {
 	ctx := appcontext.Context()
 
+	if flags.NArg() == 0 {
+		dalecMain(ctx)
+		return
+	}
+
+	h, err := lookupCmd(ctx, flags.Arg(0))
+	if err != nil {
+		bklog.L.WithError(err).Fatal("error handling command")
+		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
+	}
+
+	if h == nil {
+		fmt.Fprintln(os.Stderr, "unknown subcommand:", flags.Arg(1))
+		fmt.Fprintln(os.Stderr, "full args:", flag.Args())
+		fmt.Fprintln(os.Stderr, "If you see this message this is probably a bug in dalec.")
+		os.Exit(64) // 64 is EX_USAGE, meaning command line usage error
+	}
+
+	h.HandleCmd(ctx, flags.Args()[1:])
+}
+
+func lookupCmd(ctx context.Context, cmd string) (plugins.CmdHandler, error) {
+	set := plugin.NewPluginSet()
+	filter := func(r *plugins.Registration) bool {
+		return r.Type != plugins.TypeCmd || r.ID != cmd
+	}
+
+	for _, r := range plugins.Graph(filter) {
+		cfg := plugin.NewContext(ctx, set, nil)
+
+		p := r.Init(cfg)
+
+		v, err := p.Instance()
+		if err != nil && !plugin.IsSkipPlugin(err) {
+			return nil, err
+		}
+
+		return v.(plugins.CmdHandler), nil
+	}
+
+	return nil, nil
+}
+
+func dalecMain(ctx context.Context) {
 	var mux frontend.BuildMux
 	mux.Add(debug.DebugRoute, debug.Handle, nil)
 

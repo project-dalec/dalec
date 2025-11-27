@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -10,9 +11,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/project-dalec/dalec/internal/commands"
+	"github.com/project-dalec/dalec/internal/plugins"
 )
 
+func init() {
+	commands.RegisterPlugin(credHelperSubcmd, plugins.CmdHandlerFunc(credentialHelperCmd))
+}
+
 const (
+	credHelperSubcmd = "credential-helper"
+
 	keyProtocol          = "protocol"
 	keyHost              = "host"
 	keyPath              = "path"
@@ -71,7 +81,7 @@ type credConfig struct {
 	kind string
 }
 
-func gomodMain(args []string) {
+func credentialHelperCmd(ctx context.Context, args []string) {
 	var cfg credConfig
 	fs := flag.NewFlagSet(credHelperSubcmd, flag.ExitOnError)
 	fs.Func("kind", "the kind of secret to retrieve (token or header)", readKind(&cfg.kind))

@@ -40,6 +40,8 @@ image:
 
 tests:
   - name: Check bin
+    steps:
+      - command: /usr/bin/go-md2man --help
     files:
       /usr/bin/go-md2man:
         permissions: 0755
