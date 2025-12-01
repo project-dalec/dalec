@@ -32,4 +32,5 @@ var ConfigV9 = &distro.Config{
 	BasePackages:       basePackages(V9TargetKey),
 	RepoPlatformConfig: &defaultPlatformConfig,
 	InstallFunc:        distro.DnfInstall,
+	FullName:           v9FullName,
 }

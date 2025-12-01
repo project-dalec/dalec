@@ -10,7 +10,7 @@ const (
 
 	// v8Ref is the image ref used for the base worker image
 	v8Ref      = "docker.io/library/rockylinux:8"
-	v8FullName = "rockyLinux 8"
+	v8FullName = "RockyLinux 8"
 	// v8WorkerContextName is the build context name that can be used to lookup
 	v8WorkerContextName = "dalec-rockylinux8-worker"
 )
@@ -27,4 +27,5 @@ var ConfigV8 = &distro.Config{
 	BasePackages:       basePackages(V8TargetKey),
 	RepoPlatformConfig: &defaultPlatformConfig,
 	InstallFunc:        distro.DnfInstall,
+	FullName:           v8FullName,
 }

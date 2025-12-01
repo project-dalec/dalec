@@ -25,4 +25,5 @@ var Mariner2Config = &distro.Config{
 	BasePackages:       basePackages(Mariner2TargetKey),
 	RepoPlatformConfig: &defaultAzlinuxRepoPlatform,
 	InstallFunc:        distro.TdnfInstall,
+	FullName:           Mariner2FullName,
 }
