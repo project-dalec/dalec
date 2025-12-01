@@ -45,8 +45,15 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'signing',
-        'verifying-images',
         'editor-support',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Operations',
+      collapsed: false,
+      items: [
+        'verifying-images',
       ],
     },
     {
