@@ -21,8 +21,10 @@ func (d *Config) Validate(spec *dalec.Spec) error {
 	return nil
 }
 
-func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
+func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Build deb package"))
+
+	worker := d.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
 	versionID := d.VersionID
 	if versionID == "" {
@@ -170,7 +172,7 @@ func addPaths(paths []string, opts ...llb.ConstraintsOpt) llb.StateOption {
 	}
 }
 
-func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, _ llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State, targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error) {
+func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State, targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error) {
 	def, err := ctr.Marshal(ctx, opts...)
 	if err != nil {
 		return nil, err
@@ -238,7 +240,8 @@ func (cfg *Config) HandleSourcePkg(ctx context.Context, client gwclient.Client) 
 	})
 }
 
-func (c *Config) ExtractPkg(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) llb.State {
+func (c *Config) ExtractPkg(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) llb.State {
+	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 	depDebs := llb.Scratch()
 	deps := spec.GetPackageDeps(targetKey).GetSysext()
 	if len(deps) > 0 {

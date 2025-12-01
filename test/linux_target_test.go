@@ -25,6 +25,7 @@ import (
 	"github.com/moby/go-archive/compression"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
@@ -44,7 +45,7 @@ type workerConfig struct {
 	ContextName    string
 	TestRepoConfig func(keyPath, repoPath string) map[string]dalec.Source
 	Platform       *ocispecs.Platform
-	SysextWorker   func(worker llb.State, opts ...llb.ConstraintsOpt) llb.State
+	SysextWorker   func(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State
 }
 
 type targetConfig struct {
@@ -1126,7 +1127,10 @@ echo "$BAR" > bar.txt
 			}
 
 			sr = newSolveRequest(withBuildTarget(testConfig.Target.Worker), withSpec(ctx, t, nil))
-			worker := testConfig.Worker.SysextWorker(reqToState(ctx, gwc, sr, t))
+
+			sOpt, err := frontend.SourceOptFromClient(ctx, gwc, &cfg.Platform)
+			assert.NilError(t, err)
+			worker := testConfig.Worker.SysextWorker(sOpt)
 
 			pc := dalec.Platform(&cfg.Platform)
 			var opts []llb.ConstraintsOpt

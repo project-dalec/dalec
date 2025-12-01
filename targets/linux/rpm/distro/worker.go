@@ -77,7 +77,8 @@ func (cfg *Config) Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb
 		).Root()
 }
 
-func (cfg *Config) SysextWorker(worker llb.State, opts ...llb.ConstraintsOpt) llb.State {
+func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
+	worker := cfg.Worker(sOpts, opts...)
 	return worker.Run(
 		dalec.WithConstraints(opts...),
 		cfg.Install([]string{"erofs-utils"}),
