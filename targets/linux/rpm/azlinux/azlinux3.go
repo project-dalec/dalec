@@ -29,4 +29,5 @@ var Azlinux3Config = &distro.Config{
 	InstallFunc:        distro.TdnfInstall,
 
 	SysextSupported: true,
+	FullName:        AzLinux3FullName,
 }

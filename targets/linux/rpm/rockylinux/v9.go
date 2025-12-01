@@ -10,7 +10,7 @@ const (
 
 	// v9Ref is the image ref used for the base worker image
 	v9Ref      = "docker.io/library/rockylinux:9"
-	v9FullName = "rockyLinux 9"
+	v9FullName = "RockyLinux 9"
 	// v9WorkerContextName is the build context name that can be used to lookup
 	v9WorkerContextName = "dalec-rockylinux9-worker"
 )
@@ -27,4 +27,5 @@ var ConfigV9 = &distro.Config{
 	BasePackages:       basePackages(V9TargetKey),
 	RepoPlatformConfig: &defaultPlatformConfig,
 	InstallFunc:        distro.DnfInstall,
+	FullName:           v9FullName,
 }

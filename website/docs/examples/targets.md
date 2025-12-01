@@ -1,15 +1,15 @@
 TARGET                           DESCRIPTION
-almalinux8/container (default)   Builds a container image for
+almalinux8/container (default)   Builds a container image for AlmaLinux 8
 almalinux8/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux8/rpm                   Builds an rpm and src.rpm.
 almalinux8/rpm/debug             Debug options for rpm builds.
 almalinux8/worker                Builds the base worker image responsible for building the rpm
-almalinux9/container (default)   Builds a container image for
+almalinux9/container (default)   Builds a container image for AlmaLinux 9
 almalinux9/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux9/rpm                   Builds an rpm and src.rpm.
 almalinux9/rpm/debug             Debug options for rpm builds.
 almalinux9/worker                Builds the base worker image responsible for building the rpm
-azlinux3/container (default)     Builds a container image for
+azlinux3/container (default)     Builds a container image for Azure Linux 3
 azlinux3/container/depsonly      Builds a container image with only the runtime dependencies installed.
 azlinux3/rpm                     Builds an rpm and src.rpm.
 azlinux3/rpm/debug               Debug options for rpm builds.
@@ -41,7 +41,7 @@ jammy/deb (default)              Builds a deb package.
 jammy/dsc                        Builds a Debian source package.
 jammy/testing/container          Builds a container image for testing purposes only.
 jammy/worker                     Builds the worker image.
-mariner2/container (default)     Builds a container image for
+mariner2/container (default)     Builds a container image for CBL-Mariner 2
 mariner2/container/depsonly      Builds a container image with only the runtime dependencies installed.
 mariner2/rpm                     Builds an rpm and src.rpm.
 mariner2/rpm/debug               Debug options for rpm builds.
@@ -51,12 +51,12 @@ noble/dsc                        Builds a Debian source package.
 noble/testing/container          Builds a container image for testing purposes only.
 noble/testing/sysext             Builds a systemd system extension image.
 noble/worker                     Builds the worker image.
-rockylinux8/container (default)  Builds a container image for
+rockylinux8/container (default)  Builds a container image for RockyLinux 8
 rockylinux8/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux8/rpm                  Builds an rpm and src.rpm.
 rockylinux8/rpm/debug            Debug options for rpm builds.
 rockylinux8/worker               Builds the base worker image responsible for building the rpm
-rockylinux9/container (default)  Builds a container image for
+rockylinux9/container (default)  Builds a container image for RockyLinux 9
 rockylinux9/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux9/rpm                  Builds an rpm and src.rpm.
 rockylinux9/rpm/debug            Debug options for rpm builds.
