@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/project-dalec/dalec/frontend"
-	"github.com/project-dalec/dalec/frontend/debug"
-	"github.com/project-dalec/dalec/internal/testrunner"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/internal/frontendapi"
+	"github.com/project-dalec/dalec/internal/testrunner"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
 )
@@ -62,13 +62,9 @@ func main() {
 
 func dalecMain() {
 	ctx := appcontext.Context()
-
-	var mux frontend.BuildMux
-	mux.Add(debug.DebugRoute, debug.Handle, nil)
-
-	if err := loadPlugins(ctx, &mux); err != nil {
-		bklog.L.WithError(err).Fatal("error loading plugins")
-		os.Exit(1)
+	mux, err := frontendapi.NewBuildRouter(ctx)
+	if err != nil {
+		bklog.L.WithError(err).Fatal("error creating frontend router")
 	}
 
 	if err := grpcclient.RunFromEnvironment(ctx, mux.Handler(frontend.WithTargetForwardingHandler)); err != nil {
