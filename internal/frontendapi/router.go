@@ -1,16 +1,26 @@
-package main
+package frontendapi
 
 import (
 	"context"
 
-	"github.com/project-dalec/dalec/frontend"
-	"github.com/project-dalec/dalec/internal/plugins"
 	"github.com/containerd/plugin"
-
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/frontend/debug"
+	"github.com/project-dalec/dalec/internal/plugins"
 	_ "github.com/project-dalec/dalec/targets/plugin"
 )
 
-func loadPlugins(ctx context.Context, mux *frontend.BuildMux) error {
+func NewBuildRouter(ctx context.Context) (*frontend.BuildMux, error) {
+	var mux frontend.BuildMux
+	mux.Add(debug.DebugRoute, debug.Handle, nil)
+
+	if err := loadBuildPlugins(ctx, &mux); err != nil {
+		return nil, err
+	}
+	return &mux, nil
+}
+
+func loadBuildPlugins(ctx context.Context, mux *frontend.BuildMux) error {
 	set := plugin.NewPluginSet()
 
 	filter := func(r *plugins.Registration) bool {
