@@ -10,6 +10,7 @@ FRONTEND_REF ?= local/dalec/frontend
 TIMEOUT ?= 10m
 INTEGRATION_TIMEOUT ?= 59m
 GO ?= go
+VSCODE_BIN ?= $(firstword $(VSCODE) $(shell command -v code 2>/dev/null) $(shell command -v code-insiders 2>/dev/null))
 
 # Integration test suite (can be overridden: make test-integration SUITE=Azlinux3)
 SUITE ?=
@@ -28,6 +29,15 @@ lint: ## Run linters
 .PHONY: fmt
 fmt: ## Format Go code
 	gofmt -w -s .
+
+.PHONY: ext-dev
+ext-dev: generate ## Launch VS Code with Dalec extension in dev mode
+	@if [ -z "$(VSCODE_BIN)" ]; then \
+		echo "VS Code command not found; set VSCODE or install code/code-insiders"; \
+		exit 1; \
+	fi
+	"$(VSCODE_BIN)" --extensionDevelopmentPath="$(CURDIR)/tools/vscode/dalec-spec" .
+
 
 ##@ Build
 
