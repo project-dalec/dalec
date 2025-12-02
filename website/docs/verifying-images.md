@@ -32,12 +32,13 @@ Here's a simple workflow for verifying Dalec before using it:
 
 ```bash
 # 1. Install cosign (one-time setup)
-brew install cosign  # macOS
+brew install cosign
+export VERSION=v0.19.0
 
 # 2. Before using Dalec, verify the frontend image
-cosign verify ghcr.io/project-dalec/dalec/frontend:v0.19.0 \
+cosign verify ghcr.io/project-dalec/dalec/frontend:$VERSION \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/v0.19.0
+  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/$VERSION
 
 # 3. If verification succeeds, you can safely use Dalec
 docker build -f my-spec.yml --target mariner2/rpm .
@@ -64,7 +65,7 @@ To verify images, you can use either:
 
 ```bash
 # Install cosign (see https://docs.sigstore.dev/cosign/installation for more options)
-brew install cosign  # macOS
+brew install cosign
 # or
 ARCH=$(uname -m)
 curl -O -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-${ARCH}"
@@ -77,7 +78,8 @@ sudo chmod +x /usr/local/bin/cosign
 If you have the [GitHub CLI](https://cli.github.com/) installed (v2.49.0+), you can use the built-in attestation verification:
 
 ```bash
-gh attestation verify oci://ghcr.io/project-dalec/dalec/frontend:v0.19.0 --owner project-dalec
+export VERSION=v0.19.0
+gh attestation verify oci://ghcr.io/project-dalec/dalec/frontend:$VERSION --owner project-dalec
 ```
 
 This guide primarily uses cosign for detailed examples, but GitHub CLI is simpler for basic verification.
@@ -89,9 +91,10 @@ This guide primarily uses cosign for detailed examples, but GitHub CLI is simple
 To verify a specific release of the frontend image:
 
 ```bash
-cosign verify ghcr.io/project-dalec/dalec/frontend:v0.19.0 \
+export VERSION=v0.19.0
+cosign verify ghcr.io/project-dalec/dalec/frontend:$VERSION \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/v0.19.0
+  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/$VERSION
 ```
 
 To verify the latest release:
@@ -107,9 +110,10 @@ cosign verify ghcr.io/project-dalec/dalec/frontend:latest \
 Worker images follow a similar pattern:
 
 ```bash
-cosign verify ghcr.io/project-dalec/dalec/noble/worker:v0.9 \
+export VERSION=v0.19.0
+cosign verify ghcr.io/project-dalec/dalec/noble/worker:$VERSION \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/worker-images.yml@refs/tags/v0.19.0
+  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/worker-images.yml@refs/tags/$VERSION
 ```
 
 ### Understanding the Output
@@ -162,9 +166,10 @@ In addition to signatures, release images include SLSA provenance attestations t
 
 ```bash
 # View build provenance attestation for an image
-cosign verify-attestation ghcr.io/project-dalec/dalec/frontend:v0.19.0 \
+export VERSION=v0.19.0
+cosign verify-attestation ghcr.io/project-dalec/dalec/frontend:$VERSION \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/v0.19.0 \
+  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/$VERSION \
   --type https://slsa.dev/provenance/v1 | jq
 ```
 
@@ -177,7 +182,8 @@ The provenance includes:
 You can also use the GitHub CLI to view attestations:
 
 ```bash
-gh attestation verify oci://ghcr.io/project-dalec/dalec/frontend:v0.19.0 --owner project-dalec
+export VERSION=v0.19.0
+gh attestation verify oci://ghcr.io/project-dalec/dalec/frontend:$VERSION --owner project-dalec
 ```
 
 ### Viewing SBOM (Software Bill of Materials)
@@ -186,16 +192,18 @@ Images built with the `docker/build-push-action` include an SBOM attestation tha
 
 ```bash
 # View SBOM attestation
-cosign verify-attestation ghcr.io/project-dalec/dalec/frontend:v0.19.0 \
+export VERSION=v0.19.0
+cosign verify-attestation ghcr.io/project-dalec/dalec/frontend:$VERSION \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/v0.19.0 \
+  --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/$VERSION \
   --type https://spdx.dev/Document | jq
 ```
 
 Alternatively, you can use Docker's built-in SBOM viewer:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/project-dalec/dalec/frontend:v0.19.0 --format '{{json .}}' | jq '.sbom'
+export VERSION=v0.19.0
+docker buildx imagetools inspect ghcr.io/project-dalec/dalec/frontend:$VERSION --format '{{json .}}' | jq '.sbom'
 ```
 
 ## Automated Verification in CI/CD
@@ -215,11 +223,13 @@ jobs:
         uses: sigstore/cosign-installer@v3.7.0
       
       - name: Verify Dalec Frontend Image
+        env:
+          VERSION: v0.19.0
         run: |
           # Verify the Dalec version you're about to use
-          cosign verify ghcr.io/project-dalec/dalec/frontend:v0.19.0 \
+          cosign verify ghcr.io/project-dalec/dalec/frontend:$VERSION \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/v0.19.0
+            --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/$VERSION
           
           echo "Dalec frontend image verified successfully"
       
@@ -235,13 +245,15 @@ jobs:
 verify-dalec:
   stage: verify
   image: alpine:latest
+  variables:
+    VERSION: v0.19.0
   before_script:
     - apk add --no-cache cosign
   script:
     - |
-      cosign verify ghcr.io/project-dalec/dalec/frontend:v0.19.0 \
+      cosign verify ghcr.io/project-dalec/dalec/frontend:$VERSION \
         --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-        --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/v0.19.0
+        --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/$VERSION
   
 build-package:
   stage: build
