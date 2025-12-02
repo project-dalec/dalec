@@ -6,7 +6,7 @@
 <title data-rh="true">Targets | Dalec</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://project-dalec.github.io/dalec/img/logo.png"><meta data-rh="true" name="twitter:image" content="https://project-dalec.github.io/dalec/img/logo.png"><meta data-rh="true" property="og:url" content="https://project-dalec.github.io/dalec/targets"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Targets | Dalec"><meta data-rh="true" name="description" content="DALEC is designed to support building artifacts for a number of different"><meta data-rh="true" property="og:description" content="DALEC is designed to support building artifacts for a number of different"><link data-rh="true" rel="icon" href="/dalec/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://project-dalec.github.io/dalec/targets"><link data-rh="true" rel="alternate" href="https://project-dalec.github.io/dalec/targets" hreflang="en"><link data-rh="true" rel="alternate" href="https://project-dalec.github.io/dalec/targets" hreflang="x-default"><link data-rh="true" rel="preconnect" href="https://2KEC24GMEN-dsn.algolia.net" crossorigin="anonymous"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Targets","item":"https://project-dalec.github.io/dalec/targets"}]}</script><link rel="search" type="application/opensearchdescription+xml" title="Dalec" href="/dalec/opensearch.xml">
 
 <meta name="algolia-site-verification" content="1C1CBEF56CCCC1B2"><link rel="stylesheet" href="/dalec/assets/css/styles.9570b3c2.css">
-<script src="/dalec/assets/js/runtime~main.28c483a9.js" defer="defer"></script>
+<script src="/dalec/assets/js/runtime~main.f297d0db.js" defer="defer"></script>
 <script src="/dalec/assets/js/main.96cf3e88.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -45,17 +45,17 @@ the underlying target implementation.</p>
 <div class="language-shell codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-shell codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">$ </span><span class="token function" style="color:rgb(80, 250, 123)">docker</span><span class="token plain"> buildx build </span><span class="token parameter variable" style="color:rgb(189, 147, 249);font-style:italic">--call</span><span class="token plain"> targets --build-arg </span><span class="token assign-left variable" style="color:rgb(189, 147, 249);font-style:italic">BUILDKIT_SYNTAX</span><span class="token operator">=</span><span class="token plain">ghcr.io/project-dalec/dalec/frontend:latest - </span><span class="token operator">&lt;&lt;&lt;</span><span class="token plain"> </span><span class="token string" style="color:rgb(255, 121, 198)">&quot;null&quot;</span><br></span></code></pre></div></div>
 <!-- -->
 <details class="details_lb9f alert alert--info details_b_Ee" data-collapsed="true"><summary>DALEC targets list output</summary><div><div class="collapsibleContent_i85q"><pre><p>TARGET                           DESCRIPTION
-almalinux8/container (default)   Builds a container image for
+almalinux8/container (default)   Builds a container image for AlmaLinux 8
 almalinux8/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux8/rpm                   Builds an rpm and src.rpm.
 almalinux8/rpm/debug             Debug options for rpm builds.
 almalinux8/worker                Builds the base worker image responsible for building the rpm
-almalinux9/container (default)   Builds a container image for
+almalinux9/container (default)   Builds a container image for AlmaLinux 9
 almalinux9/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux9/rpm                   Builds an rpm and src.rpm.
 almalinux9/rpm/debug             Debug options for rpm builds.
 almalinux9/worker                Builds the base worker image responsible for building the rpm
-azlinux3/container (default)     Builds a container image for
+azlinux3/container (default)     Builds a container image for Azure Linux 3
 azlinux3/container/depsonly      Builds a container image with only the runtime dependencies installed.
 azlinux3/rpm                     Builds an rpm and src.rpm.
 azlinux3/rpm/debug               Debug options for rpm builds.
@@ -87,7 +87,7 @@ jammy/deb (default)              Builds a deb package.
 jammy/dsc                        Builds a Debian source package.
 jammy/testing/container          Builds a container image for testing purposes only.
 jammy/worker                     Builds the worker image.
-mariner2/container (default)     Builds a container image for
+mariner2/container (default)     Builds a container image for CBL-Mariner 2
 mariner2/container/depsonly      Builds a container image with only the runtime dependencies installed.
 mariner2/rpm                     Builds an rpm and src.rpm.
 mariner2/rpm/debug               Debug options for rpm builds.
@@ -97,12 +97,12 @@ noble/dsc                        Builds a Debian source package.
 noble/testing/container          Builds a container image for testing purposes only.
 noble/testing/sysext             Builds a systemd system extension image.
 noble/worker                     Builds the worker image.
-rockylinux8/container (default)  Builds a container image for
+rockylinux8/container (default)  Builds a container image for RockyLinux 8
 rockylinux8/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux8/rpm                  Builds an rpm and src.rpm.
 rockylinux8/rpm/debug            Debug options for rpm builds.
 rockylinux8/worker               Builds the base worker image responsible for building the rpm
-rockylinux9/container (default)  Builds a container image for
+rockylinux9/container (default)  Builds a container image for RockyLinux 9
 rockylinux9/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux9/rpm                  Builds an rpm and src.rpm.
 rockylinux9/rpm/debug            Debug options for rpm builds.
