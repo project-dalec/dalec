@@ -1271,7 +1271,16 @@ async function getFrontendTargets(document: vscode.TextDocument): Promise<BuildT
     async () => {
       try {
         const contextPath = getSpecWorkspacePath(document);
-        const args = ['buildx', 'build', '--call', 'targets', '-f', document.uri.fsPath, contextPath];
+        const args = [
+          'buildx',
+          'build',
+          '--progress=quiet',
+          '--call',
+          'targets,format=json',
+          '-f',
+          document.uri.fsPath,
+          contextPath,
+        ];
         const execOptions: ExecFileOptionsWithStringEncoding = {
           cwd: contextPath,
           env: {
@@ -1292,11 +1301,64 @@ async function getFrontendTargets(document: vscode.TextDocument): Promise<BuildT
         void vscode.window.showWarningMessage(`Failed to query Dalec targets: ${message}`);
         return cached?.targets;
       }
-    },
-  );
+      },
+    );
 }
 
 function parseTargetsFromOutput(output: string): BuildTargetInfo[] {
+  const jsonTargets = parseTargetsFromJson(output);
+  if (jsonTargets.length > 0) {
+    return jsonTargets;
+  }
+  return parseTargetsFromText(output);
+}
+
+function parseTargetsFromJson(output: string): BuildTargetInfo[] {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const jsonStart = trimmed.indexOf('{');
+  if (jsonStart === -1) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed.slice(jsonStart));
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { targets?: unknown }).targets)) {
+      return [];
+    }
+
+    const targetsField = (parsed as { targets: unknown[] }).targets;
+    const targets: BuildTargetInfo[] = [];
+    for (const entry of targetsField) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      const rawName = typeof (entry as { name?: unknown }).name === 'string'
+        ? (entry as { name: string }).name.trim()
+        : '';
+      const name =
+        rawName ||
+        ((entry as { default?: unknown }).default ? '(default)' : '');
+      if (!name) {
+        continue;
+      }
+      const descriptionValue = (entry as { description?: unknown }).description;
+      const description =
+        typeof descriptionValue === 'string' && descriptionValue.trim()
+          ? descriptionValue.trim()
+          : undefined;
+      targets.push({ name, description });
+    }
+    return targets;
+  } catch {
+    return [];
+  }
+}
+
+function parseTargetsFromText(output: string): BuildTargetInfo[] {
   const targets: BuildTargetInfo[] = [];
   for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
