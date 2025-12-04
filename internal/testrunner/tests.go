@@ -7,47 +7,37 @@ import (
 	"github.com/project-dalec/dalec"
 )
 
-func WithTests(target string, frontend llb.State, sOpt dalec.SourceOpts, deps llb.StateOption, tests []*dalec.TestSpec, opts ...llb.ConstraintsOpt) llb.StateOption {
-	if len(tests) == 0 {
-		return dalec.NoopStateOption
-	}
-
-	const mntPath = "/tmp/internal/dalec/tests/runner/__internal_state__"
-
+func WithTests(target string, sOpt dalec.SourceOpts, deps llb.StateOption, tests []*dalec.TestSpec, opts ...ValidationOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
-		withDeps := in.With(deps)
-
-		states := make([]llb.State, len(tests))
-		for _, test := range tests {
-			st := handleTest(target, frontend, sOpt, withDeps, test, opts...)
-			states = append(states, st)
+		if len(tests) == 0 {
+			return in
 		}
 
-		return dalec.MergeAtPath(in, states, "/")
+		outs := make([]llb.StateOption, 0, len(tests))
+		for _, test := range tests {
+			outs = append(outs, withTest(target, sOpt, test, opts...))
+		}
+
+		out := in.With(deps).With(mergeStateOptions(outs, opts...))
+		return out.With(WithFinalState(in, opts...))
 	}
 }
 
-func handleTest(target string, frontend llb.State, sOpt dalec.SourceOpts, in llb.State, test *dalec.TestSpec, opts ...llb.ConstraintsOpt) llb.State {
-	out := in
-	for k, v := range test.Env {
-		out = out.AddEnv(k, v)
+func withTest(target string, sOpt dalec.SourceOpts, test *dalec.TestSpec, opts ...ValidationOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		opts := append(opts, WithConstraints(dalec.ProgressGroup("Test: "+path.Join(target, test.Name))))
+		out := in
+
+		for k, v := range test.Env {
+			out = out.AddEnv(k, v)
+		}
+
+		out = out.With(stepRunner.Run(test, sOpt, opts...))
+
+		checks := withFileChecks(test, opts...)
+		out = out.With(mergeStateOptions(checks, opts...))
+
+		// For each test we discard the final state changes, but keep the dependency chain.
+		return out.With(WithFinalState(in, opts...))
 	}
-
-	opts = append(opts, dalec.ProgressGroup("Test: "+path.Join(target, test.Name)))
-
-	var runOpts []llb.RunOption
-	for _, mount := range test.Mounts {
-		runOpts = append(runOpts, mount.ToRunOption(sOpt, dalec.WithConstraints(opts...)))
-	}
-
-	for i, step := range test.Steps {
-		out = out.With(withTestStep(frontend, &step, i, runOpts, opts...))
-	}
-
-	if len(test.Files) > 0 {
-		check := withFileChecks(frontend, test, opts...)
-		out = out.With(check)
-	}
-
-	return out.With(nullOutput(frontend))
 }

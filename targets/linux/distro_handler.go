@@ -192,14 +192,14 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				dalec.WithConstraints(opts...),
 			).AddMount("/output", llb.Scratch())
 
-			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pc)
-			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey)
+			// The input to the test runner needs to be the output of the container builder.
+			// In order to accomplish this while still outputing the sysext image, we need to
+			// create a dependency chain from tests back to erofs.
+			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, opts...)
+			withTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
+			withFinalState := testrunner.WithFinalState(erofs, frontend.TestWithClientFrontend(client))
 
-			frontendSt, err := frontend.GetCurrentFrontend(client)
-			if err != nil {
-				return nil, nil, err
-			}
-			erofs = ctr.With(runTests).With(testrunner.WithFinalState(frontendSt, erofs))
+			erofs = ctr.With(withTests).With(withFinalState)
 
 			def, err := erofs.Marshal(ctx, pc)
 			if err != nil {
@@ -280,16 +280,16 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 
 			pkgSt := cfg.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, pg, pc)
 
+			// The input to the test runner needs to be the output of the container builder.
+			// In order to accomplish this while still outputing the package, we need to
+			// create a dependency chain from tests back to pkgSt.
 			ctr := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
-			runTests := cfg.RunTests(ctx, client, sOpt, spec, targetKey, pg)
+			withTests := cfg.RunTests(ctx, client, sOpt, spec, targetKey, pg, pc)
+			withFinalState := testrunner.WithFinalState(pkgSt, frontend.TestWithClientFrontend(client))
 
-			frontendSt, err := frontend.GetCurrentFrontend(client)
-			if err != nil {
-				return nil, nil, err
-			}
-			st := ctr.With(runTests).With(testrunner.WithFinalState(frontendSt, pkgSt))
+			pkgSt = ctr.With(withTests).With(withFinalState)
 
-			def, err := st.Marshal(ctx, pc)
+			def, err := pkgSt.Marshal(ctx, pc)
 			if err != nil {
 				return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
 			}

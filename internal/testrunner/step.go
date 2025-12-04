@@ -4,63 +4,60 @@ import (
 	"context"
 	_ "crypto/sha256"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/google/shlex"
 	"github.com/moby/buildkit/client/llb"
-	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/internal/commands"
-	"github.com/project-dalec/dalec/internal/plugins"
 )
-
-func init() {
-	commands.RegisterPlugin(stepRunnerCmdName, plugins.CmdHandlerFunc(stepCmd))
-	commands.RegisterPlugin(trueCmdName, plugins.CmdHandlerFunc(cmdTrue))
-}
-
-func cmdTrue(_ context.Context, _ []string) {}
 
 const (
-	stepRunnerCmdName = "test-steprunner"
-	trueCmdName       = "true"
-
-	testRunnerPath = "/tmp/dalec/internal/frontend/internal-test-runner"
-	testStepPath   = "/tmp/dalec/internal/frontend/test/step.json"
+	trueCmd    = noopCommand("true")
+	stepRunner = stepRunnerCommand("step-runner")
 )
 
-// StepCmd is the entrypoint for the test step runner subcommand.
-// It reads the test step from the provided file path (first argument)
-// and executes it, writing output to os.Stdout and os.Stderr.
-//
-// This should only be called from inside a container where the test is meant to run.
-func stepCmd(ctx context.Context, args []string) {
-	flags := flag.NewFlagSet(stepRunnerCmdName, flag.ExitOnError)
-	var outputPath string
-	flags.StringVar(&outputPath, "output", "", "Path to write test results to")
+type noopCommand string
 
-	var stepIndex int
-	flags.IntVar(&stepIndex, "step-index", -1, "Index of the step being run")
+func (c noopCommand) Cmd(args []string) {}
 
-	if err := flags.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, "error parsing flags:", err)
+// WithOutput runs a no-op command that produces the provided output state.
+// This is useful for creating a dependency between the StateOption's input
+// state and the provided output state.
+func (c noopCommand) WithOutput(out llb.State, opts ...ValidationOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		const outputPath = "/tmp/internal/dalec/testrunner/__internal_output__"
+		args := []string{string(c)}
+
+		// Ideally we would use llb.Readonly here.
+		// However, buildkit optmizes out the case since the returned state
+		// cannot be modified by the run.
+		// The run ends up not executing.
+		return in.Run(
+			testRunner(args, opts...),
+		).AddMount(outputPath, out)
+	}
+}
+
+type stepRunnerCommand string
+
+func (c stepRunnerCommand) stepJSONPath() string {
+	const p = "/tmp/internal/dalec/testrunner/step/step.json"
+	return p
+}
+
+func (c stepRunnerCommand) Cmd(ctx context.Context, args []string) {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+string(c))
 		os.Exit(1)
 	}
 
-	if stepIndex < 0 {
-		fmt.Fprintln(os.Stderr, "--step-index is required")
-		os.Exit(1)
-	}
-
-	dt, err := os.ReadFile(flags.Arg(0))
+	dt, err := os.ReadFile(c.stepJSONPath())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error reading test step:", err)
 		return
@@ -72,7 +69,7 @@ func stepCmd(ctx context.Context, args []string) {
 		return
 	}
 
-	err = runStep(ctx, &step, os.Stdout, os.Stderr, outputPath)
+	err = c.doStep(ctx, &step, os.Stdout, os.Stderr, c.outputPath())
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -84,31 +81,69 @@ func stepCmd(ctx context.Context, args []string) {
 
 }
 
-func stepRunner(frontend llb.State, step *dalec.TestStep, index int, outputPath string) llb.RunOption {
-	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
-		llb.WithCustomName(step.Command).SetRunOption(ei)
+func (c stepRunnerCommand) outputPath() string {
+	const p = "/tmp/internal/dalec/testrunner/step/output"
+	return p
+}
+
+func (c stepRunnerCommand) Run(test *dalec.TestSpec, sOpt dalec.SourceOpts, opts ...ValidationOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		out := in
+
+		var runOpts []llb.RunOption
+		for _, mount := range test.Mounts {
+			runOpts = append(runOpts, mount.ToRunOption(sOpt, asConstraints(opts...)))
+		}
+		for k, v := range test.Env {
+			runOpts = append(runOpts, llb.AddEnv(k, v))
+		}
+
+		// Steps run sequentially, each step depending on the previous one.
+		for _, step := range test.Steps {
+			out = out.With(c.withTestStep(step, runOpts, opts...))
+		}
+
+		// Each step can modify the state, but we want to discard those changes for the set of steps.
+		// We still want to have a dependency on the final state so that buildkit
+		// executes the steps.
+		return out.With(WithFinalState(in, opts...))
+	}
+}
+
+func (c stepRunnerCommand) withTestStep(step dalec.TestStep, runOpts []llb.RunOption, opts ...ValidationOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
 
 		dt, err := json.Marshal(step)
 		if err != nil {
-			ei.State = dalec.ErrorState(ei.State, fmt.Errorf("failed to marshal test step %q: %w", step.Command, err))
-			llb.Args([]string{"false"}).SetRunOption(ei)
-			return
+			return dalec.ErrorState(in, fmt.Errorf("could not marshal test step %q: %w", step.Command, err))
 		}
 
-		for k, v := range step.Env {
-			ei.State = ei.State.AddEnv(k, v)
+		st := llb.Scratch().File(llb.Mkfile("step.json", 0o600, dt), asConstraints(opts...))
+
+		args := []string{
+			string(c),
 		}
 
-		llb.AddMount(testRunnerPath, frontend, llb.SourcePath("/frontend")).SetRunOption(ei)
+		out := in.Run(
+			dalec.WithRunOptions(runOpts...),
+			dalec.RunOptFunc(func(ei *llb.ExecInfo) {
+				for k, v := range step.Env {
+					ei.State = ei.State.AddEnv(k, v)
+				}
+			}),
+			llb.AddMount(c.stepJSONPath(), st, llb.SourcePath("step.json")),
+			testRunner(args, opts...),
+			step.GetSourceLocation(in),
+			llb.WithCustomName(step.Command),
+		).Root()
 
-		st := llb.Scratch().File(llb.Mkfile("step.json", 0o600, dt))
-		llb.AddMount(testStepPath, st, llb.SourcePath("step.json")).SetRunOption(ei)
-		llb.Args([]string{testRunnerPath, stepRunnerCmdName, "--output", outputPath, "--step-index", strconv.Itoa(index), testStepPath}).SetRunOption(ei)
-	})
-}
+		// Do any stdout/stderr checks
+		var stateOpts []llb.StateOption
+		stateOpts = append(stateOpts, withCheckOutput(filepath.Join(c.outputPath(), "stdout"), &step.Stdout, opts...)...)
+		stateOpts = append(stateOpts, withCheckOutput(filepath.Join(c.outputPath(), "stderr"), &step.Stderr, opts...)...)
 
-func nullOutput(frontend llb.State) llb.StateOption {
-	return WithFinalState(frontend, llb.Scratch())
+		return out.With(mergeStateOptions(stateOpts, opts...))
+	}
 }
 
 // WithFinalState returns a state option which takes as input a potentially modified
@@ -118,111 +153,32 @@ func nullOutput(frontend llb.State) llb.StateOption {
 //
 // NOTE: This is a hack to work around the fact that buildkit does not currently
 // have a proper way to express "run this for validation only".
-func WithFinalState(frontend, st llb.State) llb.StateOption {
-	return func(in llb.State) llb.State {
-		const outputPath = "/tmp/internal/dalec/testrunner/step/output"
-		return in.Run(
-			llb.AddMount(testRunnerPath, frontend, llb.SourcePath("/frontend")),
-			llb.Args([]string{testRunnerPath, trueCmdName}),
-		).
-			// Ideally we would use llb.Readonly here.
-			// However, buildkit optmizes out the case since the returned state
-			// cannot be modified by the run.
-			// The run ends up not executing.
-			AddMount(outputPath, st)
-	}
+func WithFinalState(st llb.State, opts ...ValidationOpt) llb.StateOption {
+	return trueCmd.WithOutput(st, opts...)
 }
 
-func withTestStep(frontend llb.State, step *dalec.TestStep, index int, runOpts []llb.RunOption, opts ...llb.ConstraintsOpt) llb.StateOption {
-	return func(in llb.State) llb.State {
-		const outputPath = "/tmp/internal/dalec/testrunner/step/output"
-		runStep := stepRunner(frontend, step, index, outputPath)
-		out := in.Run(
-			runStep,
-			dalec.WithRunOptions(runOpts...),
-			dalec.WithConstraints(opts...),
-			step.GetSourceLocation(in),
-		).Root()
-
-		var states []llb.State
-
-		if !step.Stdout.IsEmpty() {
-			st := out.With(withCheckOutput(frontend, filepath.Join(outputPath, "stdout"), &step.Stdout, opts...))
-			st = st.File(llb.Rm(outputPath))
-			states = append(states, st)
-		}
-
-		if !step.Stderr.IsEmpty() {
-			st := out.With(withCheckOutput(frontend, filepath.Join(outputPath, "stderr"), &step.Stderr, opts...))
-			st = st.File(llb.Rm(outputPath))
-			states = append(states, st)
-		}
-
-		if len(states) > 0 {
-			out = dalec.MergeAtPath(in, states, "/", opts...)
-		}
-
-		return out
+func withCheckOutput(filename string, checker *dalec.CheckOutput, opts ...ValidationOpt) []llb.StateOption {
+	if checker.IsEmpty() {
+		return nil
 	}
-}
 
-func withCheckOutput(frontend llb.State, filename string, checker *dalec.CheckOutput, opts ...llb.ConstraintsOpt) llb.StateOption {
-	return func(in llb.State) llb.State {
-		out := in
-		var states []llb.State
+	var outs []llb.StateOption
 
-		newCheck := func(kind, filename, checkValue string, index int, opts ...llb.ConstraintsOpt) llb.StateOption {
-			return func(in llb.State) llb.State {
-				return in.Run(
-					llb.AddMount(testRunnerPath, frontend, llb.SourcePath("/frontend")),
-					llb.Args([]string{testRunnerPath, fileCheckerCmdName, kind, filename, checkValue}),
-					dalec.WithConstraints(opts...),
-					checker.GetSourceLocation(in, kind, index),
-				).Root()
-			}
-		}
+	outs = append(outs, checkFileEmpty.Validate(filename, checker, opts...))
+	outs = append(outs, checkFileEquals.Validate(filename, checker, opts...))
+	outs = append(outs, checkFileContains.Validate(filename, checker, opts...)...)
+	outs = append(outs, checkFileMatches.Validate(filename, checker, opts...)...)
+	outs = append(outs, checkFileStartsWith.Validate(filename, checker, opts...))
+	outs = append(outs, checkFileEndsWith.Validate(filename, checker, opts...))
 
-		if checker.Empty {
-			st := out.With(newCheck(dalec.CheckOutputEmptyKind, filename, "", 0, opts...))
-			states = append(states, st)
-		}
-
-		if len(checker.Contains) > 0 {
-			for i, v := range checker.Contains {
-				st := out.With(newCheck(dalec.CheckOutputContainsKind, filename, v, i, opts...))
-				states = append(states, st)
-			}
-		}
-
-		if len(checker.Matches) > 0 {
-			for i, v := range checker.Matches {
-				st := out.With(newCheck(dalec.CheckOutputMatchesKind, filename, v, i, opts...))
-				states = append(states, st)
-			}
-		}
-
-		if checker.StartsWith != "" {
-			st := out.With(newCheck(dalec.CheckOutputStartsWithKind, filename, checker.StartsWith, 0, opts...))
-			states = append(states, st)
-		}
-
-		if checker.EndsWith != "" {
-			st := out.With(newCheck(dalec.CheckOutputEndsWithKind, filename, checker.EndsWith, 0, opts...))
-			states = append(states, st)
-		}
-
-		if len(states) > 0 {
-			out = dalec.MergeAtPath(in, states, "/", opts...)
-		}
-		return out
-	}
+	return outs
 }
 
 // runStep executes the provided test step.
 // This should only be called from inside a container where the test is meant to run.
 //
 // Provide the desired stdout and stderr writers to capture output.
-func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer, outputPath string) error {
+func (stepRunnerCommand) doStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer, outputPath string) error {
 	args, err := shlex.Split(step.Command)
 	if err != nil {
 		return err
@@ -234,12 +190,6 @@ func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer
 
 	if step.Stdin != "" {
 		cmd.Stdin = strings.NewReader(step.Stdin)
-	}
-
-	type check struct {
-		buf     fmt.Stringer
-		checker dalec.CheckOutput
-		name    string
 	}
 
 	if !step.Stdout.IsEmpty() {
@@ -271,16 +221,4 @@ func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer
 	}
 
 	return nil
-}
-
-type stepCmdError struct {
-	err *moby_buildkit_v1_frontend.ExitError
-}
-
-func (s *stepCmdError) Error() string {
-	return fmt.Sprintf("step did not complete successfully: exit code: %d", s.err.ExitCode)
-}
-
-func (s *stepCmdError) Unwrap() error {
-	return s.err
 }

@@ -36,14 +36,14 @@ func RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts
 			return in
 		}
 
-		frontendSt, err := GetCurrentFrontend(client)
-		if err != nil {
-			// This should never happen and indicates a bug in our implementation.
-			// Nothing a user can do about it, so panic.
-			panic(err)
-		}
+		runTests := testrunner.WithTests(target, sOpt, withTestDeps, tests, testrunner.WithConstraints(opts...), TestWithClientFrontend(client))
+		return in.With(runTests)
+	}
+}
 
-		runTests := testrunner.WithTests(target, frontendSt, sOpt, withTestDeps, tests, opts...)
-		return in.With(runTests).With(testrunner.WithFinalState(frontendSt, in))
+func TestWithClientFrontend(client gwclient.Client) testrunner.ValidationOpt {
+	return func(vi *testrunner.ValidationInfo) {
+		st := getCurrentFrontend(client)
+		vi.Frontend = st
 	}
 }

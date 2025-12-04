@@ -73,7 +73,11 @@ func lookupCmd(ctx context.Context, cmd string) (plugins.CmdHandler, error) {
 		p := r.Init(cfg)
 
 		v, err := p.Instance()
-		if err != nil && !plugin.IsSkipPlugin(err) {
+		if plugin.IsSkipPlugin(err) {
+			continue
+		}
+
+		if err != nil {
 			return nil, err
 		}
 
