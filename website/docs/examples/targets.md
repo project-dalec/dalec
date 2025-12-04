@@ -64,6 +64,7 @@ rockylinux9/worker               Builds the base worker image responsible for bu
 trixie/deb (default)             Builds a deb package.
 trixie/dsc                       Builds a Debian source package.
 trixie/testing/container         Builds a container image for testing purposes only.
+trixie/testing/sysext            Builds a systemd system extension image.
 trixie/worker                    Builds the worker image.
 windowscross/container (default) Builds binaries and installs them into a Windows base image
 windowscross/worker              Builds the base worker image responsible for building the package

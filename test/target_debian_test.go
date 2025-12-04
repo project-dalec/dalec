@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/targets/linux/deb/debian"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 )
 
 func TestTrixie(t *testing.T) {
