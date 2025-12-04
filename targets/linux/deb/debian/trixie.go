@@ -22,5 +22,6 @@ var (
 		DefaultOutputImage: trixieRef,
 		BuilderPackages:    builderPackages,
 		BasePackages:       basePackages,
+		SysextSupported:    true,
 	}
 )
