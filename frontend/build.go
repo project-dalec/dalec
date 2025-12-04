@@ -218,26 +218,26 @@ func (c *clientWithPlatform) BuildOpts() gwclient.BuildOpts {
 	return opts
 }
 
-func GetCurrentFrontend(client gwclient.Client) (llb.State, error) {
+func GetCurrentFrontend(client gwclient.Client) llb.State {
+	return *getCurrentFrontend(client)
+}
+
+func getCurrentFrontend(client gwclient.Client) *llb.State {
 	f, err := client.(frontendClient).CurrentFrontend()
 	if err != nil {
-		return llb.Scratch(), err
+		panic(err)
 	}
 
 	if f == nil {
-		return llb.Scratch(), fmt.Errorf("nil frontend state returned")
+		panic("nil frontend state returned -- this should never happen")
 	}
 
-	return *f, nil
+	return f
 }
 
 func withCredHelper(c gwclient.Client) func() (llb.RunOption, error) {
 	return func() (llb.RunOption, error) {
-		f, err := GetCurrentFrontend(c)
-		if err != nil {
-			return nil, err
-		}
-
+		f := GetCurrentFrontend(c)
 		return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 			llb.AddMount("/usr/local/bin/frontend", f, llb.SourcePath("/frontend")).SetRunOption(ei)
 		}), nil

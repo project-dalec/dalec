@@ -195,10 +195,7 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 			ctr := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pc)
 			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey)
 
-			frontendSt, err := frontend.GetCurrentFrontend(client)
-			if err != nil {
-				return nil, nil, err
-			}
+			frontendSt := frontend.GetCurrentFrontend(client)
 			erofs = ctr.With(runTests).With(testrunner.WithFinalState(frontendSt, erofs))
 
 			def, err := erofs.Marshal(ctx, pc)
@@ -283,10 +280,7 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			ctr := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
 			runTests := cfg.RunTests(ctx, client, sOpt, spec, targetKey, pg)
 
-			frontendSt, err := frontend.GetCurrentFrontend(client)
-			if err != nil {
-				return nil, nil, err
-			}
+			frontendSt := frontend.GetCurrentFrontend(client)
 			st := ctr.With(runTests).With(testrunner.WithFinalState(frontendSt, pkgSt))
 
 			def, err := st.Marshal(ctx, pc)
