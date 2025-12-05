@@ -71,6 +71,18 @@ func InstallLocalPkg(pkg llb.State, upgrade bool, opts ...llb.ConstraintsOpt) ll
 		const installScript = `#!/usr/bin/env sh
 set -ex
 
+echo <<EOF > /etc/apt/apt.conf.d/99dalec
+Acquire::http::AllowPipeline "true";
+Acquire::https::AllowPipeline "true";
+Acquire::http::No-Cache "true";
+Acquire::https::No-Cache "true";
+Acquire::Queue-Mode "access";
+APT::Acquire::Max-Active-Downloads "20";
+Acquire::http { Pipeline-Depth "10"; };
+Acquire::https { Pipeline-Depth "10"; };
+APT::Get::Max-Fetch-Servers "10";
+EOF
+
 # Make sure any cached data from local repos is purged since this should not
 # be shared between builds.
 rm -f /var/lib/apt/lists/_*

@@ -148,7 +148,7 @@ func dnfCommand(cfg *dnfInstallConfig, releaseVer string, exe string, dnfSubCmd 
 		cacheDir = filepath.Join(cfg.root, cacheDir)
 	}
 	installFlags := dnfInstallFlags(cfg)
-	installFlags += " -y --setopt varsdir=/etc/dnf/vars --releasever=" + releaseVer + " "
+	installFlags += " -y --setopt max_parallel_downloads=20 --setopt varsdir=/etc/dnf/vars --releasever=" + releaseVer + " "
 	installScriptDt := `#!/usr/bin/env bash
 set -eux -o pipefail
 

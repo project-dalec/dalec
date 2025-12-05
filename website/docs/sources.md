@@ -121,7 +121,7 @@ Clients provide a build context to Dalec.
 As an example, here is how the Docker client provides a build context to Dalec:
 
 ```shell
-$ docker build <some args> .
+docker build <some args> .
 ```
 
 In this case the `.`, or current directory, is the build context.
