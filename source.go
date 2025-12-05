@@ -38,6 +38,7 @@ type Source struct {
 	Context     *SourceContext     `yaml:"context,omitempty" json:"context,omitempty"`
 	Build       *SourceBuild       `yaml:"build,omitempty" json:"build,omitempty"`
 	Inline      *SourceInline      `yaml:"inline,omitempty" json:"inline,omitempty"`
+	LLB         *SourceLLB         `yaml:"-" json:"-"` // Internal only, not exposed to users
 	// === End Source Variants ===
 
 	// Path is the path to the source after fetching it based on the identifier.
