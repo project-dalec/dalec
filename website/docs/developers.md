@@ -104,6 +104,11 @@ make test-integration
 
 ### 5. Test Frontend Image
 
+:::note
+To be able to use locally built frontend image with `docker build`,
+make sure your buildx builder instance uses `docker` driver and not `docker-container`.
+:::
+
 If you want to test the frontend with your spec files:
 
 ```bash
@@ -125,6 +130,13 @@ docker build -t go-md2man:test \
   -f docs/examples/go-md2man.yml \
   --target=azlinux3/rpm \
   --output=_output .
+```
+
+Alternatively, you can use `docker buildx bake`:
+
+```bash
+# Build and test with bake
+docker buildx bake examples
 ```
 
 ## Available Make Targets
