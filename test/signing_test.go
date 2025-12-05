@@ -97,7 +97,7 @@ func linuxSigningTests(ctx context.Context, testConfig testLinuxConfig) func(*te
 
 			var found bool
 			handleStatus := func(status *client.SolveStatus) {
-				if found {
+				if found || status == nil {
 					return
 				}
 				for _, w := range status.Warnings {
@@ -175,7 +175,7 @@ signer:
 
 			var found bool
 			handleStatus := func(status *client.SolveStatus) {
-				if found {
+				if found || status == nil {
 					return
 				}
 				for _, w := range status.Warnings {
@@ -262,7 +262,7 @@ signer:
 `)))
 			var found bool
 			handleStatus := func(status *client.SolveStatus) {
-				if found {
+				if found || status == nil {
 					return
 				}
 				for _, w := range status.Warnings {
@@ -291,7 +291,7 @@ signer:
 			spec := newSigningSpec()
 			var found bool
 			handleStatus := func(status *client.SolveStatus) {
-				if found {
+				if found || status == nil {
 					return
 				}
 				for _, w := range status.Warnings {
@@ -320,7 +320,7 @@ signer:
 
 			var found bool
 			handleStatus := func(status *client.SolveStatus) {
-				if found {
+				if found || status == nil {
 					return
 				}
 				for _, w := range status.Warnings {
@@ -358,7 +358,7 @@ signer:
 
 			var found bool
 			handleStatus := func(status *client.SolveStatus) {
-				if found {
+				if found || status == nil {
 					return
 				}
 				for _, w := range status.Warnings {
@@ -498,7 +498,7 @@ signer:
 
 		var found bool
 		handleStatus := func(status *client.SolveStatus) {
-			if found {
+			if found || status == nil {
 				return
 			}
 			for _, w := range status.Warnings {
