@@ -36,7 +36,7 @@ the underlying target implementation.
 To print a list of available build targets:
 
 ```shell
-$ docker buildx build --call targets --build-arg BUILDKIT_SYNTAX=ghcr.io/project-dalec/dalec/frontend:latest - <<< "null"
+docker buildx build --call targets --build-arg BUILDKIT_SYNTAX=ghcr.io/project-dalec/dalec/frontend:latest - <<< "null"
 ```
 
 import TargetsCLIOut from './examples/targets.md'
@@ -56,7 +56,7 @@ To check the targets available for a specific spec you can just add `--call targ
 to your normal `docker build` command:
 
 ```shell
-$ docker buildx build --call targets -f ./path/to/spec .
+docker buildx build --call targets -f ./path/to/spec .
 ```
 
 If the `--target=<val>` flag is set, the list of targets will be filtered based
