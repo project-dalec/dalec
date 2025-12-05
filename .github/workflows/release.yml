@@ -33,18 +33,23 @@ jobs:
           # Remove leading "v" from tag name
           TRIMMED_REF_NAME="${REF_NAME#v}"
 
-          # Creates a comma separated list of tags
-          # - <major>.<minor>
-          # - <major>.<minor>.<patch>
-          OUTPUT_TAGS="${TRIMMED_REF_NAME%.*},${TRIMMED_REF_NAME}"
+          OUTPUT_TAGS=(
+            "type=raw,value=${TRIMMED_REF_NAME%.*}"
+            "type=raw,value=${TRIMMED_REF_NAME}"
+          )
 
           # Check if this tag is the latest release by fetching the latest release and comparing the tag to the tag being built.
           LATEST_TAG="$(gh release view --json tagName -q .tagName)"
           if [ "$REF_NAME" = "$LATEST_TAG" ]; then
-            OUTPUT_TAGS="latest,${OUTPUT_TAGS}"
+            OUTPUT_TAGS=("type=raw,value=latest" "${OUTPUT_TAGS[@]}")
           fi
 
-          echo "OUTPUT_TAGS=${OUTPUT_TAGS}" >> "$GITHUB_OUTPUT" && cat "$GITHUB_OUTPUT"
+          {
+            echo "OUTPUT_TAGS<<EOF"
+            printf '%s\n' "${OUTPUT_TAGS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
         env:
           REF_NAME: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
