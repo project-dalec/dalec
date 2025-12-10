@@ -1,6 +1,9 @@
 - source: "busybox:latest"
   dest: mirror/dockerhub/library/busybox:latest
 
+- source: "golang:1.25"
+  dest: mirror/dockerhub/library/golang:1.25
+
 - source: "golang:1.24"
   dest: mirror/dockerhub/library/golang:1.24
 
