@@ -20,8 +20,8 @@ github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPn
 github.com/bahlo/generic-list-go v0.2.0/go.mod h1:2KvAjgMlE5NNynlg/5iLrrCCZ2+5xWbdbCW3pNTGyYg=
 github.com/bazelbuild/remote-apis v0.0.0-20250915115802-824e1ba94b2d h1:mlVjLozGhoPmqSOvSCtCQmWPqRD0GeYFp/fmZ5h819Y=
 github.com/bazelbuild/remote-apis v0.0.0-20250915115802-824e1ba94b2d/go.mod h1:/xo1pn3QkEL2JXrLeK30jvjVR/zXM9H8EqcWb/l5/A0=
-github.com/bool64/dev v0.2.28 h1:6ayDfrB/jnNr2iQAZHI+uT3Qi6rErSbJYQs1y8rSrwM=
-github.com/bool64/dev v0.2.28/go.mod h1:iJbh1y/HkunEPhgebWRNcs8wfGq7sjvJ6W5iabL8ACg=
+github.com/bool64/dev v0.2.43 h1:yQ7qiZVef6WtCl2vDYU0Y+qSq+0aBrQzY8KXkklk9cQ=
+github.com/bool64/dev v0.2.43/go.mod h1:iJbh1y/HkunEPhgebWRNcs8wfGq7sjvJ6W5iabL8ACg=
 github.com/buger/jsonparser v1.1.1 h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMUs=
 github.com/buger/jsonparser v1.1.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cavaliergopher/rpm v1.3.0 h1:UHX46sasX8MesUXXQ+UbkFLUX4eUWTlEcX8jcnRBIgI=
@@ -186,8 +186,8 @@ github.com/tonistiigi/vt100 v0.0.0-20240514184818-90bafcd6abab h1:H6aJ0yKQ0gF49Q
 github.com/tonistiigi/vt100 v0.0.0-20240514184818-90bafcd6abab/go.mod h1:ulncasL3N9uLrVann0m+CDlJKWsIAP34MPcOJF6VRvc=
 github.com/vbatts/tar-split v0.12.1 h1:CqKoORW7BUWBe7UL/iqTVvkTBOF8UvOMKOIZykxnnbo=
 github.com/vbatts/tar-split v0.12.1/go.mod h1:eF6B6i6ftWQcDqEn3/iGFRFRo8cBIMSJVOpnNdfTMFA=
-github.com/vearutop/dynhist-go v1.2.3 h1:EIMWszSDm6b7zmqySgx8zW2qNctE3IXUJggGlDFwJBE=
-github.com/vearutop/dynhist-go v1.2.3/go.mod h1:liiiYiwAi8ixC3DbkxooEhASTF6ysJSXy+piCrBtxEg=
+github.com/vearutop/dynhist-go v1.2.4 h1:EVGgvW9+F7fQb4ZyyZV8znqo4JiWx6FyvVFmGrfZKzM=
+github.com/vearutop/dynhist-go v1.2.4/go.mod h1:pZcCNVJxPDn7+Q/UYVGOcyrYupnh9tWNmr5uKwyHYNg=
 github.com/wk8/go-ordered-map/v2 v2.1.8 h1:5h/BUHu93oj4gIdvHHHGsScSTMijfx5PeYkE/fJgbpc=
 github.com/wk8/go-ordered-map/v2 v2.1.8/go.mod h1:5nJHM5DyteebpVlHnWMV0rPz6Zp7+xBAnxjb1X5vnTw=
 github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 h1:nIPpBwaJSVYIxUFsDv3M8ofmx9yWTog9BfvIu0q41lo=
