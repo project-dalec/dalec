@@ -112,7 +112,7 @@ func TestDo(t *testing.T) {
 **Skipped:** 1 &nbsp;&nbsp;&nbsp;&nbsp; **Failed:** 2 &nbsp;&nbsp;&nbsp;&nbsp; **Total:** 5 &nbsp;&nbsp;&nbsp;&nbsp; **Elapsed:** 0.250s
 
 ` + "```" + `
-[ min  max] cnt total%  sum (5 events)
+[ min  max] cnt total%  sum (total count: 5)
 [0.00 0.00] 4 80.00% 0.00 ................................................................................
 [0.25 0.25] 1 20.00% 0.25 ....................
 ` + "```" + `
