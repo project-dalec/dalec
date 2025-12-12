@@ -172,28 +172,13 @@ func addPaths(paths []string, opts ...llb.ConstraintsOpt) llb.StateOption {
 	}
 }
 
-func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State, targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error) {
-	def, err := ctr.Marshal(ctx, opts...)
-	if err != nil {
-		return nil, err
+func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		opts = append(opts, frontend.IgnoreCache(client))
+		withTestDeps := cfg.InstallTestDeps(sOpt, targetKey, spec, opts...)
+		runTests := frontend.RunTests(ctx, client, sOpt, spec, withTestDeps, targetKey)
+		return in.With(runTests)
 	}
-
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
-		Definition: def.ToPB(),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	ref, err := res.SingleRef()
-	if err != nil {
-		return nil, err
-	}
-
-	opts = append(opts, frontend.IgnoreCache(client))
-	withTestDeps := cfg.InstallTestDeps(sOpt, targetKey, spec, opts...)
-	err = frontend.RunTests(ctx, client, spec, ref, withTestDeps, targetKey, sOpt.TargetPlatform)
-	return ref, err
 }
 
 func (cfg *Config) HandleSourcePkg(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {

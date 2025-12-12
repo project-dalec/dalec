@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/test/testenv"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/test/testenv"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
 )
