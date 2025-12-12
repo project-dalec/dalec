@@ -606,6 +606,31 @@ func (g *SourceGenerator) Validate() error {
 		// An empty generator is invalid
 		return fmt.Errorf("no generator type specified")
 	}
+	if err := g.Gomod.validate(); err != nil {
+		return errors.Wrap(err, "gomod generator")
+	}
+
+	return nil
+}
+
+func (g *GeneratorGomod) validate() error {
+	// Validate gomod edits if present
+	if g != nil && g.Edits != nil {
+		var errs []error
+		for i, req := range g.Edits.Require {
+			if _, err := req.goModEditArg(); err != nil {
+				errs = append(errs, errors.Wrapf(err, "require[%d]", i))
+			}
+		}
+		for i, rep := range g.Edits.Replace {
+			if _, err := rep.goModEditArg(); err != nil {
+				errs = append(errs, errors.Wrapf(err, "replace[%d]", i))
+			}
+		}
+		if err := goerrors.Join(errs...); err != nil {
+			return errors.Wrap(err, "gomod edits")
+		}
+	}
 	return nil
 }
 

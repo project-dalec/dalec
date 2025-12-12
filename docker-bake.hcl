@@ -281,4 +281,3 @@ target "worker" {
         "dalec_frontend" = "target:frontend"
     }
 }
-
