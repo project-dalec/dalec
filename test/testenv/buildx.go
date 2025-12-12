@@ -384,6 +384,18 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 		f(&so)
 	}
 
+	buildComplete := false
+
+	t.Cleanup(func() {
+		if t.Failed() && !buildComplete {
+			select {
+			case <-ch:
+			default:
+				close(ch)
+			}
+		}
+	})
+
 	_, err = c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, error) {
 		gwc = &clientForceDalecWithInput{gwc}
 
@@ -393,6 +405,8 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 		}
 		b.mu.Unlock()
 		f(ctx, gwc)
+		buildComplete = true
+
 		return gwclient.NewResult(), nil
 	}, ch)
 
