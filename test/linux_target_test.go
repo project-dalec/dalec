@@ -17,6 +17,7 @@ import (
 
 	"github.com/cavaliergopher/rpm"
 	"github.com/containerd/platforms"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
@@ -27,6 +28,7 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -3089,44 +3091,52 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			},
 		}
 
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			checkErr := func(err error) {
+		expectedErrs := map[string]bool{
+			(&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error():                           false,
+			(&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}).Error():                                             false,
+			(&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "ModeFile", Actual: "ModeDir"}).Error():                                                        false,
+			(&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}).Error(): false,
+			(&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}).Error(): false,
+			(&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error():                               false,
+			(&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}).Error():               false,
+			"step did not complete successfully: exit code: 42": false,
+			"stdout not hello": false,
+			"stderr not hello": false,
+		}
 
-				v := (&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
-				assert.ErrorContains(t, err, v)
-
-				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}).Error()
-				assert.ErrorContains(t, err, v)
-
-				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "ModeFile", Actual: "ModeDir"}).Error()
-				assert.ErrorContains(t, err, v)
-
-				v = (&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
-				assert.ErrorContains(t, err, v)
-
-				v = (&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
-				assert.ErrorContains(t, err, v)
-
-				v = (&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
-				assert.ErrorContains(t, err, v)
-
-				v = (&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}).Error()
-				assert.ErrorContains(t, err, v)
-
-				assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
-				assert.ErrorContains(t, err, "stdout not hello")
-				assert.ErrorContains(t, err, "stderr not hello")
-
+		solveStatusFn := testenv.WithSolveStatusFn(func(status *client.SolveStatus) {
+			if status == nil {
+				return
 			}
+			for _, v := range status.Logs {
+				t.Log(string(v.Data))
 
+				_, ok := expectedErrs[string(v.Data)]
+				if ok {
+					expectedErrs[string(v.Data)] = true
+				}
+			}
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			_, err := client.Solve(ctx, sr)
-			checkErr(err)
+			assert.Check(t, err != nil)
+		}, solveStatusFn)
 
-			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
-			_, err = client.Solve(ctx, sr)
-			checkErr(err)
-		})
+		for errStr, found := range expectedErrs {
+			assert.Check(t, found, "expected error not found in logs: %s", errStr)
+			expectedErrs[errStr] = false
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			_, err := client.Solve(ctx, sr)
+			assert.Check(t, err != nil)
+		}, solveStatusFn)
+		for errStr, found := range expectedErrs {
+			assert.Check(t, found, "expected error not found in logs: %s", errStr)
+		}
 	})
 
 	t.Run("positive test", func(t *testing.T) {
