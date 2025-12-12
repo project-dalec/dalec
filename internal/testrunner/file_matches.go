@@ -53,21 +53,21 @@ func (c checkFileMatchesCommand) Cmd(args []string) {
 	if len(args) != 2 {
 		fmt.Fprintln(os.Stderr, "expected 2 arguments: <file-path> <regexp pattern>")
 		fmt.Fprintln(os.Stderr, "args:", args)
-		os.Exit(1)
+		exit(1)
 	}
 
 	pattern := args[1]
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error compiling regex pattern", pattern, err)
-		os.Exit(2)
+		exit(2)
 	}
 
 	p := args[0]
 	f, err := mmapFile(p)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error opening file:", err)
-		os.Exit(2)
+		exit(2)
 	}
 	defer f.Close()
 
@@ -83,5 +83,5 @@ func (c checkFileMatchesCommand) Cmd(args []string) {
 		Actual:   previewString(dt),
 	}
 	fmt.Fprintln(os.Stderr, err)
-	os.Exit(3)
+	exit(3)
 }

@@ -43,14 +43,14 @@ func (c checkFileIsDirCommand) location(st llb.State, checker *dalec.FileCheckOu
 func (c checkFileIsDirCommand) Cmd(args []string) {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: "+string(c)+" <file>")
-		os.Exit(1)
+		exit(1)
 	}
 
 	p := args[0]
 	fi, err := fileInfo(p, false)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error checking file existence:", err)
-		os.Exit(2)
+		exit(2)
 	}
 
 	if fi.IsDir() {
@@ -64,5 +64,5 @@ func (c checkFileIsDirCommand) Cmd(args []string) {
 		Actual:   "is_dir=false",
 	}
 	fmt.Fprintln(os.Stderr, err)
-	os.Exit(2)
+	exit(2)
 }

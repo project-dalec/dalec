@@ -42,14 +42,14 @@ func (c checkFileEndsWithCommand) location(st llb.State, checker *dalec.CheckOut
 func (c checkFileEndsWithCommand) Cmd(args []string) {
 	if len(args) != 2 {
 		fmt.Fprintln(os.Stderr, "expected 2 arguments: <file-path> <ends-with-string>")
-		os.Exit(1)
+		exit(1)
 	}
 
 	p := args[0]
 	f, err := mmapFile(p)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		exit(2)
 	}
 	defer f.Close()
 
@@ -66,5 +66,5 @@ func (c checkFileEndsWithCommand) Cmd(args []string) {
 		Actual:   previewString(dt),
 	}
 	fmt.Fprintln(os.Stderr, err)
-	os.Exit(3)
+	exit(3)
 }

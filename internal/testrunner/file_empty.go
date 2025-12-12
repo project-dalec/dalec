@@ -40,14 +40,14 @@ func (c checkFileEmptyCommand) location(st llb.State, checker *dalec.CheckOutput
 func (c checkFileEmptyCommand) Cmd(args []string) {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "expected 1 argument: <file-path>")
-		os.Exit(1)
+		exit(1)
 	}
 
 	p := args[0]
 	stat, err := os.Stat(p)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		exit(2)
 	}
 
 	if stat.Size() == 0 {
@@ -70,5 +70,5 @@ func (c checkFileEmptyCommand) Cmd(args []string) {
 	}
 
 	fmt.Fprintln(os.Stderr, err)
-	os.Exit(3)
+	exit(3)
 }

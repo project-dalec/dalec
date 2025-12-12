@@ -49,7 +49,7 @@ func (c checkFilePermsCommand) Cmd(args []string) {
 	if flags.NArg() != 2 {
 		fmt.Fprintln(os.Stderr, "expected 2 arguments: <file-path> <permissions in octal>")
 		fmt.Fprintln(os.Stderr, "args:", args)
-		os.Exit(1)
+		exit(1)
 		return
 	}
 
@@ -57,12 +57,12 @@ func (c checkFilePermsCommand) Cmd(args []string) {
 	perms, err := strconv.ParseUint(flags.Arg(1), 8, 32)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error parsing perms:", err)
-		os.Exit(1)
+		exit(1)
 	}
 
 	fi, err := fileInfo(p, false)
 	if err != nil {
-		os.Exit(1)
+		exit(1)
 	}
 
 	expected := fs.FileMode(perms)
@@ -79,5 +79,5 @@ func (c checkFilePermsCommand) Cmd(args []string) {
 		Actual:   actual.String(),
 	}
 	fmt.Fprintln(os.Stderr, err)
-	os.Exit(2)
+	exit(2)
 }

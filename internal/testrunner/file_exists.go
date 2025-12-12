@@ -51,7 +51,7 @@ func (c checkFileExistsCommand) Cmd(args []string) {
 
 	if flags.NArg() != 1 {
 		flags.Usage()
-		os.Exit(1)
+		exit(1)
 	}
 
 	not := *notFl
@@ -60,11 +60,16 @@ func (c checkFileExistsCommand) Cmd(args []string) {
 	_, err := fileInfo(p, *noFollowFl)
 	if err != nil && !os.IsNotExist(err) {
 		fmt.Fprintln(os.Stderr, "error checking file existence:", err)
+		exit(2)
+	}
+
+	isNotExists := os.IsNotExist(err)
+	if err != nil && !isNotExists {
+		fmt.Fprintln(os.Stderr, "error checking file existence:", err)
 		os.Exit(2)
 	}
 
-	notExists := os.IsNotExist(err)
-	if notExists == not {
+	if not == isNotExists {
 		return
 	}
 
@@ -72,10 +77,10 @@ func (c checkFileExistsCommand) Cmd(args []string) {
 		Kind:     c.Kind(),
 		Path:     p,
 		Expected: "exists=" + strconv.FormatBool(!not),
-		Actual:   "exists=" + strconv.FormatBool(notExists),
+		Actual:   "exists=" + strconv.FormatBool(!isNotExists),
 	}
 	fmt.Fprintln(os.Stderr, err)
-	os.Exit(2)
+	exit(2)
 }
 
 func fileInfo(p string, noFollow bool) (fs.FileInfo, error) {

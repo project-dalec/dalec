@@ -29,7 +29,7 @@ func (tr *Runner) Cmd(ctx context.Context, args []string) {
 
 	if flags.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "no test-runner command provided")
-		os.Exit(1)
+		exit(1)
 	}
 
 	cmd := flags.Arg(0)
@@ -59,7 +59,7 @@ func (tr *Runner) Cmd(ctx context.Context, args []string) {
 		trueCmd.Cmd(args)
 	default:
 		fmt.Fprintln(os.Stderr, testRunnerCmdName+":", "Unknown command:", cmd)
-		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
+		exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
 	}
 }
 

@@ -54,7 +54,7 @@ func (c stepRunnerCommand) stepJSONPath() string {
 func (c stepRunnerCommand) Cmd(ctx context.Context, args []string) {
 	if len(args) != 0 {
 		fmt.Fprintln(os.Stderr, "usage: "+string(c))
-		os.Exit(1)
+		exit(1)
 	}
 
 	dt, err := os.ReadFile(c.stepJSONPath())
@@ -73,10 +73,10 @@ func (c stepRunnerCommand) Cmd(ctx context.Context, args []string) {
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			os.Exit(exitErr.ExitCode())
+			exit(exitErr.ExitCode())
 		}
 		fmt.Fprintln(os.Stderr, "error running test step:", err)
-		os.Exit(2)
+		exit(2)
 	}
 
 }
