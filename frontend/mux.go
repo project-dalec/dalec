@@ -205,14 +205,10 @@ func handleDefaultPlatform() (*gwclient.Result, error) {
 }
 
 func handleJSONSchema() (*gwclient.Result, error) {
-	schemaJSON, err := dalec.GenerateJSONSchema()
-	if err != nil {
-		return nil, err
-	}
-
 	res := gwclient.NewResult()
-	res.AddMeta("result.json", schemaJSON)
-	res.AddMeta("result.txt", schemaJSON)
+	jsonSchema := dalec.GetJSONSchema()
+	res.AddMeta("result.json", jsonSchema)
+	res.AddMeta("result.txt", jsonSchema)
 
 	return res, nil
 }
