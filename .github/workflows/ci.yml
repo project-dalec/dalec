@@ -136,7 +136,7 @@ jobs:
           set -e
           docker run -d --net=host --restart=always --name jaeger -e COLLECTOR_OTLP_ENABLED=true jaegertracing/all-in-one:1.62.0
           docker0_ip="$(ip -f inet addr show docker0 | grep -Po 'inet \K[\d.]+')"
-          echo "OTEL_EXPORTER_OTLP_ENDPOINT=ghcr.io/project-dalec/dalec/mirror/dockerhub/jaegertracing/all-in-one:1.62.0" >> "${GITHUB_ENV}"
+          echo "OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318" >> "${GITHUB_ENV}"
           echo "OTEL_SERVICE_NAME=dalec-integration-test" >> "${GITHUB_ENV}"
 
           tmp="$(mktemp)"
