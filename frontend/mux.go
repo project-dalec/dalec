@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/project-dalec/dalec"
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
@@ -20,6 +19,7 @@ import (
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/util/bklog"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/exp/maps"
 )
@@ -30,6 +30,7 @@ const (
 	// KeyDefaultPlatform is the subreuqest id for returning the default platform
 	// for the builder.
 	KeyDefaultPlatform = "frontend.dalec.defaultPlatform"
+	KeyJSONSchema      = "frontend.dalec.schema"
 )
 
 // BuildMux implements a buildkit BuildFunc via its Handle method. With a
@@ -97,7 +98,12 @@ const keyTarget = "target"
 
 // describe returns the subrequests that are supported
 func (m *BuildMux) describe() (*gwclient.Result, error) {
-	subs := []subrequests.Request{bktargets.SubrequestsTargetsDefinition, subrequests.SubrequestsDescribeDefinition}
+	subs := []subrequests.Request{bktargets.SubrequestsTargetsDefinition, subrequests.SubrequestsDescribeDefinition, {
+		Name:        KeyJSONSchema,
+		Version:     "1.0.0",
+		Type:        "rpc",
+		Description: "Returns the JSON schema for Dalec specs",
+	}}
 
 	dt, err := json.Marshal(subs)
 	if err != nil {
@@ -134,6 +140,9 @@ func (m *BuildMux) handleSubrequest(ctx context.Context, client gwclient.Client,
 		return res, true, err
 	case KeyDefaultPlatform:
 		res, err := handleDefaultPlatform()
+		return res, true, err
+	case KeyJSONSchema:
+		res, err := handleJSONSchema()
 		return res, true, err
 	default:
 		return nil, false, errors.Errorf("unsupported subrequest %q", opts[requestIDKey])
@@ -191,6 +200,19 @@ func handleDefaultPlatform() (*gwclient.Result, error) {
 
 	res.AddMeta("result.json", dt)
 	res.AddMeta("result.txt", []byte(platforms.Format(p)))
+
+	return res, nil
+}
+
+func handleJSONSchema() (*gwclient.Result, error) {
+	schemaJSON, err := dalec.GenerateJSONSchema()
+	if err != nil {
+		return nil, err
+	}
+
+	res := gwclient.NewResult()
+	res.AddMeta("result.json", schemaJSON)
+	res.AddMeta("result.txt", schemaJSON)
 
 	return res, nil
 }
