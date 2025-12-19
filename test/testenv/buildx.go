@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net"
 	"os"
 	"os/exec"
@@ -314,16 +315,107 @@ func WithHostNetworking(trc *TestRunnerConfig) {
 	})
 }
 
-// This function just puts the opts before the function argument, which makes
-// it harder to miss what's happening with the opts for those unfamiliar with
-// the pattern.
-func (b *BuildxEnv) RunTestOptsFirst(ctx context.Context, t *testing.T, opts []TestRunnerOpt, f TestFunc) {
-	b.RunTest(ctx, t, f, opts...)
-}
-
 func WithSocketProxies(proxies ...socketprovider.ProxyConfig) TestRunnerOpt {
 	return func(cfg *TestRunnerConfig) {
 		cfg.SocketProxies = append(cfg.SocketProxies, proxies...)
+	}
+}
+
+func setSolveOpts(cfg TestRunnerConfig, so *client.SolveOpt) error {
+	if err := withProjectRoot(so); err != nil {
+		return err
+	}
+
+	withResolveLocal(so)
+	err := withSocketProxies(cfg.SocketProxies)(so)
+	if err != nil {
+		return err
+	}
+	withDockerAuth(so)
+
+	err = withSourcePolicy(so)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range cfg.SolveOptFns {
+		f(so)
+	}
+
+	return nil
+}
+
+func (b *BuildxEnv) runTestWithStatus(ctx context.Context, t *testing.T, f TestFunc, opts ...TestRunnerOpt) iter.Seq2[*client.SolveStatus, error] {
+	var cfg TestRunnerConfig
+
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	ch := make(chan *client.SolveStatus)
+	errCh := make(chan error, 1)
+
+	c, err := b.Buildkit(ctx)
+	assert.NilError(t, err)
+
+	var so client.SolveOpt
+	err = setSolveOpts(cfg, &so)
+	assert.NilError(t, err)
+
+	ctx, cancel := context.WithCancel(ctx)
+
+	go func() {
+		_, err := c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (_ *gwclient.Result, retErr error) {
+			defer func() {
+				if r := recover(); r != nil {
+					retErr = fmt.Errorf("panic in test build function: %v", r)
+				}
+			}()
+
+			gwc = &clientForceDalecWithInput{gwc}
+			b.mu.Lock()
+			for id, f := range b.refs {
+				gwc = wrapWithInput(gwc, id, f)
+			}
+			b.mu.Unlock()
+			f(ctx, gwc)
+			return gwclient.NewResult(), nil
+		}, ch)
+
+		if err != nil {
+			errCh <- err
+			return
+		}
+	}()
+
+	return func(yield func(*client.SolveStatus, error) bool) {
+		defer cancel()
+
+		for {
+			select {
+			case <-ctx.Done():
+				yield(nil, ctx.Err())
+				return
+			case err := <-errCh:
+				if err != nil {
+					if !yield(nil, err) {
+						return
+					}
+				}
+				// there may still be statuses to read, so continue
+			case status, ok := <-ch:
+				if status != nil {
+					if !yield(status, nil) {
+						return
+					}
+					continue
+				}
+
+				if !ok {
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -334,70 +426,32 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 		o(&cfg)
 	}
 
-	c, err := b.Buildkit(ctx)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
+	statusFn, cancelOutput := outputStreamStatusFn(ctx, t)
+	defer cancelOutput()
 
-	var (
-		ch chan *client.SolveStatus
-	)
+	ch := make(chan *client.SolveStatus)
+	go fowardToSolveStatusFn(ctx, ch, statusFn, cfg.SolveStatusFn)
 
-	if cfg.SolveStatusFn != nil {
-		ch = make(chan *client.SolveStatus, 1)
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case msg, ok := <-ch:
-					cfg.SolveStatusFn(msg)
-					if !ok {
-						return
-					}
-				}
-			}
-		}()
-		t.Cleanup(func() {
-			// Make sure message processing is done before the test ends
-			select {
-			case <-ctx.Done():
-			case <-done:
-			}
-		})
-	} else {
-		ch = displaySolveStatus(ctx, t)
-	}
+	defer close(ch)
 
-	var so client.SolveOpt
-	withProjectRoot(t, &so)
-	withResolveLocal(&so)
-	withSocketProxies(t, cfg.SocketProxies)(&so)
-	withDockerAuth(&so)
-
-	err = withSourcePolicy(&so)
-	assert.NilError(t, err)
-
-	for _, f := range cfg.SolveOptFns {
-		f(&so)
-	}
-
-	_, err = c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, error) {
-		gwc = &clientForceDalecWithInput{gwc}
-
-		b.mu.Lock()
-		for id, f := range b.refs {
-			gwc = wrapWithInput(gwc, id, f)
+	for status, err := range b.runTestWithStatus(ctx, t, f, opts...) {
+		if err != nil {
+			t.Error(err)
+			// drain the status channel
+			// the range itself will stop once everything is done
+			continue
 		}
-		b.mu.Unlock()
-		f(ctx, gwc)
-		return gwclient.NewResult(), nil
-	}, ch)
 
-	if err != nil {
-		t.Fatal(err)
+		if status == nil {
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+			return
+		case ch <- status:
+		}
 	}
 }
 
@@ -515,16 +569,18 @@ func withSourcePolicy(so *client.SolveOpt) error {
 	return nil
 }
 
-func withSocketProxies(t *testing.T, proxies []socketprovider.ProxyConfig) func(*client.SolveOpt) {
-	return func(so *client.SolveOpt) {
-		t.Helper()
+func withSocketProxies(proxies []socketprovider.ProxyConfig) func(*client.SolveOpt) error {
+	return func(so *client.SolveOpt) error {
 		if len(proxies) == 0 {
-			return
+			return nil
 		}
 
 		handler, err := socketprovider.NewProxyHandler(proxies)
-		assert.NilError(t, err)
+		if err != nil {
+			return err
+		}
 		so.Session = append(so.Session, handler)
+		return nil
 	}
 }
 

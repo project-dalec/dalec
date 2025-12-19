@@ -18,7 +18,6 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/identity"
 	"github.com/moby/buildkit/solver/pb"
-	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -176,6 +175,46 @@ var logBufferPool = &sync.Pool{New: func() any {
 	return bytes.NewBuffer(nil)
 }}
 
+func outputStreamStatusFn(ctx context.Context, t *testing.T) (func(*client.SolveStatus), func()) {
+	var (
+		warnings []*client.VertexWarning
+		errOnce  sync.Once
+
+		done = make(chan struct{})
+		w    = getBuildOutputStream(ctx, t, done)
+	)
+
+	fn := func(msg *client.SolveStatus) {
+		warnings = append(warnings, msg.Warnings...)
+		for _, l := range msg.Logs {
+			if _, err := w.Write(l.Data); err != nil {
+				errOnce.Do(func() {
+					// Don't spam the logs with multiple errors
+					t.Logf("error writing log data: %v", err)
+				})
+			}
+		}
+	}
+
+	return fn, func() {
+		for _, v := range warnings {
+			t.Logf("WARNING: %s", string(v.Short))
+		}
+		close(done)
+	}
+}
+
+func multiStatusFunc(fns ...func(*client.SolveStatus)) func(*client.SolveStatus) {
+	return func(msg *client.SolveStatus) {
+		for _, fn := range fns {
+			if fn == nil {
+				continue
+			}
+			fn(msg)
+		}
+	}
+}
+
 func getBuildOutputStream(ctx context.Context, t *testing.T, done <-chan struct{}) io.Writer {
 	t.Helper()
 
@@ -226,40 +265,34 @@ func getBuildOutputStream(ctx context.Context, t *testing.T, done <-chan struct{
 	return f
 }
 
-func displaySolveStatus(ctx context.Context, t *testing.T) chan *client.SolveStatus {
-	ch := make(chan *client.SolveStatus)
-	done := make(chan struct{})
-
-	output := getBuildOutputStream(ctx, t, done)
-	display, err := progressui.NewDisplay(output, progressui.AutoMode, progressui.WithPhase(t.Name()))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	go func() {
-		defer close(done)
-
-		_, err := display.UpdateFrom(ctx, ch)
-		if err != nil {
-			t.Log(err)
+func fowardToSolveStatusFn(ctx context.Context, ch <-chan *client.SolveStatus, fns ...func(*client.SolveStatus)) {
+	f := multiStatusFunc(fns...)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if msg != nil {
+				f(msg)
+				continue
+			}
+			if !ok {
+				return
+			}
 		}
-	}()
-
-	return ch
+	}
 }
 
 // withProjectRoot adds the current project root as the build context for the solve request.
-func withProjectRoot(t *testing.T, opts *client.SolveOpt) {
-	t.Helper()
-
+func withProjectRoot(opts *client.SolveOpt) error {
 	cwd, err := os.Getwd()
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
 	projectRoot, err := lookupProjectRoot(cwd)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
 	if opts.LocalDirs == nil {
@@ -267,6 +300,7 @@ func withProjectRoot(t *testing.T, opts *client.SolveOpt) {
 	}
 	opts.LocalDirs[dockerui.DefaultLocalNameContext] = projectRoot
 	opts.LocalDirs[dockerui.DefaultLocalNameDockerfile] = projectRoot
+	return nil
 }
 
 // lookupProjectRoot looks up the project root from the current working directory.

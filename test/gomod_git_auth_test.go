@@ -14,13 +14,13 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/test/cmd/git_repo/passwd"
 	gitservices "github.com/project-dalec/dalec/test/git_services"
 	"github.com/project-dalec/dalec/test/testenv"
-	"github.com/moby/buildkit/client/llb"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -109,7 +109,8 @@ go {{ .ModFileGoVersion }}
 
 	t.Run("HTTP", func(t *testing.T) {
 		t.Parallel()
-		netHostBuildxEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
+
+		opts := []testenv.TestRunnerOpt{
 			// This gives buildkit access to a secret with the name
 			// `secretName` and the value `passwd.Password`. On the worker that
 			// fetches the gomod dependencies, a file will be mounted at the
@@ -120,7 +121,9 @@ go {{ .ModFileGoVersion }}
 			// requests. It is necessary but not sufficient for the buildx
 			// instance to have host networking enabled.
 			testenv.WithHostNetworking,
-		}, func(ctx context.Context, client gwclient.Client) {
+		}
+
+		netHostBuildxEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
 			// This MUST be called at the  start of each test. Because we
 			// persist the go mod cache between runs, the git tag of the
 			// private go module needs to be unique. Within a single run of the
@@ -167,7 +170,7 @@ go {{ .ModFileGoVersion }}
 
 			filename := calculateFilename(ctx, t, attr, res)
 			checkFile(ctx, t, filename, res, []byte("bar\n"))
-		})
+		}, opts...)
 	})
 
 	t.Run("SSH", func(t *testing.T) {
@@ -182,12 +185,13 @@ go {{ .ModFileGoVersion }}
 		pubkey, privkey := generateKeyPair(t)
 		agentErrChan := startSSHAgent(t, privkey, sockaddr)
 
-		netHostBuildxEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
+		opts := []testenv.TestRunnerOpt{
 			// This tells buildkit to forward the SSH Agent socket, giving the
 			// gomod generator worker access to the private key
 			testenv.WithSSHSocket(sshID, sockaddr),
 			testenv.WithHostNetworking,
-		}, func(ctx context.Context, client gwclient.Client) {
+		}
+		netHostBuildxEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
 			// This MUST be called at the  start of each test. Because we
 			// persist the go mod cache between runs, the git tag of the
 			// private go module needs to be unique. Within a single run of the
@@ -245,7 +249,7 @@ go {{ .ModFileGoVersion }}
 
 			filename := calculateFilename(ctx, t, attr, res)
 			checkFile(ctx, t, filename, res, []byte("bar\n"))
-		})
+		}, opts...)
 	})
 }
 

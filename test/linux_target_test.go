@@ -3171,10 +3171,12 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 
 		runTest := func(target string) func(t *testing.T) {
 			return func(t *testing.T) {
+				t.Parallel()
 				ctx := startTestSpan(ctx, t)
 
 				for _, tc := range expectedErrs {
 					t.Run(tc.test.Name, func(t *testing.T) {
+						t.Parallel()
 						ctx := startTestSpan(ctx, t)
 
 						f := newLogFile(t)
@@ -3226,9 +3228,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 
 						if !bytes.Contains(dt, []byte(tc.err.Error())) {
 							t.Errorf("expected error not found in logs")
-							t.Logf("Expected error:\n\t%v", err)
-							t.Log()
-							t.Log("---- Solve logs ----\n" + string(dt))
+							t.Logf("Expected error:\n\t%v", tc.err)
 						}
 					})
 				}

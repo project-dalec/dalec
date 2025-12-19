@@ -143,6 +143,12 @@ jobs:
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
       - name: Setup source policy
         uses: ./.github/actions/setup-source-policy
+      - name: Get docker info
+        run: |
+          docker info
+          docker version
+          docker buildx version
+          containerd --version
       - name: Run integration tests
         run: |
           set -ex
