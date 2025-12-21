@@ -3199,7 +3199,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 						spec.Tests = []*dalec.TestSpec{tc.test}
 
 						testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-							sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target))
+							sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target), withIgnoreCache(frontend.IgnoreCacheTestsKey))
 							_, err := client.Solve(ctx, sr)
 							assert.Assert(t, err != nil)
 
@@ -3242,6 +3242,10 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 	t.Run("positive test", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
+
+		equalCheck := func(v string) dalec.CheckOutput {
+			return dalec.CheckOutput{Equals: v}
+		}
 
 		spec := &dalec.Spec{
 			Name:        "test-package-tests",
@@ -3293,6 +3297,24 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 						"/some_symlink1": {LinkTarget: "/usr/share/test-file"},
 						"/some_symlink2": {LinkTarget: "/usr/share/test-file"},
 						"/some_symlink3": {LinkTarget: "/not-a-real-file", NoFollow: true},
+					},
+				},
+				{
+					Name: "Test multiple commands with no fs changes",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'echo command one'"},
+						{Command: "/bin/sh -ec 'echo command two'"},
+						{Command: "/bin/sh -ec 'echo command three'"},
+						{Command: "/bin/sh -ec 'echo command four'"},
+					},
+				},
+				{
+					Name: "Test multiple commands with stdio checks",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'echo command one'", Stdout: equalCheck("command one\n")},
+						{Command: "/bin/sh -ec 'echo command two'"},
+						{Command: "/bin/sh -ec 'echo command three'", Stdout: equalCheck("command three\n")},
+						{Command: "/bin/sh -ec 'echo command four'"},
 					},
 				},
 				{
@@ -3370,7 +3392,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			t.Parallel()
 			ctx = startTestSpan(baseCtx, t)
 			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withIgnoreCache(frontend.IgnoreCacheTestsKey))
 				res := solveT(ctx, t, client, sr)
 				_, err := res.SingleRef()
 				assert.NilError(t, err)
@@ -3381,7 +3403,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			t.Parallel()
 			ctx := startTestSpan(baseCtx, t)
 			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withIgnoreCache(frontend.IgnoreCacheTestsKey))
 				res := solveT(ctx, t, client, sr)
 				_, err := res.SingleRef()
 				assert.NilError(t, err)

@@ -5,11 +5,14 @@ import (
 	"strconv"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/internal/testrunner"
 )
+
+const IgnoreCacheTestsKey = "dalec.tests"
 
 // RunTests runs the tests defined in the spec against the given target container.
 func RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, withTestDeps llb.StateOption, target string, opts ...llb.ConstraintsOpt) llb.StateOption {
@@ -23,6 +26,15 @@ func RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts
 				Warn(ctx, client, llb.Scratch(), "Tests skipped due to build-arg DALEC_SKIP_TESTS="+skipVar)
 				return in
 			}
+		}
+
+		dc, err := dockerui.NewClient(client)
+		if err != nil {
+			return dalec.ErrorState(in, errors.Wrap(err, "failed to create docker client for test runner"))
+		}
+
+		if dc.IsNoCache(IgnoreCacheTestsKey) {
+			opts = append(opts, llb.IgnoreCache)
 		}
 
 		tests := spec.Tests

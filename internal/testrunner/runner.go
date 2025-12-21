@@ -162,17 +162,41 @@ func asConstraints(opts ...ValidationOpt) llb.ConstraintsOpt {
 	})
 }
 
-// For each llb.StateOption, set the state option on the original state
-// Example:
-// origState:
-// |-apply(opt) -> state1
-// |-apply(opt) -> state2
-// |-apply(opt) -> state3
+// mergeStateOptions merges multiple llb.StateOptions into a single llb.StateOption.
 //
-// In the above example, each of the new states (state1,state2,state3) are direct decendants
+// Each option is applied independently to the same input state.
+// Conceptually:
+//
+//  1. Start from origState
+//  2. For each option:
+//     - create a temporary branch: diff(origState, stateN)
+//  3. Merge all resulting branches back together
+//
+// No option sees the effects of any other option.
+//
+// Example:
+//
+//	         input
+//	           |
+//	   +-------+-------+
+//	   |       |       |
+//	apply    apply   apply
+//	 opt1     opt2    opt3
+//	   |       |       |
+//	 diff1  diff2  diff3
+//	   |       |       |
+//	   +-------+-------+
+//	           |
+//	merge(input, diff1, diff2, diff3)
+//	           |
+//	         output
+//
+// All intermediate states (state1, state2, state3) are direct descendants
 // of origState.
-// If you are expecting states to apply in order (origState -> state1 -> state2 -> state3),
-// this is not the function you are looking for, see [withOptions] instead.
+//
+// If you expect options to apply sequentially
+// (origState -> state1 -> state2 -> state3),
+// This is NOT the function you want.
 func mergeStateOptions(stateOpts []llb.StateOption, opts ...ValidationOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
 		if len(stateOpts) == 0 {
@@ -185,22 +209,12 @@ func mergeStateOptions(stateOpts []llb.StateOption, opts ...ValidationOpt) llb.S
 		}
 
 		states := make([]llb.State, 0, len(opts))
+		states = append(states, in)
 		for _, o := range stateOpts {
 			states = append(states, in.With(o))
 		}
+
 		return dalec.MergeAtPath(in, states, "/", asConstraints(opts...))
-	}
-}
-
-// withOptions applies multiple llb.StateOption to a state in order
-func withOptions(opts []llb.StateOption) llb.StateOption {
-	return func(in llb.State) llb.State {
-		out := in
-
-		for _, opt := range opts {
-			out = out.With(opt)
-		}
-		return out
 	}
 }
 

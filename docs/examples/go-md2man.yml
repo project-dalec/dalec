@@ -1,3 +1,4 @@
+# syntax=local/dalec/frontend:latest
 # syntax=ghcr.io/project-dalec/dalec/frontend:latest
 
 name: go-md2man
