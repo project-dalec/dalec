@@ -55,6 +55,9 @@ func main() {
 	case testrunner.CheckFilesCmdName:
 		args := flag.Args()[2:]
 		testrunner.CheckFilesCmd(args)
+	case frontend.TestErrorCmdName:
+		args := flag.Args()[2:]
+		frontend.TestErrorCmd(args)
 	default:
 		dalecMain()
 	}
