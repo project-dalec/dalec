@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/cavaliergopher/rpm"
 	"github.com/containerd/platforms"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
@@ -24,9 +26,11 @@ import (
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/moby/go-archive/compression"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -3089,44 +3093,69 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			},
 		}
 
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			checkErr := func(err error) {
+		expectedErrors := []string{
+			(&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error(),
+			(&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}).Error(),
+			(&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "ModeFile", Actual: "ModeDir"}).Error(),
+			(&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}).Error(),
+			(&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}).Error(),
+			(&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error(),
+			(&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}).Error(),
+			"step did not complete successfully: exit code: 42",
+			"stdout not hello",
+			"stderr not hello",
+		}
 
-				v := (&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
-				assert.ErrorContains(t, err, v)
+		testForTarget := func(target string) func(t *testing.T) {
+			return func(t *testing.T) {
+				t.Parallel()
 
-				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}).Error()
-				assert.ErrorContains(t, err, v)
+				dir := t.TempDir()
+				f, err := os.OpenFile(filepath.Join(dir, "out.txt"), os.O_CREATE|os.O_RDWR, 0o600)
+				assert.NilError(t, err)
+				defer f.Close()
 
-				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "ModeFile", Actual: "ModeDir"}).Error()
-				assert.ErrorContains(t, err, v)
+				consumeLogs := func(status *client.SolveStatus) {
+					if status == nil {
+						return
+					}
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
-				assert.ErrorContains(t, err, v)
+					for _, v := range status.Logs {
+						_, err := f.Write(v.Data)
+						assert.NilError(t, err)
+					}
+				}
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
-				assert.ErrorContains(t, err, v)
+				ctx := startTestSpan(ctx, t)
+				testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target))
+					_, err := client.Solve(ctx, sr)
+					assert.Assert(t, err != nil)
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
-				assert.ErrorContains(t, err, v)
+					// Make sure the error is an exit error
+					var xErr *moby_buildkit_v1_frontend.ExitError
+					assert.Check(t, cmp.ErrorType(pkgerrors.Cause(err), xErr))
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}).Error()
-				assert.ErrorContains(t, err, v)
+				}, testenv.WithSolveStatusFn(consumeLogs))
 
-				assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
-				assert.ErrorContains(t, err, "stdout not hello")
-				assert.ErrorContains(t, err, "stderr not hello")
+				_, err = f.Seek(0, 0)
+				assert.NilError(t, err)
 
+				dt, err := io.ReadAll(f)
+				assert.NilError(t, err)
+
+				for _, expectErr := range expectedErrors {
+					assert.Check(t, cmp.Contains(string(dt), expectErr))
+				}
+
+				if t.Failed() {
+					t.Log("---- Full build log ----\n" + string(dt))
+				}
 			}
+		}
 
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
-			_, err := client.Solve(ctx, sr)
-			checkErr(err)
-
-			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
-			_, err = client.Solve(ctx, sr)
-			checkErr(err)
-		})
+		t.Run("package", testForTarget(cfg.Target.Package))
+		t.Run("container", testForTarget(cfg.Target.Container))
 	})
 
 	t.Run("positive test", func(t *testing.T) {
