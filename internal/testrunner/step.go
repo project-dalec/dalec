@@ -1,136 +1,142 @@
 package testrunner
 
 import (
-	"bytes"
 	"context"
+	_ "crypto/sha256"
 	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
+	"path/filepath"
 	"strings"
 
-	"github.com/project-dalec/dalec"
 	"github.com/google/shlex"
 	"github.com/moby/buildkit/client/llb"
-	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
-	"github.com/moby/buildkit/util/appcontext"
-	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (
-	StepRunnerCmdName = "test-steprunner"
-	testRunnerPath    = "/tmp/dalec/internal/frontend/test-runner"
-	testStepPath      = "/tmp/dalec/internal/frontend/test/step.json"
+	trueCmd    = noopCommand("true")
+	stepRunner = stepRunnerCommand("step-runner")
 )
 
-// StepCmd is the entrypoint for the test step runner subcommand.
-// It reads the test step from the provided file path (first argument)
-// and executes it, writing output to os.Stdout and os.Stderr.
-//
-// This should only be called from inside a container where the test is meant to run.
-func StepCmd(args []string) {
-	ctx := appcontext.Context()
+type noopCommand string
 
-	flags := flag.NewFlagSet(StepRunnerCmdName, flag.ExitOnError)
-	var outputPath string
-	flags.StringVar(&outputPath, "output", "", "Path to write test results to")
+func (c noopCommand) Cmd(args []string) {}
 
-	var stepIndex int
-	flags.IntVar(&stepIndex, "step-index", -1, "Index of the step being run")
+// WithOutput runs a no-op command that produces the provided output state.
+// This is useful for creating a dependency between the StateOption's input
+// state and the provided output state.
+func (c noopCommand) WithOutput(out llb.State, opts ...ValidationOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		const outputPath = "/tmp/internal/dalec/testrunner/__internal_output__"
+		args := []string{string(c)}
 
-	if err := flags.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, "error parsing flags:", err)
-		os.Exit(1)
+		// Ideally we would use llb.Readonly here.
+		// However, buildkit optmizes out the case since the returned state
+		// cannot be modified by the run.
+		// The run ends up not executing.
+		return in.Run(
+			testRunner(args, opts...),
+			llb.ReadonlyRootFS(),
+		).AddMount(outputPath, out)
+	}
+}
+
+type stepRunnerCommand string
+
+func (c stepRunnerCommand) stepJSONPath() string {
+	const p = "/tmp/internal/dalec/testrunner/step/step.json"
+	return p
+}
+
+func (c stepRunnerCommand) outputPath() string {
+	const p = "/tmp/internal/dalec/testrunner/step/output"
+	return p
+}
+
+func (c stepRunnerCommand) Run(test *dalec.TestSpec, sOpt dalec.SourceOpts, opts ...ValidationOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		out := in
+
+		// Steps run sequentially, each step depending on the previous one.
+		for _, step := range test.Steps {
+			out = out.With(c.withTestStep(step, opts...))
+		}
+
+		return out
+	}
+}
+
+func (c stepRunnerCommand) withTestStep(step dalec.TestStep, opts ...ValidationOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		dt, err := json.Marshal(step)
+		if err != nil {
+			return dalec.ErrorState(in, fmt.Errorf("could not marshal test step %q: %w", step.Command, err))
+		}
+
+		st := llb.Scratch().File(llb.Mkfile("step.json", 0o600, dt), asConstraints(opts...))
+
+		args := []string{
+			string(c),
+		}
+
+		out := in.Run(
+			llb.AddMount(c.stepJSONPath(), st, llb.SourcePath("step.json")),
+			testRunner(args, opts...),
+			step.GetSourceLocation(in),
+			llb.WithCustomName(step.Command),
+		).Root()
+
+		// Do any stdout/stderr checks
+		var stateOpts []llb.StateOption
+
+		stateOpts = append(stateOpts, withCheckOutput(filepath.Join(c.outputPath(), "stdout"), &step.Stdout, opts...)...)
+		stateOpts = append(stateOpts, withCheckOutput(filepath.Join(c.outputPath(), "stderr"), &step.Stderr, opts...)...)
+
+		return out.With(mergeStateOptions(stateOpts, opts...))
+	}
+}
+
+func (c stepRunnerCommand) Cmd(ctx context.Context, args []string) {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+string(c))
+		exit(1)
 	}
 
-	if stepIndex < 0 {
-		fmt.Fprintln(os.Stderr, "--step-index is required")
-		os.Exit(1)
-	}
-
-	dt, err := os.ReadFile(flags.Arg(0))
+	dt, err := os.ReadFile(c.stepJSONPath())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error reading test step:", err)
-		return
+		exit(1)
 	}
 
 	var step dalec.TestStep
 	if err := json.Unmarshal(dt, &step); err != nil {
 		fmt.Fprintln(os.Stderr, "error unmarshalling test step:", err)
-		return
+		exit(1)
 	}
 
-	results, err := runStep(ctx, &step, os.Stdout, os.Stderr, stepIndex)
+	err = c.doStep(ctx, &step, os.Stdout, os.Stderr, c.outputPath())
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			os.Exit(exitErr.ExitCode())
+			exit(exitErr.ExitCode())
 		}
 		fmt.Fprintln(os.Stderr, "error running test step:", err)
-		os.Exit(2)
-	}
-
-	dt, err = json.Marshal(results)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error marshalling results:", err)
-		os.Exit(2)
-	}
-
-	if err := writeFileAppend(outputPath, dt, 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, "error writing test results:", err)
-		os.Exit(2)
+		exit(2)
 	}
 }
 
-// WithRunStep returns an llb.RunOption that executes the provided test step.
-func WithTestStep(frontend llb.State, step *dalec.TestStep, index int, outputPath string) llb.RunOption {
-	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
-		llb.WithCustomName(step.Command).SetRunOption(ei)
-
-		dt, err := json.Marshal(step)
-		if err != nil {
-			ei.State = dalec.ErrorState(ei.State, fmt.Errorf("failed to marshal test step %q: %w", step.Command, err))
-			llb.Args([]string{"false"}).SetRunOption(ei)
-			return
-		}
-
-		for k, v := range step.Env {
-			ei.State = ei.State.AddEnv(k, v)
-		}
-
-		llb.AddMount(testRunnerPath, frontend, llb.SourcePath("/frontend")).SetRunOption(ei)
-
-		st := llb.Scratch().File(llb.Mkfile("step.json", 0o600, dt))
-		llb.AddMount(testStepPath, st, llb.SourcePath("step.json")).SetRunOption(ei)
-		llb.Args([]string{testRunnerPath, StepRunnerCmdName, "--output", outputPath, "--step-index", strconv.Itoa(index), testStepPath}).SetRunOption(ei)
-	})
-}
-
-// FilterStepError removes extraneous/internal context from errors caused by
-// a test step command returning a non-zero exit code.
-func FilterStepError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	var exErr *moby_buildkit_v1_frontend.ExitError
-	if !errors.As(err, &exErr) {
-		return err
-	}
-	return &stepCmdError{err: exErr}
-}
-
-// runStep executes the provided test step.
+// doStep executes the provided test step.
 // This should only be called from inside a container where the test is meant to run.
 //
 // Provide the desired stdout and stderr writers to capture output.
-func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer, stepIndex int) ([]FileCheckErrResult, error) {
+func (stepRunnerCommand) doStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer, outputPath string) error {
 	args, err := shlex.Split(step.Command)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -141,54 +147,33 @@ func runStep(ctx context.Context, step *dalec.TestStep, stdout, stderr io.Writer
 		cmd.Stdin = strings.NewReader(step.Stdin)
 	}
 
-	type check struct {
-		buf     fmt.Stringer
-		checker dalec.CheckOutput
-		name    string
-	}
-
-	var checks []check
-
 	if !step.Stdout.IsEmpty() {
-		buf := bytes.NewBuffer(nil)
-		var w io.Writer = buf
-		if cmd.Stdout != nil {
-			w = io.MultiWriter(cmd.Stdout, buf)
+		if err := os.MkdirAll(outputPath, 0o700); err != nil {
+			return err
 		}
-		cmd.Stdout = w
-		checks = append(checks, check{buf, step.Stdout, "stdout"})
+		f, err := os.OpenFile(filepath.Join(outputPath, "stdout"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		cmd.Stdout = io.MultiWriter(cmd.Stdout, f)
 	}
 
 	if !step.Stderr.IsEmpty() {
-		buf := bytes.NewBuffer(nil)
-		var w io.Writer = buf
-		if cmd.Stderr != nil {
-			w = io.MultiWriter(cmd.Stderr, buf)
+		if err := os.MkdirAll(outputPath, 0o700); err != nil {
+			return err
 		}
-		cmd.Stderr = w
-		checks = append(checks, check{buf, step.Stderr, "stderr"})
+		f, err := os.OpenFile(filepath.Join(outputPath, "stderr"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		cmd.Stderr = io.MultiWriter(cmd.Stderr, f)
 	}
+
 	if err := cmd.Run(); err != nil {
-		return nil, err
+		return err
 	}
 
-	var results []FileCheckErrResult
-	for _, c := range checks {
-		if err := c.checker.Check(c.buf.String(), c.name); err != nil {
-			results = append(results, FileCheckErrResult{Filename: c.name, StepIndex: &stepIndex, Checks: getFileCheckErrs(err)})
-		}
-	}
-	return results, nil
-}
-
-type stepCmdError struct {
-	err *moby_buildkit_v1_frontend.ExitError
-}
-
-func (s *stepCmdError) Error() string {
-	return fmt.Sprintf("step did not complete successfully: exit code: %d", s.err.ExitCode)
-}
-
-func (s *stepCmdError) Unwrap() error {
-	return s.err
+	return nil
 }

@@ -5,13 +5,10 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io/fs"
-	"regexp"
-	"strings"
 
 	"github.com/goccy/go-yaml/ast"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
-	"github.com/moby/buildkit/solver/errdefs"
 	"github.com/pkg/errors"
 )
 
@@ -61,26 +58,38 @@ type TestStep struct {
 	Stderr CheckOutput `yaml:"stderr,omitempty" json:"stderr,omitempty"`
 
 	// unexported pointer to parsed source map for this TestStep
-	_sourceMap *sourceMap `json:"-" yaml:"-"`
+	_commandSourceMap *sourceMap `json:"-" yaml:"-"`
 }
 
 func (step *TestStep) UnmarshalYAML(ctx context.Context, node ast.Node) error {
-	type internal TestStep
-	var ti internal
+	type internal struct {
+		Command sourceMappedValue[string] `yaml:"command" json:"command"`
+		Env     map[string]string         `yaml:"env,omitempty" json:"env,omitempty"`
+		Stdin   string                    `yaml:"stdin,omitempty" json:"stdin,omitempty"`
+		Stdout  CheckOutput               `yaml:"stdout,omitempty" json:"stdout,omitempty"`
+		Stderr  CheckOutput               `yaml:"stderr,omitempty" json:"stderr,omitempty"`
+	}
 
+	var i internal
 	dec := getDecoder(ctx)
-	if err := dec.DecodeFromNodeContext(ctx, node, &ti); err != nil {
+	if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
 		return errors.Wrap(err, "failed to decode test step")
 	}
 
-	*step = TestStep(ti)
-	step._sourceMap = newSourceMap(ctx, node)
+	*step = TestStep{
+		Command: i.Command.Value,
+		Env:     i.Env,
+		Stdin:   i.Stdin,
+		Stdout:  i.Stdout,
+		Stderr:  i.Stderr,
+	}
+	step._commandSourceMap = i.Command.sourceMap
 	return nil
 }
 
-// GetSourceLocation returns an llb.ConstraintsOpt for the TestStep
+// GetSourceLocation returns the source mapping for the TestStep's command
 func (ts *TestStep) GetSourceLocation(state llb.State) llb.ConstraintsOpt {
-	return ts._sourceMap.GetLocation(state)
+	return ts._commandSourceMap.GetLocation(state)
 }
 
 // CheckOutput is used to specify the expected output of a check, such as stdout/stderr or a file.
@@ -266,6 +275,7 @@ type CheckOutputError struct {
 	Expected string
 	Actual   string
 	Path     string
+	Index    *int
 }
 
 func (c *CheckOutputError) Error() string {
@@ -413,118 +423,38 @@ func (c *FileCheckOutput) processBuildArgs(lex *shell.Lex, args map[string]strin
 	return nil
 }
 
-// Check is used to check the output stream.
-func (c CheckOutput) Check(dt string, p string) (retErr error) {
-	if c.Empty {
-		if dt != "" {
-			return &CheckOutputError{Kind: CheckOutputEmptyKind, Expected: "", Actual: dt, Path: p}
-		}
-
-		// Anything else would be nonsensical and it would make sense to return early...
-		// But we'll check it anyway and it should fail since this would be an invalid CheckOutput
-	}
-
-	var errs []error
-	if c.Equals != "" && c.Equals != dt {
-		errs = append(errs, &CheckOutputError{Kind: CheckOutputEqualsKind, Expected: c.Equals, Actual: dt, Path: p})
-	}
-
-	for _, contains := range c.Contains {
-		if contains != "" && !strings.Contains(dt, contains) {
-			errs = append(errs, &CheckOutputError{Kind: CheckOutputContainsKind, Expected: contains, Actual: dt, Path: p})
-		}
-	}
-	for _, matches := range c.Matches {
-		regexp, err := regexp.Compile(matches)
-		if err != nil {
-			errs = append(errs, &CheckOutputError{Kind: CheckOutputMatchesKind, Expected: matches, Actual: fmt.Sprintf("invalid regexp %q: %v", matches, err), Path: p})
-			continue
-		}
-
-		if !regexp.Match([]byte(dt)) {
-			errs = append(errs, &CheckOutputError{Kind: CheckOutputMatchesKind, Expected: matches, Actual: dt, Path: p})
-		}
-	}
-
-	if c.StartsWith != "" && !strings.HasPrefix(dt, c.StartsWith) {
-		errs = append(errs, &CheckOutputError{Kind: CheckOutputStartsWithKind, Expected: c.StartsWith, Actual: dt, Path: p})
-	}
-
-	if c.EndsWith != "" && !strings.HasSuffix(dt, c.EndsWith) {
-		errs = append(errs, &CheckOutputError{Kind: CheckOutputEndsWithKind, Expected: c.EndsWith, Actual: dt, Path: p})
-	}
-
-	return goerrors.Join(errs...)
-}
-
-// Check is used to check the output file.
-func (c FileCheckOutput) Check(dt string, mode fs.FileMode, isDir bool, p, target string) error {
-	var errs []error
-
-	if c.LinkTarget != "" {
-		if c.LinkTarget != target {
-			errs = append(errs, &CheckOutputError{Kind: CheckFileLinkTargetPathKind, Expected: c.LinkTarget, Actual: target, Path: p})
-		}
-	}
-
-	if c.IsDir && !isDir {
-		errs = append(errs, &CheckOutputError{Kind: CheckFileIsDirKind, Expected: "ModeDir", Actual: "ModeFile", Path: p})
-	}
-
-	if !c.IsDir && isDir {
-		errs = append(errs, &CheckOutputError{Kind: CheckFileIsDirKind, Expected: "ModeFile", Actual: "ModeDir", Path: p})
-	}
-
-	perm := mode.Perm()
-	if c.Permissions != 0 && c.Permissions != perm {
-		errs = append(errs, &CheckOutputError{Kind: CheckFilePermissionsKind, Expected: c.Permissions.String(), Actual: perm.String(), Path: p})
-	}
-
-	errs = append(errs, c.CheckOutput.Check(dt, p))
-	return goerrors.Join(errs...)
-}
-
-// GetErrSource returns the most specific source map for the given error kind.
-// Falls back to the file-level mapping then to embedded content checks.
-func (c FileCheckOutput) GetErrSource(err *CheckOutputError) *errdefs.Source {
-	switch err.Kind {
+// GetSourceLocation returns the source maps for the check kind + index
+func (c FileCheckOutput) GetSourceLocation(state llb.State, kind string, index int) llb.ConstraintsOpt {
+	switch kind {
 	case CheckFilePermissionsKind:
-		return c.permissionsSourceMap.GetErrdefsSource()
+		return c.permissionsSourceMap.GetLocation(state)
 	case CheckFileIsDirKind:
-		return c.isDirSourceMap.GetErrdefsSource()
+		return c.isDirSourceMap.GetLocation(state)
 	case CheckFileNotExistsKind:
-		return c.notExistSourceMap.GetErrdefsSource()
+		return c.notExistSourceMap.GetLocation(state)
 	case CheckFileLinkTargetPathKind:
-		return c.linkTargetSourceMap.GetErrdefsSource()
+		return c.linkTargetSourceMap.GetLocation(state)
 	default:
 		// Delegate to embedded CheckOutput (equals/contains/...)
-		return c.CheckOutput.GetErrSource(err)
+		return c.CheckOutput.GetSourceLocation(state, kind, index)
 	}
 }
 
-func (c CheckOutput) GetErrSource(err *CheckOutputError) *errdefs.Source {
-	switch err.Kind {
+func (c CheckOutput) GetSourceLocation(state llb.State, kind string, index int) llb.ConstraintsOpt {
+	switch kind {
 	case CheckOutputContainsKind:
 		// locate matching contains entry
-		for i, v := range c.Contains {
-			if v == err.Expected && i < len(c.containsSourceMaps) && c.containsSourceMaps[i] != nil {
-				return c.containsSourceMaps[i].GetErrdefsSource()
-			}
-		}
+		return c.containsSourceMaps[index].GetLocation(state)
 	case CheckOutputMatchesKind:
-		for i, v := range c.Matches {
-			if v == err.Expected && i < len(c.matchesSourceMaps) && c.matchesSourceMaps[i] != nil {
-				return c.matchesSourceMaps[i].GetErrdefsSource()
-			}
-		}
+		return c.matchesSourceMaps[index].GetLocation(state)
 	case CheckOutputStartsWithKind:
-		return c.startsWithSourceMap.GetErrdefsSource()
+		return c.startsWithSourceMap.GetLocation(state)
 	case CheckOutputEndsWithKind:
-		return c.endsWithSourceMap.GetErrdefsSource()
+		return c.endsWithSourceMap.GetLocation(state)
 	case CheckOutputEmptyKind:
-		return c.emptySourceMap.GetErrdefsSource()
+		return c.emptySourceMap.GetLocation(state)
 	case CheckOutputEqualsKind:
-		return c.equalsSourceMap.GetErrdefsSource()
+		return c.equalsSourceMap.GetLocation(state)
 	}
 
 	return nil

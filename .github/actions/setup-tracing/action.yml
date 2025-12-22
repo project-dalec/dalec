@@ -1,0 +1,16 @@
+outputs:
+  tracing-id:
+    description: ID of the running otel collector container
+    value: ${{ steps.setup.outputs.tracing-id }}
+  traces-path:
+    description: Path where traces are output
+    value: ${{ steps.setup.outputs.traces-path }}
+
+name: setup-tracing
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup
+      id: setup
+      shell: bash
+      run: .github/actions/setup-tracing/setup.sh

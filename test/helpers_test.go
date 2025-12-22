@@ -10,10 +10,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
@@ -23,6 +22,8 @@ import (
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 	"github.com/tonistiigi/fsutil/types"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -225,15 +226,22 @@ func withBuildArg(k, v string) srOpt {
 	}
 }
 
+// Since withSpec is modifying a spec, this is used
+// to prevent potential data races which, while the data being modified is harmless
+// can still cause memory corruption.
+var withSpecMu sync.Mutex
+
 func withSpec(ctx context.Context, t *testing.T, spec *dalec.Spec) srOpt {
 	return func(cfg *newSolveRequestConfig) {
 		if spec != nil && !cfg.noFillSpecFields {
+			withSpecMu.Lock()
 			if spec.Packager == "" {
 				spec.Packager = "test"
 			}
 			if spec.Website == "" {
 				spec.Website = "https://github.com/project-dalec/dalec"
 			}
+			withSpecMu.Unlock()
 		}
 		specToSolveRequest(ctx, t, spec, cfg.req)
 	}

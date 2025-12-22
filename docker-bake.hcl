@@ -10,6 +10,10 @@ variable "FRONTEND_REF" {
     default = "local/dalec/frontend"
 }
 
+variable "OTEL_COLLECTOR_REF" {
+    default = "local/dalec/otel-collector"
+}
+
 // This is used to forcibly diff/merge ops in the frontend for testing purposes.
 // Set to "1" to disable diff/merge ops.
 variable "DALEC_DISABLE_DIFF_MERGE" {
@@ -42,6 +46,11 @@ target "lint" {
         --mount=type=bind,source=.,target=/build \
         golangci-lint run -v
     EOT
+}
+
+target "otel-collector" {
+  target = "otel-collector"
+  tags = [OTEL_COLLECTOR_REF]
 }
 
 variable "RUNC_COMMIT" {

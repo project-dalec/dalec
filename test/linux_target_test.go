@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/cavaliergopher/rpm"
 	"github.com/containerd/platforms"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
@@ -27,6 +30,7 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -2990,148 +2994,258 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
 
-		spec := &dalec.Spec{
-			Name:        "test-package-tests",
-			Version:     "0.0.1",
-			Revision:    "42",
-			Description: "Testing package tests",
-			License:     "MIT",
-			Dependencies: &dalec.PackageDependencies{
-				Test: map[string]dalec.PackageConstraints{"bash": {}},
-			},
-			Image: &dalec.ImageConfig{
-				Post: &dalec.PostInstall{
-					Symlinks: map[string]dalec.SymlinkTarget{
-						"/usr/bin/a-thing-for-symlinking": {Paths: []string{"/some_symlink1"}},
+		newSpec := func() *dalec.Spec {
+			return &dalec.Spec{
+				Name:        "test-package-tests",
+				Version:     "0.0.1",
+				Revision:    "42",
+				Description: "Testing package tests",
+				License:     "MIT",
+				Dependencies: &dalec.PackageDependencies{
+					Test: map[string]dalec.PackageConstraints{"bash": {}},
+				},
+				Image: &dalec.ImageConfig{
+					Post: &dalec.PostInstall{
+						Symlinks: map[string]dalec.SymlinkTarget{
+							"/usr/bin/a-thing-for-symlinking": {Paths: []string{"/some_symlink1"}},
+						},
 					},
 				},
-			},
-			Build: dalec.ArtifactBuild{
-				Steps: []dalec.BuildStep{
-					{
-						Command: "touch a-thing-for-symlinking",
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							Command: "touch a-thing-for-symlinking",
+						},
 					},
 				},
-			},
-			Artifacts: dalec.Artifacts{
-				Binaries: map[string]dalec.ArtifactConfig{
-					"a-thing-for-symlinking": {},
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"a-thing-for-symlinking": {},
+					},
+					Links: []dalec.ArtifactSymlinkConfig{
+						{
+							Source: "/usr/bin/a-thing-for-symlinking",
+							Dest:   "/some_symlink2",
+						},
+						{
+							Source: "/not-a-real-path3",
+							Dest:   "/some_symlink3",
+						},
+						{
+							Source: "/not-a-real-path4",
+							Dest:   "/some_symlink4",
+						},
+					},
 				},
-				Links: []dalec.ArtifactSymlinkConfig{
-					{
-						Source: "/usr/bin/a-thing-for-symlinking",
-						Dest:   "/some_symlink2",
-					},
-					{
-						Source: "/not-a-real-path3",
-						Dest:   "/some_symlink3",
-					},
-					{
-						Source: "/not-a-real-path4",
-						Dest:   "/some_symlink4",
-					},
-				},
-			},
-			Tests: []*dalec.TestSpec{
-				{
-					Name: "Test that tests fail the build",
+			}
+		}
+
+		type testCase struct {
+			err          error
+			test         *dalec.TestSpec
+			isBuildError bool
+		}
+
+		// Because buildkit solves are fail-fast (the build is cancelled on the first failure), the only way to deterministically test
+		// multiple failure cases is to have separate builds for each expected failure.
+		expectedErrs := []testCase{
+			{
+				err: (&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}),
+				test: &dalec.TestSpec{
+					Name: "Test that non-existing file with no options fails the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/non-existing-file": {},
 					},
 				},
-				{
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}),
+				test: &dalec.TestSpec{
 					Name: "Test that permissions check fails the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/": {Permissions: 0o644, IsDir: true},
 					},
 				},
-				{
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "is_dir=false", Actual: "is_dir=true"}),
+				test: &dalec.TestSpec{
 					Name: "Test that dir check fails the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/": {IsDir: false},
 					},
 				},
-				{
-					Name: "Test that command exiting non-zero fails the build",
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}),
+				test: &dalec.TestSpec{
+					Name: "Test that image post symlink target check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink1": {
+							LinkTarget: "/not-a-real-path1",
+						},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}),
+				test: &dalec.TestSpec{
+					Name: "Test that artifact symlink target check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink2": {
+							LinkTarget: "/not-a-real-path2",
+						},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}),
+				test: &dalec.TestSpec{
+					Name: "Test that artifact symlink to non-existing file check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink3": {},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}),
+				test: &dalec.TestSpec{
+					Name: "Test that artifact symlink nofollow link target check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink4": {
+							NoFollow:   true,
+							LinkTarget: "/incorrect-target",
+						},
+					},
+				},
+			},
+			{
+				err:          &moby_buildkit_v1_frontend.ExitError{ExitCode: 42, Err: fmt.Errorf("step did not complete successfully")},
+				isBuildError: true,
+				test: &dalec.TestSpec{
+					Name: "Test that command exit code check fails the build",
 					Steps: []dalec.TestStep{
 						{Command: "/bin/sh -ec 'exit 42'"},
 					},
 				},
-				{
-					Name: "Test that command giving the wrong output fails the build",
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "stdout", Kind: dalec.CheckOutputEqualsKind, Expected: "stdout not hello", Actual: "hello\n"}),
+				test: &dalec.TestSpec{
+					Name: "Test that stdout check fails the build",
 					Steps: []dalec.TestStep{
 						{
 							Command: "/bin/sh -ec 'echo hello'",
 							Stdout: dalec.CheckOutput{
 								Equals: "stdout not hello",
 							},
+						},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "stderr", Kind: dalec.CheckOutputEqualsKind, Expected: "stderr not hello", Actual: "hello\n"}),
+				test: &dalec.TestSpec{
+					Name: "Test that stderr check fails the build",
+					Steps: []dalec.TestStep{
+						{
+							Command: "/bin/sh -ec 'echo hello >&2'",
 							Stderr: dalec.CheckOutput{
 								Equals: "stderr not hello",
 							},
 						},
 					},
 				},
-				{
-					Name: "Test that incorrect symlink path targets fail the build",
-					Files: map[string]dalec.FileCheckOutput{
-						"/some_symlink1": {
-							LinkTarget: "/not-a-real-path1",
-						},
-						"/some_symlink2": {
-							LinkTarget: "/not-a-real-path2",
-						},
-						// check that a symlink pointing to a non-existant path with NoFollow=false should error (with a CheckFileNotExistsKind)
-						"/some_symlink3": {},
-						// And then that we can check symlink target with NoFollow=true when the target doesn't exist
-						"/some_symlink4": {NoFollow: true, LinkTarget: "/incorrect-target"},
-					},
-				},
 			},
 		}
 
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			checkErr := func(err error) {
+		newLogFile := func(t *testing.T) *os.File {
+			t.Helper()
+			dir := t.TempDir()
+			f, err := os.OpenFile(filepath.Join(dir, "solve-status-log.txt"), os.O_CREATE|os.O_RDWR, 0o644)
+			assert.NilError(t, err)
+			t.Cleanup(func() { f.Close() })
 
-				v := (&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
-				assert.ErrorContains(t, err, v)
+			return f
+		}
 
-				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}).Error()
-				assert.ErrorContains(t, err, v)
+		runTest := func(target string) func(t *testing.T) {
+			return func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
 
-				v = (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "ModeFile", Actual: "ModeDir"}).Error()
-				assert.ErrorContains(t, err, v)
+				for _, tc := range expectedErrs {
+					t.Run(tc.test.Name, func(t *testing.T) {
+						t.Parallel()
+						ctx := startTestSpan(ctx, t)
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
-				assert.ErrorContains(t, err, v)
+						f := newLogFile(t)
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}).Error()
-				assert.ErrorContains(t, err, v)
+						var size int
+						solveStatusFn := testenv.WithSolveStatusFn(func(status *client.SolveStatus) {
+							if status == nil {
+								return
+							}
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}).Error()
-				assert.ErrorContains(t, err, v)
+							for _, v := range status.Logs {
+								if _, err := f.Write(v.Data); err != nil {
+									t.Error(err)
+								}
+								size += len(v.Data)
+							}
+						})
 
-				v = (&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}).Error()
-				assert.ErrorContains(t, err, v)
+						spec := newSpec()
+						spec.Tests = []*dalec.TestSpec{tc.test}
 
-				assert.ErrorContains(t, err, "step did not complete successfully: exit code: 42")
-				assert.ErrorContains(t, err, "stdout not hello")
-				assert.ErrorContains(t, err, "stderr not hello")
+						testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+							sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+							_, err := client.Solve(ctx, sr)
+							assert.Assert(t, err != nil)
 
+							t.Logf("Build Error: %v", err)
+
+							var exErr *moby_buildkit_v1_frontend.ExitError
+							assert.Assert(t, errors.As(err, &exErr), "expected exit error, got: %v", err)
+
+							if !tc.isBuildError {
+								// the error we are looking for is in the build logs, not the exit error
+								return
+							}
+
+							assert.Equal(t, exErr.ExitCode, tc.err.(*moby_buildkit_v1_frontend.ExitError).ExitCode)
+						}, solveStatusFn)
+
+						if tc.isBuildError {
+							return
+						}
+
+						_, err := f.Seek(0, io.SeekStart)
+						assert.NilError(t, err)
+
+						dt, err := io.ReadAll(f)
+						assert.NilError(t, err)
+
+						if !bytes.Contains(dt, []byte(tc.err.Error())) {
+							t.Errorf("expected error not found in logs")
+							t.Logf("Expected error:\n\t%v", tc.err)
+						}
+					})
+				}
 			}
+		}
 
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
-			_, err := client.Solve(ctx, sr)
-			checkErr(err)
-
-			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
-			_, err = client.Solve(ctx, sr)
-			checkErr(err)
-		})
+		t.Run(path.Base(cfg.Target.Package), runTest(cfg.Target.Package))
+		t.Run(path.Base(cfg.Target.Container), runTest(cfg.Target.Container))
 	})
 
 	t.Run("positive test", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
+
+		equalCheck := func(v string) dalec.CheckOutput {
+			return dalec.CheckOutput{Equals: v}
+		}
 
 		spec := &dalec.Spec{
 			Name:        "test-package-tests",
@@ -3183,6 +3297,24 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 						"/some_symlink1": {LinkTarget: "/usr/share/test-file"},
 						"/some_symlink2": {LinkTarget: "/usr/share/test-file"},
 						"/some_symlink3": {LinkTarget: "/not-a-real-file", NoFollow: true},
+					},
+				},
+				{
+					Name: "Test multiple commands with no fs changes",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'echo command one'"},
+						{Command: "/bin/sh -ec 'echo command two'"},
+						{Command: "/bin/sh -ec 'echo command three'"},
+						{Command: "/bin/sh -ec 'echo command four'"},
+					},
+				},
+				{
+					Name: "Test multiple commands with stdio checks",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'echo command one'", Stdout: equalCheck("command one\n")},
+						{Command: "/bin/sh -ec 'echo command two'"},
+						{Command: "/bin/sh -ec 'echo command three'", Stdout: equalCheck("command three\n")},
+						{Command: "/bin/sh -ec 'echo command four'"},
 					},
 				},
 				{
@@ -3256,16 +3388,26 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			},
 		}
 
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
-			res := solveT(ctx, t, client, sr)
-			_, err := res.SingleRef()
-			assert.NilError(t, err)
+		t.Run(path.Base(cfg.Target.Package), func(t *testing.T) {
+			t.Parallel()
+			ctx = startTestSpan(baseCtx, t)
+			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+				res := solveT(ctx, t, client, sr)
+				_, err := res.SingleRef()
+				assert.NilError(t, err)
+			})
+		})
 
-			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
-			res = solveT(ctx, t, client, sr)
-			_, err = res.SingleRef()
-			assert.NilError(t, err)
+		t.Run(path.Base(cfg.Target.Container), func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(baseCtx, t)
+			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+				res := solveT(ctx, t, client, sr)
+				_, err := res.SingleRef()
+				assert.NilError(t, err)
+			})
 		})
 	})
 }
@@ -3728,7 +3870,9 @@ func testDisableAutoRequire(ctx context.Context, t *testing.T, cfg targetConfig)
 		spec := newSimpleSpec()
 		spec.Artifacts = dalec.Artifacts{
 			Binaries: map[string]dalec.ArtifactConfig{
-				"test": {},
+				"test": {
+					SubPath: "dalec",
+				},
 			},
 		}
 

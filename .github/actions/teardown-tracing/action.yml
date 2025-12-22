@@ -1,0 +1,27 @@
+inputs:
+  artifact-name:
+    description: Name to use when uploading tracing artifacts
+    required: true
+  tracing-id:
+    description: tracing-id that was output by the setup-tracing action.
+    required: true
+  traces-path:
+    description: Path to the trace artifacts. This should be output from the setup-tracing action
+    required: true
+
+name: teardown-tracing
+runs:
+  using: 'composite'
+  steps:
+    - name: Shutdown trace collector
+      shell: bash
+      run: docker stop "${{ inputs.tracing-id }}"
+    - name: Fix perms
+      shell: bash
+      run: sudo chown -R $(id -u) "${{ inputs.traces-path }}"
+    - name: Upload Traces
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      with:
+        name: "${{ inputs.artifact-name }}"
+        path: ${{ inputs.traces-path }}/*
+        retention-days: 7
