@@ -56,21 +56,25 @@ func TestBullseye(t *testing.T) {
 }
 
 func testDebianBaseDependencies(t *testing.T, target targetConfig) {
-	ctx := startTestSpan(baseCtx, t)
-	spec := newSimpleSpec()
-	spec.Tests = []*dalec.TestSpec{
-		{
-			Files: map[string]dalec.FileCheckOutput{
-				"/etc/ssl/certs": {
-					Permissions: 0755,
-					IsDir:       true,
+	t.Run("base deps", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(baseCtx, t)
+		spec := newSimpleSpec()
+		spec.Tests = []*dalec.TestSpec{
+			{
+				Files: map[string]dalec.FileCheckOutput{
+					"/etc/ssl/certs": {
+						Permissions: 0755,
+						IsDir:       true,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target.Container))
-		solveT(ctx, t, client, req)
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target.Container))
+			solveT(ctx, t, client, req)
+		})
 	})
 }
