@@ -1,0 +1,109 @@
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
+#
+# docs/examples/hello.inline.yml
+#
+# Goal:
+#   The smallest “real” Dalec example:
+#   - Inline source directory (C code)
+#   - Build with gcc
+#   - Install a binary
+#   - Run tests that execute the binary
+#
+# Try:
+#   docker build -f docs/examples/hello.inline.yml --target=azlinux3/rpm --output=_output .
+#   docker build -f docs/examples/hello.inline.yml --target=azlinux3 -t hello-inline:dev .
+#   docker run --rm hello-inline:dev
+
+args:
+  VERSION: 0.1.0
+
+  # Built-in args (opt-in substitution). Not used directly here, but included
+  # for tutorial consistency across examples.
+  TARGETOS:
+  TARGETARCH:
+  TARGETPLATFORM:
+  TARGETVARIANT:
+  DALEC_TARGET:
+
+name: hello-inline
+description: "Minimal Dalec example: inline C source -> binary -> tests."
+license: Apache-2.0
+website: https://github.com/project-dalec/dalec
+version: ${VERSION}
+revision: 1
+
+targets:
+  azlinux3:
+    image:
+      base: mcr.microsoft.com/azurelinux/base/core:3.0
+      entrypoint: /usr/bin/hello-inline
+
+      # NOTE: cmd (if set) is typically a string in these examples (not a YAML list).
+      # Leaving it out means “no default args”.
+      labels:
+        org.opencontainers.image.title: hello-inline
+        org.opencontainers.image.description: "Minimal Dalec example"
+        org.opencontainers.image.licenses: Apache-2.0
+
+dependencies:
+  build:
+    gcc: {}
+  test:
+    bash: {}
+
+sources:
+  # `src/` will appear in the build environment as a directory named "src".
+  src:
+    inline:
+      dir:
+        permissions: 0o755
+        files:
+          main.c:
+            permissions: 0o644
+            contents: |
+              #include <stdio.h>
+              #include <stdlib.h>
+
+              #ifndef VERSION
+              #define VERSION "dev"
+              #endif
+
+              int main(void) {
+                const char* os = getenv("TARGETOS") ? getenv("TARGETOS") : "unknown";
+                const char* arch = getenv("TARGETARCH") ? getenv("TARGETARCH") : "unknown";
+                printf("hello-inline %s (%s/%s)\n", VERSION, os, arch);
+                return 0;
+              }
+
+build:
+  env:
+    VERSION: ${VERSION}
+  steps:
+    - command: |
+        set -euo pipefail
+        mkdir -p out
+        cc -O2 -DVERSION=\"${VERSION}\" -o out/hello-inline src/main.c
+
+artifacts:
+  binaries:
+    out/hello-inline:
+      # subpath is joined under /usr/bin/<subpath>.
+      # Using "" means install as /usr/bin/<filename> (here: /usr/bin/hello-inline).
+      subpath: ""
+      permissions: 0o755
+
+tests:
+  - name: binary exists and is executable
+    files:
+      /usr/bin/hello-inline:
+        permissions: 0o755
+
+  - name: running binary prints version/platform
+    steps:
+      - command: /usr/bin/hello-inline
+        stdout:
+          contains:
+            - "hello-inline ${VERSION}"
+        stderr:
+          empty: true
+

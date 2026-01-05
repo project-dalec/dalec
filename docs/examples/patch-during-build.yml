@@ -1,0 +1,124 @@
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
+#
+# docs/examples/patch-during-build.yml
+#
+# Goal:
+#   Demonstrate a common packaging workflow:
+#   - Define source
+#   - Apply a patch in the build phase
+#   - Build + package + test
+#
+# NOTE (important for your Dalec version):
+#   Variable substitution like ${VERSION} does NOT happen inside patch file contents.
+#   So we patch the code to print a C macro (VERSION) and pass -DVERSION at compile time.
+#
+# Try:
+#   docker build -f docs/examples/patch-during-build.yml --target=azlinux3/rpm --output=_output .
+#   docker build -f docs/examples/patch-during-build.yml --target=azlinux3 -t patched-hello:dev .
+#   docker run --rm patched-hello:dev --version
+
+args:
+  VERSION: 0.1.0
+
+  # Built-in args (opt-in substitution). Not used directly here, but included
+  # for tutorial consistency across examples.
+  TARGETOS:
+  TARGETARCH:
+  TARGETPLATFORM:
+  TARGETVARIANT:
+  DALEC_TARGET:
+
+name: patched-hello
+description: "Dalec example: apply an inline patch during build."
+license: Apache-2.0
+website: https://github.com/project-dalec/dalec
+version: ${VERSION}
+revision: 1
+
+targets:
+  azlinux3:
+    image:
+      base: mcr.microsoft.com/azurelinux/base/core:3.0
+      entrypoint: /usr/bin/patched-hello
+      cmd: "--version"
+
+dependencies:
+  build:
+    gcc: {}
+    patch: {}
+  test:
+    bash: {}
+
+sources:
+  src:
+    inline:
+      dir:
+        permissions: 0o755
+        files:
+          hello.c:
+            permissions: 0o644
+            contents: |
+              #include <stdio.h>
+              #include <string.h>
+
+              #ifndef VERSION
+              #define VERSION "dev"
+              #endif
+
+              int main(int argc, char** argv) {
+                if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+                  printf("patched-hello (unpatched)\n");
+                  return 0;
+                }
+                printf("hello\n");
+                return 0;
+              }
+
+  # Inline FILE source: unified diff. Keep it STATIC (no ${VERSION} here).
+  hello.patch:
+    inline:
+      file:
+        permissions: 0o644
+        contents: |
+          --- a/src/hello.c
+          +++ b/src/hello.c
+          @@ -6,7 +6,7 @@
+           int main(int argc, char** argv) {
+             if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+          -    printf("patched-hello (unpatched)\n");
+          +    printf("patched-hello %s\n", VERSION);
+               return 0;
+             }
+             printf("hello\n");
+             return 0;
+           }
+
+build:
+  env:
+    VERSION: ${VERSION}
+  steps:
+    - command: |
+        set -euo pipefail
+
+        # Apply patch in-place to the source tree.
+        patch -p1 < hello.patch
+
+        mkdir -p out
+        # Inject VERSION via compiler define (this substitution DOES work here).
+        cc -O2 -DVERSION=\"${VERSION}\" -o out/patched-hello src/hello.c
+
+artifacts:
+  binaries:
+    out/patched-hello:
+      subpath: ""
+      permissions: 0o755
+
+tests:
+  - name: version includes patched VERSION
+    steps:
+      - command: /usr/bin/patched-hello --version
+        stdout:
+          starts_with: "patched-hello ${VERSION}"
+        stderr:
+          empty: true
+

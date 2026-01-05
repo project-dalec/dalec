@@ -1,0 +1,304 @@
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
+#
+# docs/examples/my-daemon.kitchensink.yml
+#
+# A "kitchen sink" Dalec spec that demonstrates (with lots of comments):
+# - args + built-in args opt-in substitution
+# - sources: inline dir + http file
+# - dependencies (build/runtime/recommends/test)
+# - build steps
+# - artifacts: binaries, configFiles, docs, licenses, systemd units, createDirectories
+# - tests: file checks + command checks
+# - image configuration + post symlinks (without colliding with packaged files)
+#
+# Try it:
+#   # Build RPM output
+#   docker build -f docs/examples/my-daemon.kitchensink.yml --target=azlinux3/rpm --output=_output .
+#
+#   # Build container image (RPM installed into base image)
+#   docker build -f docs/examples/my-daemon.kitchensink.yml --target=azlinux3 -t my-daemon:dev .
+#   docker run --rm my-daemon:dev --version
+#   docker run --rm my-daemon:dev --print-config
+#
+# Override VERSION:
+#   docker build -f docs/examples/my-daemon.kitchensink.yml --build-arg VERSION=0.2.0 --target=azlinux3 -t my-daemon:0.2.0 .
+
+# -----------------------------------------------------------------------------
+# Args: values you can override via `docker build --build-arg ...`
+# NOTE: args are scalars. Built-in args must be listed (opt-in) with NO default.
+# -----------------------------------------------------------------------------
+args:
+  VERSION: 0.1.0
+  REVISION: 1
+
+  # Built-in args (opt-in substitution)
+  TARGETOS:
+  TARGETARCH:
+  TARGETPLATFORM:
+  TARGETVARIANT:
+  DALEC_TARGET:
+
+# -----------------------------------------------------------------------------
+# Package metadata
+# -----------------------------------------------------------------------------
+name: my-daemon
+description: "Dalec kitchen-sink example: build an RPM and a container image from it."
+license: Apache-2.0
+website: https://github.com/project-dalec/dalec
+packager: Dalec Authors
+vendor: Dalec Authors
+version: ${VERSION}
+revision: ${REVISION}
+
+# -----------------------------------------------------------------------------
+# Targets: per-target config (we focus on azlinux3 here)
+# -----------------------------------------------------------------------------
+targets:
+  azlinux3:
+    image:
+      # Base image for the final container image (after installing the RPM).
+      base: mcr.microsoft.com/azurelinux/base/core:3.0
+
+      # Runtime settings for the image.
+      entrypoint: /usr/bin/my-daemon
+      # Dalec image cmd is a STRING (not a YAML list).
+      cmd: "--print-config"
+
+      # IMPORTANT: your Dalec frontend expects env as a sequence (list), not a mapping.
+      env:
+        - MY_DAEMON_CONFIG=/etc/my-daemon/my-daemon.conf
+
+      labels:
+        org.opencontainers.image.title: my-daemon
+        org.opencontainers.image.description: "Dalec kitchen-sink example"
+        org.opencontainers.image.licenses: Apache-2.0
+
+      stop_signal: SIGINT
+
+      # Example "state" location for the daemon.
+      volumes:
+        /var/lib/my-daemon: {}
+
+      # Post-processing for the image filesystem.
+      # IMPORTANT:
+      # - Do NOT try to create /usr/bin/my-daemon as a symlink: the RPM already installs it.
+      # - Only create *new* link paths that don't already exist.
+      post:
+        symlinks:
+          # This means:
+          #   /my-daemon      -> /usr/bin/my-daemon
+          #   /usr/bin/daemon -> /usr/bin/my-daemon
+          /usr/bin/my-daemon:
+            paths:
+              - /my-daemon
+              - /usr/bin/daemon
+
+# -----------------------------------------------------------------------------
+# Dependencies:
+# - build: needed for compilation
+# - runtime: installed when the RPM is installed
+# - recommends: optional goodies (no version constraints here to keep RPM syntax safe)
+# - test: packages only installed for running test "steps"
+# -----------------------------------------------------------------------------
+dependencies:
+  build:
+    gcc: {}
+  runtime:
+    ca-certificates: {}
+  recommends:
+    curl: {}
+  test:
+    bash: {}
+    coreutils: {}
+
+# -----------------------------------------------------------------------------
+# Sources: each source is placed into the build input directory under its name.
+# -----------------------------------------------------------------------------
+sources:
+  # Inline directory source containing C code + license.
+  src:
+    inline:
+      dir:
+        permissions: 0o755
+        files:
+          main.c:
+            permissions: 0o644
+            contents: |
+              #include <stdio.h>
+              #include <string.h>
+              #include <stdlib.h>
+
+              #ifndef VERSION
+              #define VERSION "dev"
+              #endif
+
+              static const char* default_cfg =
+                "port=8080\n"
+                "log_level=info\n";
+
+              int main(int argc, char** argv) {
+                if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+                  printf("my-daemon version %s\n", VERSION);
+                  return 0;
+                }
+                if (argc > 1 && strcmp(argv[1], "--print-config") == 0) {
+                  // For the example: print defaults so it works even in minimal images.
+                  printf("%s", default_cfg);
+                  return 0;
+                }
+
+                // "daemon" placeholder
+                printf("my-daemon running on %s/%s (target=%s platform=%s)\n",
+                       getenv("TARGETOS") ? getenv("TARGETOS") : "unknown",
+                       getenv("TARGETARCH") ? getenv("TARGETARCH") : "unknown",
+                       getenv("DALEC_TARGET") ? getenv("DALEC_TARGET") : "unknown",
+                       getenv("TARGETPLATFORM") ? getenv("TARGETPLATFORM") : "unknown");
+                return 0;
+              }
+
+          LICENSE:
+            permissions: 0o644
+            contents: |
+              Apache License 2.0
+              (Example file for Dalec documentation.)
+
+  # Inline directory source for config + systemd unit.
+  config:
+    inline:
+      dir:
+        permissions: 0o755
+        files:
+          my-daemon.conf:
+            permissions: 0o644
+            contents: |
+              # Example config file (packaged under /etc/my-daemon/)
+              port=8080
+              log_level=info
+
+          my-daemon.service:
+            permissions: 0o644
+            contents: |
+              [Unit]
+              Description=My Daemon (Dalec example)
+              After=network-online.target
+              Wants=network-online.target
+
+              [Service]
+              Type=simple
+              ExecStart=/usr/bin/my-daemon
+              Restart=on-failure
+
+              [Install]
+              WantedBy=multi-user.target
+
+  # HTTP file source (downloaded and packaged as docs).
+  # NOTE: As a source, the file name is "rfc3339" (not "rfc3339.txt"),
+  # so we copy it to out/rfc3339.txt in the build step for nicer docs naming.
+  rfc3339:
+    http:
+      url: https://www.rfc-editor.org/rfc/rfc3339.txt
+      permissions: 0o644
+
+# -----------------------------------------------------------------------------
+# Build: runs in the build environment after sources are laid out.
+# Output artifacts must be relative to this build root.
+# -----------------------------------------------------------------------------
+build:
+  env:
+    VERSION: ${VERSION}
+  steps:
+    - command: |
+        set -euo pipefail
+
+        mkdir -p out
+
+        # Compile into a stable "out/" directory so artifacts are simple.
+        cc -O2 -DVERSION=\"${VERSION}\" -o out/my-daemon src/main.c
+
+        # Rename the http source to have .txt extension for docs.
+        cp rfc3339 out/rfc3339.txt
+
+# -----------------------------------------------------------------------------
+# Artifacts: what gets installed + where.
+#
+# IMPORTANT detail for your Dalec version:
+# - subpath is treated as a DIRECTORY, and Dalec appends the source filename.
+# - Therefore, for binaries we want subpath "" (put file directly in /usr/bin)
+# - For configFiles we want subpath "my-daemon" (directory), so file becomes:
+#     /etc/my-daemon/my-daemon.conf
+# - For docs we install out/rfc3339.txt with subpath "" so it becomes:
+#     /usr/share/doc/my-daemon/rfc3339.txt
+# -----------------------------------------------------------------------------
+artifacts:
+  binaries:
+    out/my-daemon:
+      subpath: ""
+      permissions: 0o755
+
+  createDirectories:
+    config:
+      my-daemon:
+        mode: 0o755
+    state:
+      my-daemon:
+        mode: 0o755
+
+  configFiles:
+    config/my-daemon.conf:
+      subpath: my-daemon
+      permissions: 0o644
+
+  systemd:
+    units:
+      config/my-daemon.service:
+        enable: false
+        start: false
+        name: ""
+
+  docs:
+    out/rfc3339.txt:
+      subpath: ""
+      permissions: 0o644
+
+  licenses:
+    src/LICENSE:
+      subpath: ""
+      permissions: 0o644
+
+# -----------------------------------------------------------------------------
+# Tests: lightweight sanity checks.
+# -----------------------------------------------------------------------------
+tests:
+  - name: my-daemon installed and executable
+    files:
+      /usr/bin/my-daemon:
+        permissions: 0o755
+
+  - name: version flag prints version
+    steps:
+      - command: /usr/bin/my-daemon --version
+        stdout:
+          starts_with: "my-daemon version ${VERSION}"
+        stderr:
+          empty: true
+
+  - name: print-config outputs defaults
+    steps:
+      - command: /usr/bin/my-daemon --print-config
+        stdout:
+          contains:
+            - "port=8080"
+            - "log_level=info"
+        stderr:
+          empty: true
+
+  - name: packaged config file exists
+    files:
+      /etc/my-daemon/my-daemon.conf:
+        permissions: 0o644
+
+  - name: packaged docs exist
+    files:
+      /usr/share/doc/my-daemon/rfc3339.txt:
+        permissions: 0o644
+
