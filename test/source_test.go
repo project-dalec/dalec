@@ -13,7 +13,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
-	"gotest.tools/v3/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSourceCmd(t *testing.T) {
@@ -337,7 +337,7 @@ func TestSourceBuild(t *testing.T) {
 				checkFile(ctx, t, "test/hello", res, []byte("hello\n"))
 
 				ref, err := res.SingleRef()
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 				fs := bkfs.FromRef(ctx, ref)
 				checkFileStat(t, fs, "test/world", checkFileStatOpt{})
 			})

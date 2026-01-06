@@ -18,7 +18,7 @@ import (
 	"github.com/project-dalec/dalec/test/testenv"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"google.golang.org/grpc"
-	"gotest.tools/v3/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConfig) {
@@ -302,7 +302,7 @@ genrule(
 			Dialer: pipeL.Dialer,
 		}))
 
-		assert.Assert(t, cache.Called.Load(), "expected bazel to write to the cache")
+		assert.True(t, cache.Called.Load(), "expected bazel to write to the cache")
 	})
 }
 

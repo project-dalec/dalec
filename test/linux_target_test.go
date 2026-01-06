@@ -27,9 +27,8 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/maps"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
 	"gotest.tools/v3/skip"
 	"pault.ag/go/debian/deb"
 )
@@ -643,12 +642,12 @@ echo "$BAR" > bar.txt
 			res := solveT(ctx, t, gwc, sr)
 
 			dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-			assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+			assert.True(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
 
 			var cfg dalec.DockerImageSpec
-			assert.Assert(t, json.Unmarshal(dt, &cfg))
-			assert.Check(t, cfg.Created.After(beforeBuild))
-			assert.Check(t, cfg.Created.Before(time.Now()))
+			assert.NoError(t, json.Unmarshal(dt, &cfg))
+			assert.True(t, cfg.Created.After(beforeBuild))
+			assert.True(t, cfg.Created.Before(time.Now()))
 
 			// Make sure the test framework was actually executed by the build target.
 			// This appends a test case so that is expected to fail and as such cause the build to fail.
@@ -1081,12 +1080,12 @@ echo "$BAR" > bar.txt
 			res := solveT(ctx, t, gwc, sr)
 
 			dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-			assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+			assert.True(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
 
 			var cfg dalec.DockerImageSpec
-			assert.Assert(t, json.Unmarshal(dt, &cfg))
-			assert.Check(t, cfg.Created.After(beforeBuild))
-			assert.Check(t, cfg.Created.Before(time.Now()))
+			assert.NoError(t, json.Unmarshal(dt, &cfg))
+			assert.True(t, cfg.Created.After(beforeBuild))
+			assert.True(t, cfg.Created.Before(time.Now()))
 
 			// Make sure the test framework was actually executed by the build target.
 			// This appends a test case so that is expected to fail and as such cause the build to fail.
@@ -1129,7 +1128,7 @@ echo "$BAR" > bar.txt
 			sr = newSolveRequest(withBuildTarget(testConfig.Target.Worker), withSpec(ctx, t, nil))
 
 			sOpt, err := frontend.SourceOptFromClient(ctx, gwc, &cfg.Platform)
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			worker := testConfig.Worker.SysextWorker(sOpt)
 
 			pc := dalec.Platform(&cfg.Platform)
@@ -2735,7 +2734,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 		})
 	})
 
@@ -2790,7 +2789,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 		})
 	})
 
@@ -2857,7 +2856,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 		})
 	})
 }
@@ -2901,7 +2900,7 @@ func testLinuxSymlinkArtifacts(ctx context.Context, t *testing.T, cfg testLinuxC
 		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 		res := solveT(ctx, t, client, sr)
 		_, err := res.SingleRef()
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 	})
 }
 
@@ -2948,14 +2947,14 @@ func testImageConfig(ctx context.Context, t *testing.T, target string, opts ...s
 		res := solveT(ctx, t, gwc, sr)
 
 		dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-		assert.Assert(t, ok, "missing image config in result metadata")
+		assert.True(t, ok, "missing image config in result metadata")
 
 		var img dalec.DockerImageSpec
 		err := json.Unmarshal(dt, &img)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
-		assert.Check(t, cmp.Equal(strings.Join(img.Config.Entrypoint, " "), spec.Image.Entrypoint))
-		assert.Check(t, cmp.Equal(strings.Join(img.Config.Cmd, " "), spec.Image.Cmd))
+		assert.Equal(t, strings.Join(img.Config.Entrypoint, " "), spec.Image.Entrypoint)
+		assert.Equal(t, strings.Join(img.Config.Cmd, " "), spec.Image.Cmd)
 
 		// Envs are merged together with the base image
 		// So we need to validate that the values we've set are what we expect
@@ -2963,25 +2962,25 @@ func testImageConfig(ctx context.Context, t *testing.T, target string, opts ...s
 		expectEnv := envToMap(spec.Image.Env)
 		actualEnv := envToMap(img.Config.Env)
 		for k, v := range expectEnv {
-			assert.Check(t, cmp.Equal(actualEnv[k], v))
+			assert.Equal(t, actualEnv[k], v)
 		}
 
 		// Labels are merged with the base image
 		// So we need to check that the labels we've set are added
 		for k, v := range spec.Image.Labels {
-			assert.Check(t, cmp.Equal(v, img.Config.Labels[k]))
+			assert.Equal(t, v, img.Config.Labels[k])
 		}
 
 		// Volumes are merged with the base image
 		// So we need to check that the volumes we've set are added
 		for k := range spec.Image.Volumes {
 			_, ok := img.Config.Volumes[k]
-			assert.Check(t, ok, k)
+			assert.True(t, ok, k)
 		}
 
-		assert.Check(t, cmp.Equal(img.Config.WorkingDir, spec.Image.WorkingDir))
-		assert.Check(t, cmp.Equal(img.Config.StopSignal, spec.Image.StopSignal))
-		assert.Check(t, cmp.Equal(img.Config.User, spec.Image.User))
+		assert.Equal(t, img.Config.WorkingDir, spec.Image.WorkingDir)
+		assert.Equal(t, img.Config.StopSignal, spec.Image.StopSignal)
+		assert.Equal(t, img.Config.User, spec.Image.User)
 	})
 }
 
@@ -3260,12 +3259,12 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res := solveT(ctx, t, client, sr)
 			_, err := res.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 
 			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			res = solveT(ctx, t, client, sr)
 			_, err = res.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 		})
 	})
 }
@@ -3304,7 +3303,7 @@ func testUserAndGroupCreation(ctx context.Context, t *testing.T, testCfg targetC
 		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testCfg.Container))
 		res := solveT(ctx, t, client, sr)
 		_, err := res.SingleRef()
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 	})
 }
 
@@ -3491,7 +3490,7 @@ func testTargetPlatform(ctx context.Context, t *testing.T, cfg testLinuxConfig) 
 		}
 
 		skip.If(t, tp.OS == "", "No other platforms available to test")
-		assert.Assert(t, tp.Architecture != bp.Architecture, "Target and build arches are the same")
+		assert.True(t, tp.Architecture != bp.Architecture, "Target and build arches are the same")
 
 		spec := newSimpleSpec()
 		spec.Args = map[string]string{
@@ -3511,22 +3510,22 @@ func testTargetPlatform(ctx context.Context, t *testing.T, cfg testLinuxConfig) 
 		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withPlatform(tp))
 		res := solveT(ctx, t, client, sr)
 		ref, err := res.SingleRef()
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
 		_, err = ref.StatFile(ctx, gwclient.StatRequest{
 			Path: cfg.PackageOutputPath(spec, tp),
 		})
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
 		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withPlatform(tp))
 		res = solveT(ctx, t, client, sr)
 		dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-		assert.Assert(t, ok, "missing image config in result metadata")
+		assert.True(t, ok, "missing image config in result metadata")
 
 		var img dalec.DockerImageSpec
 		err = json.Unmarshal(dt, &img)
-		assert.NilError(t, err)
-		assert.Assert(t, platforms.OnlyStrict(tp).Match(img.Platform), "platform mismatch, expected %v, got %v", tp, img.Platform)
+		assert.NoError(t, err)
+		assert.True(t, platforms.OnlyStrict(tp).Match(img.Platform), "platform mismatch, expected %v, got %v", tp, img.Platform)
 	})
 }
 
@@ -3534,14 +3533,14 @@ func extractDebControlFile(t *testing.T, f io.ReaderAt) io.ReadCloser {
 	t.Helper()
 
 	ar, err := deb.LoadAr(f)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	for {
 		entry, err := ar.Next()
 		if err == io.EOF {
 			break
 		}
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
 		if entry == nil {
 			break
@@ -3552,7 +3551,7 @@ func extractDebControlFile(t *testing.T, f io.ReaderAt) io.ReadCloser {
 		}
 
 		rdr, err := compression.DecompressStream(entry.Data)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		return rdr
 	}
 	return nil
@@ -3601,19 +3600,19 @@ func testPackageProvidesReplaces(ctx context.Context, t *testing.T, cfg testLinu
 		res := solveT(ctx, t, client, sr)
 
 		ref, err := res.SingleRef()
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
 		pkgfs := bkfs.FromRef(ctx, ref)
 
 		checkRPM := func(path string) {
 			// Check that the package provides are in the rpm
 			f, err := pkgfs.Open(path)
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			defer f.Close()
 
 			pkg, err := rpm.Read(f)
 			if err != nil {
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 			}
 
 			var found int
@@ -3624,13 +3623,13 @@ func testPackageProvidesReplaces(ctx context.Context, t *testing.T, cfg testLinu
 				}
 
 				compare, ok := spec.Provides[p.Name()]
-				assert.Assert(t, ok, p.Name())
+				assert.True(t, ok, p.Name())
 				found++
 
 				if len(compare.Version) > 0 {
 					v := strings.TrimPrefix(compare.Version[0], "= ")
 					res, err := lex.ProcessWordWithMatches(v, envGetter)
-					assert.NilError(t, err)
+					assert.NoError(t, err)
 					assert.Equal(t, p.Version(), res.Result, "version mismatch for %s", p.Name())
 				}
 			}
@@ -3638,13 +3637,13 @@ func testPackageProvidesReplaces(ctx context.Context, t *testing.T, cfg testLinu
 			found = 0
 			for _, r := range pkg.Obsoletes() {
 				compare, ok := spec.Provides[r.Name()]
-				assert.Assert(t, ok, r.Name())
+				assert.True(t, ok, r.Name())
 				found++
 
 				if len(compare.Version) > 0 {
 					v := strings.TrimPrefix(compare.Version[0], "= ")
 					res, err := lex.ProcessWordWithMatches(v, envGetter)
-					assert.NilError(t, err)
+					assert.NoError(t, err)
 					assert.Equal(t, r.Version(), res.Result, "version mismatch for %s", r.Name())
 				}
 			}
@@ -3653,11 +3652,11 @@ func testPackageProvidesReplaces(ctx context.Context, t *testing.T, cfg testLinu
 
 		checkDeb := func(path string) {
 			f, err := pkgfs.Open(path)
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			defer f.Close()
 
 			cf := extractDebControlFile(t, f.(io.ReaderAt))
-			assert.Assert(t, cf != nil, "control file not found in deb")
+			assert.True(t, cf != nil, "control file not found in deb")
 			defer cf.Close()
 
 			scanner := bufio.NewScanner(cf)
@@ -3684,7 +3683,7 @@ func testPackageProvidesReplaces(ctx context.Context, t *testing.T, cfg testLinu
 					break
 				}
 			}
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			assert.Equal(t, found, 2, "missing either provides or replaces in deb")
 		}
 
@@ -3708,8 +3707,8 @@ func testPackageProvidesReplaces(ctx context.Context, t *testing.T, cfg testLinu
 			}
 			return nil
 		})
-		assert.NilError(t, err)
-		assert.Assert(t, found, "no rpm or deb found in package")
+		assert.NoError(t, err)
+		assert.True(t, found, "no rpm or deb found in package")
 	})
 }
 
@@ -3772,7 +3771,7 @@ int main() {
 			res := solveT(ctx, t, client, sr)
 
 			ref, err := res.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 
 			pkgfs := bkfs.FromRef(ctx, ref)
 
@@ -3795,11 +3794,11 @@ int main() {
 
 				found = true
 				f, err := pkgfs.Open(path)
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 				defer f.Close()
 
 				pkg, err := rpm.Read(f)
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 
 				var found bool
 				for _, r := range pkg.Requires() {
@@ -3810,15 +3809,15 @@ int main() {
 				}
 
 				if spec.Artifacts.DisableAutoRequires {
-					assert.Check(t, !found, "auto-requires found %v", pkg.Requires())
+					assert.True(t, !found, "auto-requires found %v", pkg.Requires())
 				} else {
-					assert.Check(t, found, "auto-requires not found %v", pkg.Requires())
+					assert.True(t, found, "auto-requires not found %v", pkg.Requires())
 				}
 
 				return fs.SkipAll
 			})
-			assert.NilError(t, err)
-			assert.Assert(t, found)
+			assert.NoError(t, err)
+			assert.True(t, found)
 		})
 	}
 
@@ -3827,7 +3826,7 @@ int main() {
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
 			res := solveT(ctx, t, client, sr)
 			ref, err := res.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 
 			pkgfs := bkfs.FromRef(ctx, ref)
 
@@ -3878,15 +3877,15 @@ int main() {
 				}
 
 				if spec.Artifacts.DisableAutoRequires {
-					assert.Check(t, !found, "auto-requires found: %s\n%s", path, buf)
+					assert.True(t, !found, "auto-requires found: %s\n%s", path, buf)
 				} else {
-					assert.Check(t, found, "auto-requires not found: %s \n%s", path, buf)
+					assert.True(t, found, "auto-requires not found: %s \n%s", path, buf)
 				}
 				return fs.SkipAll
 			})
 
-			assert.NilError(t, err)
-			assert.Assert(t, found, "no deb found in package")
+			assert.NoError(t, err)
+			assert.True(t, found, "no deb found in package")
 		})
 	}
 
@@ -3968,7 +3967,7 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			pkgSr := newSolveRequest(withSpec(ctx, t, preBuiltSpec), withBuildTarget(testConfig.Target.Package))
 			pkgRes := solveT(ctx, t, client, pkgSr)
 			pkgRef, err := pkgRes.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			pkgSt, _ := pkgRef.ToState()
 
 			// Update the spec to include a unique marker file.
@@ -3988,7 +3987,7 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			)
 			containerRes := solveT(ctx, t, client, containerSr)
 			containerRef, err := containerRes.SingleRef()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 
 			// Read the contents of the package to ensure it does not have the marker file.
 			contents, err := containerRef.ReadFile(ctx, gwclient.ReadRequest{
@@ -3996,7 +3995,7 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			})
 			// The marker file should not be present in the container,
 			// as it was not part of the pre-built package.
-			assert.Assert(t, contents == nil, "marker file should not be present in the container")
+			assert.True(t, contents == nil, "marker file should not be present in the container")
 			assert.ErrorContains(t, err, "open /etc/marker.txt: no such file or directory")
 		})
 	})

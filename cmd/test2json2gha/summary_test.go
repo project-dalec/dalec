@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"gotest.tools/v3/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSummaryFormatter_FormatResults(t *testing.T) {
@@ -41,7 +41,7 @@ mypackage/Test4: 2.000s
 	var output bytes.Buffer
 
 	err := formatter.FormatResults(slices.Values(results), &output)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	t.Log(output.String())
 	assert.Equal(t, output.String(), expected)
 }

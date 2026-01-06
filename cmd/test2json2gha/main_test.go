@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"gotest.tools/v3/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -36,8 +36,8 @@ func TestDo(t *testing.T) {
 		}
 
 		anyFail, err := do(input, &output, cfg)
-		assert.NilError(t, err)
-		assert.Assert(t, anyFail, "expected anyFail to be true due to failed tests")
+		assert.NoError(t, err)
+		assert.True(t, anyFail, "expected anyFail to be true due to failed tests")
 
 		// Non-verbose output should only include the grouped fail events + error annotations
 		expected := failGroup + timeoutGroup + annotation
@@ -56,8 +56,8 @@ func TestDo(t *testing.T) {
 		}
 
 		anyFail, err := do(input, &output, cfg)
-		assert.NilError(t, err)
-		assert.Assert(t, anyFail, "expected anyFail to be true due to failed tests")
+		assert.NoError(t, err)
+		assert.True(t, anyFail, "expected anyFail to be true due to failed tests")
 
 		// verbose output should include grouped events for all test results + error annotations
 		expected := failGroup + passGroup + skipGroup + timeoutGroup + annotation
@@ -76,8 +76,8 @@ func TestDo(t *testing.T) {
 		}
 
 		anyFail, err := do(input, &output, cfg)
-		assert.NilError(t, err)
-		assert.Assert(t, anyFail, "expected anyFail to be true due to failed tests")
+		assert.NoError(t, err)
+		assert.True(t, anyFail, "expected anyFail to be true due to failed tests")
 
 		// Stream output should include all the raw events + the grouped fail events + the annotation
 		expected := testEventPassOutput + testEventFailOutput + testEventSkipOutput + testEventTimeoutOutput + testEventPackageOutput + failGroup + timeoutGroup + annotation
@@ -87,7 +87,7 @@ func TestDo(t *testing.T) {
 	t.Run("summary", func(t *testing.T) {
 		dir := t.TempDir()
 		f, err := os.CreateTemp(dir, "summary")
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		defer f.Close()
 
 		t.Setenv("GITHUB_STEP_SUMMARY", f.Name())
@@ -102,11 +102,11 @@ func TestDo(t *testing.T) {
 		}
 
 		anyFail, err := do(input, io.Discard, cfg)
-		assert.NilError(t, err)
-		assert.Assert(t, anyFail, "expected anyFail to be true due to failed tests")
+		assert.NoError(t, err)
+		assert.True(t, anyFail, "expected anyFail to be true due to failed tests")
 
 		output, err := os.ReadFile(f.Name())
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
 		expect := `## Test metrics
 **Skipped:** 1 &nbsp;&nbsp;&nbsp;&nbsp; **Failed:** 2 &nbsp;&nbsp;&nbsp;&nbsp; **Total:** 5 &nbsp;&nbsp;&nbsp;&nbsp; **Elapsed:** 0.250s
@@ -142,12 +142,12 @@ some_package: 0.250s
 		}
 
 		anyFail, err := do(input, &output, cfg)
-		assert.NilError(t, err)
-		assert.Assert(t, anyFail, "expected anyFail to be true due to failed tests")
+		assert.NoError(t, err)
+		assert.True(t, anyFail, "expected anyFail to be true due to failed tests")
 
 		// Validate that logs are written to the specified directory
 		entries, err := os.ReadDir(logDir)
-		assert.NilError(t, err)
-		assert.Assert(t, len(entries) > 0, "expected log files to be written to the log directory")
+		assert.NoError(t, err)
+		assert.True(t, len(entries) > 0, "expected log files to be written to the log directory")
 	})
 }

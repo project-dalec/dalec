@@ -23,11 +23,10 @@ import (
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/assert"
 	"github.com/tonistiigi/fsutil/types"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
 )
 
 const (
@@ -132,7 +131,7 @@ func checkFile(ctx context.Context, t *testing.T, name string, res *gwclient.Res
 	t.Helper()
 
 	dt := readFile(ctx, t, name, res)
-	assert.Check(t, cmp.Equal(string(dt), string(expect)))
+	assert.Equal(t, string(dt), string(expect))
 }
 
 func listTargets(ctx context.Context, t *testing.T, gwc gwclient.Client, spec *dalec.Spec) targets.List {
@@ -371,7 +370,7 @@ func readDefaultPlatform(ctx context.Context, t *testing.T, gwc gwclient.Client)
 	var p ocispecs.Platform
 
 	err := json.Unmarshal(dt, &p)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	return p
 }
 

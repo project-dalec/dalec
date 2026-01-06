@@ -6,9 +6,8 @@ import (
 	"go/token"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/tools/go/analysis"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
 )
 
 func TestCheckStructTags(t *testing.T) {
@@ -118,10 +117,10 @@ func TestCheckStructTags(t *testing.T) {
 
 			linter := structTagLinter{}
 			_, err = linter.Run(pass)
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 
-			assert.Assert(t, cmp.Len(reports, len(tt.expected)))
-			assert.Assert(t, cmp.DeepEqual(reports, tt.expected))
+			assert.Len(t, reports, len(tt.expected))
+			assert.Equal(t, tt.expected, reports)
 		})
 	}
 }
