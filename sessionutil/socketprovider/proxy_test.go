@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	"gotest.tools/v3/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 // echoServer implements a message based echo server
@@ -80,7 +80,7 @@ func TestProxyHandler(t *testing.T) {
 	handler, err := NewProxyHandler([]ProxyConfig{
 		{ID: "test", Dialer: echoListener.Dialer},
 	})
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	srv := grpc.NewServer()
 	handler.Register(srv)
@@ -91,7 +91,7 @@ func TestProxyHandler(t *testing.T) {
 	// passthrough:// is a special scheme that allows us to use the handlerListener's Dialer directly
 	// otherwise grpc will try to resolve whatever we put in there.
 	c, err := grpc.NewClient("passthrough://", dialerFnToGRPCDialer(handlerListener.Dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	defer c.Close() //nolint:errcheck
 
 	client := sshforward.NewSSHClient(c)
@@ -102,11 +102,11 @@ func TestProxyHandler(t *testing.T) {
 	assert.ErrorContains(t, err, "no connection found")
 
 	_, err = client.CheckAgent(ctx, &sshforward.CheckAgentRequest{ID: "test"})
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	ctx = metadata.AppendToOutgoingContext(ctx, sshforward.KeySSHID, "test")
 	stream, err := client.ForwardAgent(ctx)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	defer stream.CloseSend() //nolint:errcheck
 
@@ -115,33 +115,33 @@ func TestProxyHandler(t *testing.T) {
 
 	enc := json.NewEncoder(sw)
 	err = enc.Encode(&req)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	sr := &streamReader{stream: stream}
 	var resp echoResponse
 	dec := json.NewDecoder(sr)
 
 	err = dec.Decode(&resp)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, resp.Recvd, req.Data)
 	assert.Equal(t, resp.Count, 1)
 
 	req.Data = "another message"
 	err = enc.Encode(&req)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	err = dec.Decode(&resp)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, resp.Recvd, req.Data)
 	assert.Equal(t, resp.Count, 2)
 
 	// Test larger message
 	req.Data = strings.Repeat("x", 10000)
 	err = enc.Encode(&req)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	err = dec.Decode(&resp)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, resp.Recvd, req.Data)
 	assert.Equal(t, resp.Count, 3)
 }

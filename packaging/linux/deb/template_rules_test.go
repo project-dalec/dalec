@@ -5,8 +5,7 @@ import (
 	"testing"
 
 	"github.com/project-dalec/dalec"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRules_OverrideSystemd(t *testing.T) {
@@ -25,7 +24,7 @@ func TestRules_OverrideSystemd(t *testing.T) {
 	t.Run("no units", func(t *testing.T) {
 		w := newWrapper(nil)
 		out, err := w.OverrideSystemd()
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		expect := ""
 		assert.Equal(t, out.String(), expect)
 	})
@@ -37,7 +36,7 @@ func TestRules_OverrideSystemd(t *testing.T) {
 			})
 
 			out, err := w.OverrideSystemd()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			expect := `override_dh_installsystemd:
 	dh_installsystemd --name=foo
 `
@@ -50,7 +49,7 @@ func TestRules_OverrideSystemd(t *testing.T) {
 			})
 
 			out, err := w.OverrideSystemd()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			expect := `override_dh_installsystemd:
 	dh_installsystemd --name=foo --no-enable
 `
@@ -67,7 +66,7 @@ func TestRules_OverrideSystemd(t *testing.T) {
 			})
 
 			out, err := w.OverrideSystemd()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			expect := `override_dh_installsystemd:
 	dh_installsystemd --name=bar
 	dh_installsystemd --name=foo
@@ -83,7 +82,7 @@ func TestRules_OverrideSystemd(t *testing.T) {
 			})
 
 			out, err := w.OverrideSystemd()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			expect := `override_dh_installsystemd:
 	dh_installsystemd --name=bar --no-enable
 	dh_installsystemd --name=foo --no-enable
@@ -99,7 +98,7 @@ func TestRules_OverrideSystemd(t *testing.T) {
 			})
 
 			out, err := w.OverrideSystemd()
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			expect := `override_dh_installsystemd:
 	dh_installsystemd --name=bar
 	dh_installsystemd --name=foo --no-enable
@@ -125,14 +124,14 @@ Depends: ${misc:Depends},
          ${shlibs:Depends}
 `
 	actual := strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+	assert.Equal(t, actual, strings.TrimSpace(expect))
 
 	buf.Reset()
 
 	// Test again with non-nil deps
 	control.depends(buf, &dalec.PackageDependencies{})
 	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+	assert.Equal(t, actual, strings.TrimSpace(expect))
 
 	buf.Reset()
 
@@ -141,7 +140,7 @@ Depends: ${misc:Depends},
 		Runtime: map[string]dalec.PackageConstraints{},
 	})
 	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+	assert.Equal(t, actual, strings.TrimSpace(expect))
 
 	buf.Reset()
 
@@ -160,7 +159,7 @@ Depends: ${misc:Depends},
          foo
 `
 	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+	assert.Equal(t, actual, strings.TrimSpace(expect))
 
 	buf.Reset()
 
@@ -174,7 +173,7 @@ Depends: ${misc:Depends},
 	})
 
 	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+	assert.Equal(t, actual, strings.TrimSpace(expect))
 
 	buf.Reset()
 
@@ -189,7 +188,7 @@ Depends: ${misc:Depends},
 	})
 
 	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+	assert.Equal(t, actual, strings.TrimSpace(expect))
 }
 
 func TestRules_OverrideStrip(t *testing.T) {

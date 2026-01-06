@@ -11,8 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -146,7 +145,7 @@ func readTestEvents(t *testing.T) iter.Seq[*TestEvent] {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			if !yield(te) {
 				break
 			}
@@ -160,7 +159,7 @@ func TestOutputStreamer(t *testing.T) {
 
 	for event := range readTestEvents(t) {
 		err := streamer.HandleEvent(event)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 	}
 
 	expectedOutput := testEventPassOutput + testEventFailOutput + testEventSkipOutput + testEventTimeoutOutput + testEventPackageOutput
@@ -173,7 +172,7 @@ func TestOutputStreamer_HandleEvent(t *testing.T) {
 
 	for event := range readTestEvents(t) {
 		err := streamer.HandleEvent(event)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 	}
 
 	expectedOutput := testEventPassOutput + testEventFailOutput + testEventSkipOutput + testEventTimeoutOutput + testEventPackageOutput
@@ -183,41 +182,41 @@ func TestOutputStreamer_HandleEvent(t *testing.T) {
 func TestResultsHandler(t *testing.T) {
 	// Validate specific results
 	for r := range mockTestResults(t) {
-		assert.Check(t, cmp.Equal(r.pkg, testPackageName))
+		assert.Equal(t, testPackageName, r.pkg)
 		switch r.name {
 		case "TestGenPass":
-			assert.Check(t, !r.failed)
-			assert.Check(t, !r.skipped)
-			assert.Check(t, !r.timeout)
+			assert.False(t, r.failed)
+			assert.False(t, r.skipped)
+			assert.False(t, r.timeout)
 			output, err := io.ReadAll(r.Reader())
-			assert.NilError(t, err)
-			assert.Check(t, cmp.Equal(string(output), testEventPassOutput))
+			assert.NoError(t, err)
+			assert.Equal(t, testEventPassOutput, string(output))
 		case "TestGenFail":
-			assert.Check(t, r.failed)
-			assert.Check(t, !r.skipped)
-			assert.Check(t, !r.timeout)
+			assert.True(t, r.failed)
+			assert.False(t, r.skipped)
+			assert.False(t, r.timeout)
 			output, err := io.ReadAll(r.Reader())
-			assert.NilError(t, err)
-			assert.Check(t, cmp.Equal(string(output), testEventFailOutput))
+			assert.NoError(t, err)
+			assert.Equal(t, testEventFailOutput, string(output))
 		case "TestGenSkip":
-			assert.Check(t, !r.failed)
-			assert.Check(t, r.skipped)
-			assert.Check(t, !r.timeout)
+			assert.False(t, r.failed)
+			assert.True(t, r.skipped)
+			assert.False(t, r.timeout)
 			output, err := io.ReadAll(r.Reader())
-			assert.NilError(t, err)
-			assert.Check(t, cmp.Equal(string(output), testEventSkipOutput))
+			assert.NoError(t, err)
+			assert.Equal(t, testEventSkipOutput, string(output))
 		case "TestGenTimeout":
-			assert.Check(t, !r.failed)
-			assert.Check(t, !r.skipped)
-			assert.Check(t, r.timeout)
+			assert.False(t, r.failed)
+			assert.False(t, r.skipped)
+			assert.True(t, r.timeout)
 			output, err := io.ReadAll(r.Reader())
-			assert.NilError(t, err)
-			assert.Check(t, cmp.Equal(string(output), testEventTimeoutOutput))
+			assert.NoError(t, err)
+			assert.Equal(t, testEventTimeoutOutput, string(output))
 		case "":
-			assert.Check(t, r.failed)
+			assert.True(t, r.failed)
 			output, err := io.ReadAll(r.Reader())
-			assert.NilError(t, err)
-			assert.Check(t, cmp.Equal(string(output), testEventPackageOutput))
+			assert.NoError(t, err)
+			assert.Equal(t, testEventPackageOutput, string(output))
 		default:
 			t.Fatalf("unexpected test result: %s", r.name)
 		}
@@ -229,10 +228,10 @@ func TestCheckFailed(t *testing.T) {
 
 	for event := range readTestEvents(t) {
 		err := failed.HandleEvent(event)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 	}
 
-	assert.Assert(t, bool(failed), "expected checkFailed to be true after a fail event")
+	assert.True(t, bool(failed), "expected checkFailed to be true after a fail event")
 
 	t.Run("HandleMultipleEvents_NoFailures", func(t *testing.T) {
 		var failed checkFailed
@@ -243,10 +242,10 @@ func TestCheckFailed(t *testing.T) {
 
 		for _, event := range events {
 			err := failed.HandleEvent(event)
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 		}
 
-		assert.Assert(t, !bool(failed), "expected checkFailed to be false when no fail events are present")
+		assert.False(t, bool(failed), "expected checkFailed to be false when no fail events are present")
 	})
 }
 
@@ -258,7 +257,7 @@ func TestWriteLogs(t *testing.T) {
 
 	for event := range events {
 		err := handler.HandleEvent(event)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 	}
 
 	results := handler.Results()
@@ -269,9 +268,9 @@ func TestWriteLogs(t *testing.T) {
 	for result := range results {
 		expectedFileName := filepath.Join(logDir, result.pkg, strings.ReplaceAll(result.name, "/", "_")+".txt")
 		content, err := os.ReadFile(expectedFileName)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		output, err := io.ReadAll(result.Reader())
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		assert.Equal(t, string(content), string(output), "log file content does not match expected output")
 	}
 }

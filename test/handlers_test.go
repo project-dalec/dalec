@@ -14,8 +14,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestHandlerTargetForwarding tests that targets are forwarded to the correct frontend.
@@ -159,20 +158,20 @@ func TestHandlerSubrequestResolve(t *testing.T) {
 				})
 
 				res, err := gwc.Solve(ctx, req)
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 
 				dt, ok := res.Metadata["result.txt"]
-				assert.Assert(t, ok)
+				assert.True(t, ok)
 
 				var ls []dalec.Spec
 				err = yaml.Unmarshal(dt, &ls)
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 
 				var checkPlatforms []ocispecs.Platform
 
 				for _, p := range pls {
 					platform, err := platforms.Parse(p)
-					assert.NilError(t, err)
+					assert.NoError(t, err)
 					checkPlatforms = append(checkPlatforms, platform)
 				}
 
@@ -182,7 +181,7 @@ func TestHandlerSubrequestResolve(t *testing.T) {
 					checkPlatforms = append(checkPlatforms, p)
 				}
 
-				assert.Assert(t, cmp.Len(ls, len(checkPlatforms)))
+				assert.Len(t, ls, len(checkPlatforms))
 
 				for i, p := range checkPlatforms {
 					s := ls[i]

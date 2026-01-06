@@ -20,8 +20,7 @@ import (
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 	"github.com/project-dalec/dalec/targets/windows"
 	"golang.org/x/exp/maps"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 var windowsAmd64 = ocispecs.Platform{OS: "windows", Architecture: "amd64"}
@@ -420,8 +419,8 @@ echo "$BAR" > bar.txt
 
 				var metaPlatforms exptypes.Platforms
 				err := json.Unmarshal(res.Metadata["refs.platforms"], &metaPlatforms)
-				assert.NilError(t, err)
-				assert.Assert(t, cmp.Len(metaPlatforms.Platforms, 2))
+				assert.NoError(t, err)
+				assert.Len(t, metaPlatforms.Platforms, 2)
 
 				// Go through each of the base images we requested and resolve
 				// them so we can get the platform info
@@ -433,23 +432,23 @@ echo "$BAR" > bar.txt
 					_, _, dt, err := gwc.ResolveImageConfig(ctx, ref.Rootfs.DockerImage.Ref, sourceresolver.Opt{
 						Platform: &windowsAmd64,
 					})
-					assert.NilError(t, err)
+					assert.NoError(t, err)
 
 					var cfg dalec.DockerImageSpec
-					assert.NilError(t, json.Unmarshal(dt, &cfg))
-					assert.Check(t, cmp.Equal(cfg.OS, actual.Platform.OS))
-					assert.Check(t, cmp.Equal(cfg.Architecture, actual.Platform.Architecture))
-					assert.Check(t, cmp.Equal(cfg.OSVersion, actual.Platform.OSVersion))
+					assert.NoError(t, json.Unmarshal(dt, &cfg))
+					assert.Equal(t, cfg.OS, actual.Platform.OS)
+					assert.Equal(t, cfg.Architecture, actual.Platform.Architecture)
+					assert.Equal(t, cfg.OSVersion, actual.Platform.OSVersion)
 				}
 
 				// NOTE: we are not using `res.SingleRef` because we requested multiple
 				// refs which would cause an error in this case.
 				// Instead we need to look at res.Refs
-				assert.Assert(t, cmp.Len(res.Refs, len(metaPlatforms.Platforms)))
+				assert.Len(t, res.Refs, len(metaPlatforms.Platforms))
 
 				for _, p := range metaPlatforms.Platforms {
 					ref, ok := res.Refs[platforms.FormatAll(p.Platform)]
-					assert.Assert(t, ok, "unepxected ref keys: %s", maps.Keys(res.Refs))
+					assert.True(t, ok, "unepxected ref keys: %s", maps.Keys(res.Refs))
 					validateSymlinks(ctx, t, ref, spec)
 				}
 
@@ -837,11 +836,11 @@ func testWindowsZipFilename(ctx context.Context, t *testing.T) {
 		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
 		res := solveT(ctx, t, gwc, sr)
 		ref, err := res.SingleRef()
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		filename := fmt.Sprintf("/%s_%s-%s_%s.zip", spec.Name, spec.Version, spec.Revision, runtime.GOARCH)
 		stat, err := ref.StatFile(ctx, gwclient.StatRequest{Path: filename})
-		assert.NilError(t, err)
-		assert.Assert(t, stat != nil)
+		assert.NoError(t, err)
+		assert.True(t, stat != nil)
 		assert.Equal(t, stat.Path, filepath.Base(filename))
 	})
 }

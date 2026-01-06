@@ -19,8 +19,7 @@ import (
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSourceGitSSH(t *testing.T) {
@@ -49,7 +48,7 @@ func TestSourceGitSSH(t *testing.T) {
 		checkGitOp(t, ops2, &src)
 
 		// git ops require extra filtering to get the correct subdir, so we should have an extra op
-		assert.Check(t, cmp.Len(ops2, len(ops)+1))
+		assert.Len(t, ops2, len(ops)+1)
 		checkFilter(t, ops2[1].GetFile(), &src)
 	})
 
@@ -256,7 +255,7 @@ exit 0
 	for _, dt := range def.Def[:len(def.Def)-1] {
 		var op pb.Op
 		err := op.Unmarshal(dt)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		dgst := digest.FromBytes(dt)
 		m[string(dgst)] = &op
 		arr = append(arr, &op)
@@ -632,7 +631,7 @@ func TestSourceContext(t *testing.T) {
 				src := src
 				src.Path = "subdir"
 				ops := getSourceOp(ctx, t, src)
-				assert.Assert(t, cmp.Len(ops, 2))
+				assert.Len(t, ops, 2)
 				checkContext(t, ops[0].GetSource(), &src)
 				// for context source, we expect to have a copy operation as the last op when subdir is used
 				checkFilter(t, ops[1].GetFile(), &src)
@@ -646,7 +645,7 @@ func TestSourceContext(t *testing.T) {
 				// With include/exclude only, this should be handled with just one op.
 				// except... there are optimizations to prevent fetching the same context multiple times
 				// As such we need to make sure filters are applied correctly.
-				assert.Assert(t, cmp.Len(ops, 2))
+				assert.Len(t, ops, 2)
 				checkContext(t, ops[0].GetSource(), &src)
 				checkFilter(t, ops[1].GetFile(), &src)
 			})
@@ -660,7 +659,7 @@ func TestSourceContext(t *testing.T) {
 				t.Log("excludes before:", src.Excludes)
 				ops := getSourceOp(ctx, t, src)
 				// for context source, we expect to have a copy operation as the last op when subdir is used
-				assert.Assert(t, cmp.Len(ops, 2))
+				assert.Len(t, ops, 2)
 				checkContext(t, ops[0].GetSource(), &src)
 				checkFilter(t, ops[1].GetFile(), &src)
 			})
@@ -1042,13 +1041,13 @@ func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
 	if src.Git.Auth.Header != "" {
 		hdr = src.Git.Auth.Header
 	}
-	assert.Check(t, cmp.Equal(op.Attrs["git.authheadersecret"], hdr), op.Attrs)
+	assert.Equal(t, hdr, op.Attrs["git.authheadersecret"], op.Attrs)
 
 	token := defaultAuthToken
 	if src.Git.Auth.Token != "" {
 		token = src.Git.Auth.Token
 	}
-	assert.Check(t, cmp.Equal(op.Attrs["git.authtokensecret"], token), op.Attrs)
+	assert.Equal(t, token, op.Attrs["git.authtokensecret"], op.Attrs)
 
 	if !strings.HasPrefix(src.Git.URL, "http") {
 		// ssh settings are only set when using ssh based auth
@@ -1056,7 +1055,7 @@ func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
 		if src.Git.Auth.SSH != "" {
 			ssh = src.Git.Auth.SSH
 		}
-		assert.Check(t, cmp.Equal(op.Attrs["git.mountsshsock"], ssh), op)
+		assert.Equal(t, ssh, op.Attrs["git.mountsshsock"], op)
 	}
 }
 
@@ -1072,7 +1071,7 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 
 	// Check that the requests for secrets are there for when the script runs.
 	scriptOp := ops[scriptExecOpIdx].GetExec()
-	assert.Assert(t, scriptOp != nil, "expected script exec op")
+	assert.True(t, scriptOp != nil, "expected script exec op")
 
 	secrets := map[string]struct{}{}
 	for _, mnt := range scriptOp.Mounts {
@@ -1086,8 +1085,8 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 		}
 	}
 
-	assert.Check(t, cmp.Equal(actualNumSecrets, expectedNumSecrets), secrets)
-	assert.Check(t, cmp.Equal(actualNumSSH, expectedNumSSH), secrets)
+	assert.Equal(t, expectedNumSecrets, actualNumSecrets, secrets)
+	assert.Equal(t, expectedNumSSH, actualNumSSH, secrets)
 
 	for _, auth := range src.Generate[0].Gomod.Auth {
 		var chk string
@@ -1097,23 +1096,23 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 		case auth.Header != "":
 			chk = auth.Header
 		default:
-			assert.Check(t, auth.SSH != nil)
+			assert.True(t, auth.SSH != nil)
 			chk = auth.SSH.ID
 		}
 
-		assert.Check(t, chk != "")
+		assert.True(t, chk != "")
 
 		_, requiresSecret := secrets[chk]
-		assert.Check(t, requiresSecret, secrets)
+		assert.True(t, requiresSecret, secrets)
 	}
 
 	// check that an ssh socket will be mounted
 	if expectedNumSSH > 0 {
-		assert.Check(t, hasSSHMount(scriptOp), scriptOp)
+		assert.True(t, hasSSHMount(scriptOp), scriptOp)
 	}
 
 	// check that the gomod git credential helper will be mounted
-	assert.Check(t, hasCredentialHelperMount(scriptOp), scriptOp)
+	assert.True(t, hasCredentialHelperMount(scriptOp), scriptOp)
 
 	validBasenames := map[string]struct{}{
 		"go_mod_download.sh": {},
@@ -1125,7 +1124,7 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 	for i := range ops[scriptExecOpIdx].Inputs {
 		inpDigest := ops[scriptExecOpIdx].Inputs[i].Digest
 		mf, hasMkFileDigest := m[inpDigest]
-		assert.Check(t, hasMkFileDigest)
+		assert.True(t, hasMkFileDigest)
 		mkFileOp := mf.GetFile()
 
 		if mkFileOp == nil {
@@ -1133,13 +1132,13 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 		}
 
 		// Check that it depends on the `mkfile` op which generates the script.
-		assert.Check(t, cmp.Len(mkFileOp.Actions, 1), mkFileOp)
+		assert.Len(t, mkFileOp.Actions, 1, mkFileOp)
 		famf, ok := mkFileOp.Actions[0].Action.(*pb.FileAction_Mkfile)
 		if !ok {
 			continue
 		}
 
-		assert.Assert(t, ok, "expected mkfile action, got %T:\n%s", mkFileOp.Actions[0].Action, mkFileOp.String())
+		assert.True(t, ok, "expected mkfile action, got %T:\n%s", mkFileOp.Actions[0].Action, mkFileOp.String())
 
 		basename := strings.TrimPrefix(filepath.Base(famf.Mkfile.Path), "/")
 		// This is from the way the test is set up, but will not be the case during actual runtime
@@ -1149,11 +1148,11 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 
 		mkfileFound = true
 		_, hasValidFilename := validBasenames[basename]
-		assert.Check(t, hasValidFilename, basename)
+		assert.True(t, hasValidFilename, basename)
 		break
 	}
 
-	assert.Check(t, mkfileFound)
+	assert.True(t, mkfileFound)
 }
 
 func hasSSHMount(scriptOp *pb.ExecOp) bool {
@@ -1211,8 +1210,8 @@ func checkFilter(t *testing.T, op *pb.FileOp, src *Source) {
 		t.Error("expected dir copy contents")
 	}
 
-	assert.Check(t, cmp.DeepEqual(cpAction.IncludePatterns, includes))
-	assert.Check(t, cmp.DeepEqual(cpAction.ExcludePatterns, excludes))
+	assert.Equal(t, includes, cpAction.IncludePatterns)
+	assert.Equal(t, excludes, cpAction.ExcludePatterns)
 }
 
 type expectMount struct {
@@ -1297,7 +1296,7 @@ func checkContext(t *testing.T, op *pb.SourceOp, src *Source) {
 			t.Fatal(err)
 		}
 		localIncludes := op.Attrs["local.includepattern"]
-		assert.Check(t, cmp.Equal(string(includesJson), localIncludes))
+		assert.Equal(t, string(includesJson), localIncludes)
 	}
 
 	var excludes []string
@@ -1313,8 +1312,8 @@ func checkContext(t *testing.T, op *pb.SourceOp, src *Source) {
 		var actual []string
 		localExcludes := op.Attrs["local.excludepatterns"]
 		err := json.Unmarshal([]byte(localExcludes), &actual)
-		assert.NilError(t, err, op)
-		assert.Check(t, cmp.DeepEqual(actual, expect))
+		assert.NoError(t, err, op)
+		assert.Equal(t, expect, actual)
 	}
 
 	if src.Excludes != nil {
@@ -1420,18 +1419,18 @@ func TestSourceToMount(t *testing.T) {
 			t.Fatal("expected at least 1 op")
 		}
 
-		assert.Assert(t, cmp.Len(ops, 2))
+		assert.Len(t, ops, 2)
 
 		srcOp := ops[0].GetSource()
 		execOp := ops[1].GetExec()
-		assert.Assert(t, srcOp != nil)
-		assert.Assert(t, execOp != nil)
-		assert.Assert(t, cmp.Len(execOp.Mounts, 2)) // rootfs mount and http mount
+		assert.True(t, srcOp != nil)
+		assert.True(t, execOp != nil)
+		assert.Len(t, execOp.Mounts, 2) // rootfs mount and http mount
 
-		assert.Check(t, cmp.Equal(src.HTTP.URL, srcOp.Identifier))
-		assert.Check(t, cmp.Equal(srcOp.Attrs["http.filename"], internalMountSourceName))
+		assert.Equal(t, src.HTTP.URL, srcOp.Identifier)
+		assert.Equal(t, srcOp.Attrs["http.filename"], internalMountSourceName)
 
-		assert.Check(t, cmp.Equal("/mnt", execOp.Mounts[1].Dest))
-		assert.Check(t, cmp.Equal(internalMountSourceName, execOp.Mounts[1].Selector)) // should match the filename we set on the source op
+		assert.Equal(t, "/mnt", execOp.Mounts[1].Dest)
+		assert.Equal(t, internalMountSourceName, execOp.Mounts[1].Selector) // should match the filename we set on the source op
 	})
 }

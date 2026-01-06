@@ -3,9 +3,9 @@ package dalec
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestMergeDependencies(t *testing.T) {
@@ -124,7 +124,7 @@ func TestMergeDependencies(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := MergeDependencies(tt.base, tt.target)
 			ignored := cmpopts.IgnoreUnexported(PackageDependencies{}, PackageConstraints{}, PackageRepositoryConfig{}, Source{}, SourceHTTP{})
-			assert.Check(t, cmp.DeepEqual(tt.expected, result, ignored))
+			assert.Empty(t, cmp.Diff(tt.expected, result, ignored))
 		})
 	}
 }

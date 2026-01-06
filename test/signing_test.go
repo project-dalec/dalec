@@ -14,8 +14,7 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 func runTest(t *testing.T, f testenv.TestFunc, opts ...testenv.TestRunnerOpt) {
@@ -124,7 +123,7 @@ func linuxSigningTests(ctx context.Context, testConfig testLinuxConfig) func(*te
 			spec.PackageConfig.Signer.Image = "notexist"
 			runTest(t, distroSigningTest(t, spec, testConfig.Target.Package, testConfig), testenv.WithSolveStatusFn(handleStatus))
 
-			assert.Assert(t, found, "Spec signing override warning message not emitted")
+			assert.True(t, found, "Spec signing override warning message not emitted")
 		})
 
 		t.Run("with args", func(t *testing.T) {
@@ -199,7 +198,7 @@ signer:
 				testenv.WithSolveStatusFn(handleStatus),
 			)
 
-			assert.Assert(t, found, "Signing overwritten warning message not emitted")
+			assert.True(t, found, "Signing overwritten warning message not emitted")
 		})
 
 		t.Run("with path build arg and build context", func(t *testing.T) {
@@ -282,7 +281,7 @@ signer:
 				withBuildArg("DALEC_SIGNING_CONFIG_PATH", "/sign_config.yml"),
 			), testenv.WithSolveStatusFn(handleStatus))
 
-			assert.Assert(t, found, "spec signing config overwritten warning not emitted")
+			assert.True(t, found, "spec signing config overwritten warning not emitted")
 		})
 
 		t.Run("skip signing", func(t *testing.T) {
@@ -302,7 +301,7 @@ signer:
 				}
 			}
 			runTest(t, distroSkipSigningTest(t, spec, testConfig.Target.Package), testenv.WithSolveStatusFn(handleStatus))
-			assert.Assert(t, found, "Signing disabled warning message not emitted")
+			assert.True(t, found, "Signing disabled warning message not emitted")
 		})
 
 		t.Run("skip signing takes precedence over custom context", func(t *testing.T) {
@@ -340,7 +339,7 @@ signer:
 				withBuildContext(ctx, t, "dalec_signing_config", signConfig),
 			), testenv.WithSolveStatusFn(handleStatus))
 
-			assert.Assert(t, found, "Signing disabled warning message not emitted")
+			assert.True(t, found, "Signing disabled warning message not emitted")
 		})
 
 		t.Run("skip signing takes precedence over local context", func(t *testing.T) {
@@ -377,7 +376,7 @@ signer:
 				withBuildArg("DALEC_SIGNING_CONFIG_PATH", "/sign_config.yml"),
 			), testenv.WithSolveStatusFn(handleStatus))
 
-			assert.Assert(t, found, "Signing disabled warning message not emitted")
+			assert.True(t, found, "Signing disabled warning message not emitted")
 		})
 	}
 }
@@ -400,16 +399,16 @@ func windowsSigningTests(t *testing.T, tcfg targetConfig) {
 		cfg := readFile(ctx, t, "config.json", res)
 		mfst := readFile(ctx, t, "manifest.json", res)
 
-		assert.Check(t, cmp.Equal(string(tgt), "windowscross"))
-		assert.Check(t, cmp.Contains(string(cfg), "windows"))
+		assert.Equal(t, string(tgt), "windowscross")
+		assert.Contains(t, string(cfg), "windows")
 
 		var files []string
-		assert.NilError(t, json.Unmarshal(mfst, &files))
+		assert.NoError(t, json.Unmarshal(mfst, &files))
 		slices.Sort(files)
 
 		expectedFiles := tcfg.ListExpectedSignFiles(spec, platforms.DefaultSpec())
 		slices.Sort(expectedFiles)
-		assert.Assert(t, cmp.DeepEqual(files, expectedFiles))
+		assert.Equal(t, expectedFiles, files)
 	}
 	t.Run("target spec config", func(t *testing.T) {
 		t.Parallel()
@@ -531,7 +530,7 @@ signer:
 			}
 		}, testenv.WithSolveStatusFn(handleStatus))
 
-		assert.Assert(t, found, "Signing disabled warning message not emitted")
+		assert.True(t, found, "Signing disabled warning message not emitted")
 	})
 }
 
@@ -575,10 +574,10 @@ func distroSigningTest(t *testing.T, spec *dalec.Spec, buildTarget string, tcfg 
 		slices.Sort(expectedFiles)
 
 		var files []string
-		assert.NilError(t, json.Unmarshal(mfst, &files))
+		assert.NoError(t, json.Unmarshal(mfst, &files))
 		slices.Sort(files)
 
-		assert.Assert(t, cmp.DeepEqual(files, expectedFiles))
+		assert.Equal(t, expectedFiles, files)
 	}
 }
 

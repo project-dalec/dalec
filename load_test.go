@@ -13,8 +13,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/frontend/dockerui"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 //go:embed test/fixtures/unmarshall/source-inline.yml
@@ -657,10 +656,10 @@ sources:
 
 func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	spec := &Spec{}
-	assert.NilError(t, spec.SubstituteArgs(nil))
+	assert.NoError(t, spec.SubstituteArgs(nil))
 
 	env := map[string]string{}
-	assert.NilError(t, spec.SubstituteArgs(env))
+	assert.NoError(t, spec.SubstituteArgs(env))
 
 	// some values we'll be using throughout the test
 	const (
@@ -680,12 +679,12 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 			return key == "FOO"
 		}
 	})
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	spec.Args = map[string]string{}
 
 	spec.Args["FOO"] = ""
-	assert.NilError(t, spec.SubstituteArgs(env))
+	assert.NoError(t, spec.SubstituteArgs(env))
 
 	pairs := map[string]string{
 		"FOO":      "$FOO",
@@ -773,32 +772,32 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	spec.Args["BAR"] = ""
 	spec.Args["VAR_WITH_DEFAULT"] = argWithDefault
 
-	assert.NilError(t, spec.SubstituteArgs(env))
+	assert.NoError(t, spec.SubstituteArgs(env))
 
-	assert.Check(t, cmp.Equal(spec.Sources["patch"].Path, "foo/"+bar))
-	assert.Check(t, cmp.Equal(spec.Sources["patch"].Includes[0], "foo/"+bar))
-	assert.Check(t, cmp.Equal(spec.Sources["patch"].Excludes[0], "foo/"+bar))
-	assert.Check(t, cmp.Equal(spec.Patches["src"][0].Path, foo))
+	assert.Equal(t, spec.Sources["patch"].Path, "foo/"+bar)
+	assert.Equal(t, spec.Sources["patch"].Includes[0], "foo/"+bar)
+	assert.Equal(t, spec.Sources["patch"].Excludes[0], "foo/"+bar)
+	assert.Equal(t, spec.Patches["src"][0].Path, foo)
 
 	// Base package config
-	assert.Check(t, cmp.Equal(spec.PackageConfig.Signer.Args["FOO"], foo))
-	assert.Check(t, cmp.Equal(spec.PackageConfig.Signer.Args["BAR"], bar))
-	assert.Check(t, cmp.Equal(spec.PackageConfig.Signer.Args["WHATEVER"], argWithDefault))
-	assert.Check(t, cmp.Equal(spec.PackageConfig.Signer.Args["REGULAR"], plainOleValue))
+	assert.Equal(t, spec.PackageConfig.Signer.Args["FOO"], foo)
+	assert.Equal(t, spec.PackageConfig.Signer.Args["BAR"], bar)
+	assert.Equal(t, spec.PackageConfig.Signer.Args["WHATEVER"], argWithDefault)
+	assert.Equal(t, spec.PackageConfig.Signer.Args["REGULAR"], plainOleValue)
 
 	// targets
-	assert.Check(t, cmp.Nil(spec.Targets["t1"].Frontend))
-	assert.Check(t, cmp.Equal(spec.Targets["t2"].PackageConfig.Signer.Args["BAR"], bar))
-	assert.Check(t, cmp.Equal(spec.Targets["t2"].PackageConfig.Signer.Args["WHATEVER"], argWithDefault))
-	assert.Check(t, cmp.Equal(spec.Targets["t2"].PackageConfig.Signer.Args["REGULAR"], plainOleValue))
-	assert.Check(t, cmp.Equal(spec.Targets["t2"].Image.Labels["foo"], foo))
+	assert.Nil(t, spec.Targets["t1"].Frontend)
+	assert.Equal(t, spec.Targets["t2"].PackageConfig.Signer.Args["BAR"], bar)
+	assert.Equal(t, spec.Targets["t2"].PackageConfig.Signer.Args["WHATEVER"], argWithDefault)
+	assert.Equal(t, spec.Targets["t2"].PackageConfig.Signer.Args["REGULAR"], plainOleValue)
+	assert.Equal(t, spec.Targets["t2"].Image.Labels["foo"], foo)
 
-	assert.Check(t, cmp.Equal(spec.Dependencies.Build["p1"].Version[0], "1.0"))
-	assert.Check(t, cmp.Equal(spec.Dependencies.Build["p1"].Version[1], "foo"))
-	assert.Check(t, cmp.Equal(spec.Dependencies.Runtime["p1"].Version[0], "1.0"))
-	assert.Check(t, cmp.Equal(spec.Dependencies.Runtime["p1"].Version[1], "foo"))
-	assert.Check(t, cmp.Equal(spec.Provides["p1"].Version[0], "1.0"))
-	assert.Check(t, cmp.Equal(spec.Replaces["p1"].Version[0], "1.0"))
+	assert.Equal(t, spec.Dependencies.Build["p1"].Version[0], "1.0")
+	assert.Equal(t, spec.Dependencies.Build["p1"].Version[1], "foo")
+	assert.Equal(t, spec.Dependencies.Runtime["p1"].Version[0], "1.0")
+	assert.Equal(t, spec.Dependencies.Runtime["p1"].Version[1], "foo")
+	assert.Equal(t, spec.Provides["p1"].Version[0], "1.0")
+	assert.Equal(t, spec.Replaces["p1"].Version[0], "1.0")
 }
 
 func TestCustomRepoFillDefaults(t *testing.T) {
@@ -833,22 +832,22 @@ targets:
 	}
 
 	extraRepo := spec.Dependencies.ExtraRepos[0]
-	assert.Check(t, cmp.Equal(extraRepo.Config["custom.repo"].Context.Name,
-		dockerui.DefaultLocalNameContext))
+	assert.Equal(t, extraRepo.Config["custom.repo"].Context.Name,
+		dockerui.DefaultLocalNameContext)
 
-	assert.Check(t, cmp.Equal(extraRepo.Keys["public.gpg"].Context.Name,
-		dockerui.DefaultLocalNameContext))
+	assert.Equal(t, extraRepo.Keys["public.gpg"].Context.Name,
+		dockerui.DefaultLocalNameContext)
 
-	assert.Check(t, cmp.DeepEqual(extraRepo.Envs, []string{"build", "install", "test"}))
+	assert.Equal(t, []string{"build", "install", "test"}, extraRepo.Envs)
 
 	extraRepo = spec.Targets["foo"].Dependencies.ExtraRepos[0]
-	assert.Check(t, cmp.Equal(extraRepo.Config["custom.repo"].Context.Name,
-		dockerui.DefaultLocalNameContext))
+	assert.Equal(t, extraRepo.Config["custom.repo"].Context.Name,
+		dockerui.DefaultLocalNameContext)
 
-	assert.Check(t, cmp.Equal(extraRepo.Keys["public.gpg"].Context.Name,
-		dockerui.DefaultLocalNameContext))
+	assert.Equal(t, extraRepo.Keys["public.gpg"].Context.Name,
+		dockerui.DefaultLocalNameContext)
 
-	assert.Check(t, cmp.DeepEqual(extraRepo.Envs, []string{"build", "install", "test"}))
+	assert.Equal(t, []string{"build", "install", "test"}, extraRepo.Envs)
 
 }
 
@@ -973,121 +972,121 @@ targets:
 		err = spec.SubstituteArgs(map[string]string{
 			"SOME_ARG": "test",
 		})
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
-		assert.Check(t, cmp.Equal(spec.Version, "1.2.test"))
-		assert.Check(t, cmp.Equal(spec.Revision, "testing"))
-		assert.Check(t, cmp.Equal(spec.Sources["img"].DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(spec.Sources["git"].Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(spec.Sources["http"].HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Sources["context"].Context.Name, "test"))
-		assert.Check(t, cmp.Equal(spec.Sources["build"].Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(spec.Sources["build"].Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, spec.Version, "1.2.test")
+		assert.Equal(t, spec.Revision, "testing")
+		assert.Equal(t, spec.Sources["img"].DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, spec.Sources["git"].Git.URL, "https://test")
+		assert.Equal(t, spec.Sources["git"].Git.Commit, "baddecaftest")
+		assert.Equal(t, spec.Sources["http"].HTTP.URL, "https://test")
+		assert.Equal(t, spec.Sources["context"].Context.Name, "test")
+		assert.Equal(t, spec.Sources["build"].Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, spec.Sources["build"].Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(spec.Build.Env["TEST_TOP"], "test"))
-		assert.Check(t, cmp.Equal(spec.Build.Steps[0].Env["TEST"], "test"))
+		assert.Equal(t, spec.Build.Env["TEST_TOP"], "test")
+		assert.Equal(t, spec.Build.Steps[0].Env["TEST"], "test")
 
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Keys["img"].DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Keys["git"].Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Keys["git"].Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Keys["http"].HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Keys["context"].Context.Name, "test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Keys["build"].Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Keys["build"].Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Keys["img"].DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Keys["git"].Git.URL, "https://test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Keys["git"].Git.Commit, "baddecaftest")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Keys["http"].HTTP.URL, "https://test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Keys["context"].Context.Name, "test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Keys["build"].Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Keys["build"].Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Config["img"].DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Config["git"].Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Config["git"].Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Config["http"].HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Config["context"].Context.Name, "test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Config["build"].Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Config["build"].Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Config["img"].DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Config["git"].Git.URL, "https://test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Config["git"].Git.Commit, "baddecaftest")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Config["http"].HTTP.URL, "https://test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Config["context"].Context.Name, "test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Config["build"].Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Config["build"].Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Data[0].Spec.DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Data[1].Spec.Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Data[1].Spec.Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Data[2].Spec.HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Data[3].Spec.Context.Name, "test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Data[4].Spec.Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(spec.Dependencies.ExtraRepos[0].Data[4].Spec.Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Data[0].Spec.DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Data[1].Spec.Git.URL, "https://test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Data[1].Spec.Git.Commit, "baddecaftest")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Data[2].Spec.HTTP.URL, "https://test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Data[3].Spec.Context.Name, "test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Data[4].Spec.Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, spec.Dependencies.ExtraRepos[0].Data[4].Spec.Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(spec.Tests[0].Mounts[0].Spec.DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Mounts[1].Spec.Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Mounts[1].Spec.Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Mounts[2].Spec.HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Mounts[3].Spec.Context.Name, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Mounts[4].Spec.Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Mounts[4].Spec.Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, spec.Tests[0].Mounts[0].Spec.DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, spec.Tests[0].Mounts[1].Spec.Git.URL, "https://test")
+		assert.Equal(t, spec.Tests[0].Mounts[1].Spec.Git.Commit, "baddecaftest")
+		assert.Equal(t, spec.Tests[0].Mounts[2].Spec.HTTP.URL, "https://test")
+		assert.Equal(t, spec.Tests[0].Mounts[3].Spec.Context.Name, "test")
+		assert.Equal(t, spec.Tests[0].Mounts[4].Spec.Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, spec.Tests[0].Mounts[4].Spec.Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(spec.Tests[0].Files["foo"].Equals, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Files["foo"].Contains[0], "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Files["foo"].StartsWith, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Files["foo"].EndsWith, "test"))
+		assert.Equal(t, spec.Tests[0].Files["foo"].Equals, "test")
+		assert.Equal(t, spec.Tests[0].Files["foo"].Contains[0], "test")
+		assert.Equal(t, spec.Tests[0].Files["foo"].StartsWith, "test")
+		assert.Equal(t, spec.Tests[0].Files["foo"].EndsWith, "test")
 
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stdin, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stdout.Equals, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stdout.Contains[0], "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stdout.StartsWith, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stdout.EndsWith, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stderr.Equals, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stderr.Contains[0], "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stderr.StartsWith, "test"))
-		assert.Check(t, cmp.Equal(spec.Tests[0].Steps[0].Stderr.EndsWith, "test"))
+		assert.Equal(t, spec.Tests[0].Steps[0].Stdin, "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stdout.Equals, "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stdout.Contains[0], "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stdout.StartsWith, "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stdout.EndsWith, "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stderr.Equals, "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stderr.Contains[0], "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stderr.StartsWith, "test")
+		assert.Equal(t, spec.Tests[0].Steps[0].Stderr.EndsWith, "test")
 
-		assert.Check(t, cmp.Equal(spec.PackageConfig.Signer.Args["FOO"], "test"))
+		assert.Equal(t, spec.PackageConfig.Signer.Args["FOO"], "test")
 
 		// Now test the same things but for items defined under the targets section.
 		target := spec.Targets["foo"]
 
-		assert.Check(t, cmp.Equal(target.Tests[0].Mounts[0].Spec.DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Mounts[1].Spec.Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Mounts[1].Spec.Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Mounts[2].Spec.HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Mounts[3].Spec.Context.Name, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Mounts[4].Spec.Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Mounts[4].Spec.Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, target.Tests[0].Mounts[0].Spec.DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, target.Tests[0].Mounts[1].Spec.Git.URL, "https://test")
+		assert.Equal(t, target.Tests[0].Mounts[1].Spec.Git.Commit, "baddecaftest")
+		assert.Equal(t, target.Tests[0].Mounts[2].Spec.HTTP.URL, "https://test")
+		assert.Equal(t, target.Tests[0].Mounts[3].Spec.Context.Name, "test")
+		assert.Equal(t, target.Tests[0].Mounts[4].Spec.Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, target.Tests[0].Mounts[4].Spec.Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(target.Tests[0].Files["foo"].Equals, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Files["foo"].Contains[0], "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Files["foo"].StartsWith, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Files["foo"].EndsWith, "test"))
+		assert.Equal(t, target.Tests[0].Files["foo"].Equals, "test")
+		assert.Equal(t, target.Tests[0].Files["foo"].Contains[0], "test")
+		assert.Equal(t, target.Tests[0].Files["foo"].StartsWith, "test")
+		assert.Equal(t, target.Tests[0].Files["foo"].EndsWith, "test")
 
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stdin, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stdout.Equals, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stdout.Contains[0], "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stdout.StartsWith, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stdout.EndsWith, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stderr.Equals, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stderr.Contains[0], "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stderr.StartsWith, "test"))
-		assert.Check(t, cmp.Equal(target.Tests[0].Steps[0].Stderr.EndsWith, "test"))
+		assert.Equal(t, target.Tests[0].Steps[0].Stdin, "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stdout.Equals, "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stdout.Contains[0], "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stdout.StartsWith, "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stdout.EndsWith, "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stderr.Equals, "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stderr.Contains[0], "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stderr.StartsWith, "test")
+		assert.Equal(t, target.Tests[0].Steps[0].Stderr.EndsWith, "test")
 
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Keys["img"].DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Keys["git"].Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Keys["git"].Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Keys["http"].HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Keys["context"].Context.Name, "test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Keys["build"].Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Keys["build"].Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Keys["img"].DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Keys["git"].Git.URL, "https://test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Keys["git"].Git.Commit, "baddecaftest")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Keys["http"].HTTP.URL, "https://test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Keys["context"].Context.Name, "test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Keys["build"].Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Keys["build"].Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Config["img"].DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Config["git"].Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Config["git"].Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Config["http"].HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Config["context"].Context.Name, "test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Config["build"].Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Config["build"].Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Config["img"].DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Config["git"].Git.URL, "https://test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Config["git"].Git.Commit, "baddecaftest")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Config["http"].HTTP.URL, "https://test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Config["context"].Context.Name, "test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Config["build"].Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Config["build"].Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[0].Spec.DockerImage.Cmd.Env["TEST"], "test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[1].Spec.Git.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[1].Spec.Git.Commit, "baddecaftest"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[2].Spec.HTTP.URL, "https://test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[3].Spec.Context.Name, "test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[4].Spec.Build.DockerfilePath, "/foo/bar/test"))
-		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[4].Spec.Build.Source.HTTP.URL, "https://test"))
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Data[0].Spec.DockerImage.Cmd.Env["TEST"], "test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Data[1].Spec.Git.URL, "https://test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Data[1].Spec.Git.Commit, "baddecaftest")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Data[2].Spec.HTTP.URL, "https://test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Data[3].Spec.Context.Name, "test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Data[4].Spec.Build.DockerfilePath, "/foo/bar/test")
+		assert.Equal(t, target.Dependencies.ExtraRepos[0].Data[4].Spec.Build.Source.HTTP.URL, "https://test")
 
-		assert.Check(t, cmp.Equal(target.PackageConfig.Signer.Args["FOO"], "test"))
+		assert.Equal(t, target.PackageConfig.Signer.Args["FOO"], "test")
 	})
 
 	t.Run("default value", func(t *testing.T) {
@@ -1108,9 +1107,9 @@ build:
 		}
 
 		err = spec.SubstituteArgs(map[string]string{})
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
-		assert.Check(t, cmp.Equal(spec.Build.Steps[0].Env["TEST"], "test"))
+		assert.Equal(t, spec.Build.Steps[0].Env["TEST"], "test")
 	})
 
 	t.Run("build arg undeclared", func(t *testing.T) {
@@ -1188,7 +1187,7 @@ build:
 		})
 		assert.ErrorContains(t, err,
 			`opt-in arg "TARGETOS" not present in args`)
-		assert.Check(t, cmp.Equal(spec.Build.Steps[0].Env["EPOCH"], epochValue))
+		assert.Equal(t, spec.Build.Steps[0].Env["EPOCH"], epochValue)
 	})
 
 	t.Run("SOURCE_DATE_EPOCH passthrough", func(t *testing.T) {
@@ -1210,8 +1209,8 @@ build:
 		err = spec.SubstituteArgs(map[string]string{
 			"SOURCE_DATE_EPOCH": epochValue,
 		})
-		assert.NilError(t, err)
-		assert.Check(t, cmp.Equal(spec.Build.Steps[0].Env["SOURCE_DATE_EPOCH"], epochValue))
+		assert.NoError(t, err)
+		assert.Equal(t, spec.Build.Steps[0].Env["SOURCE_DATE_EPOCH"], epochValue)
 	})
 
 	t.Run("SOURCE_DATE_EPOCH with explicit declaration", func(t *testing.T) {
@@ -1232,16 +1231,16 @@ build:
 		err = spec.SubstituteArgs(map[string]string{
 			"SOURCE_DATE_EPOCH": "1609459200",
 		})
-		assert.NilError(t, err)
-		assert.Check(t, cmp.Equal(spec.Build.Steps[0].Env["SOURCE_DATE_EPOCH"], "1609459200"))
+		assert.NoError(t, err)
+		assert.Equal(t, spec.Build.Steps[0].Env["SOURCE_DATE_EPOCH"], "1609459200")
 
 		spec2, err := LoadSpec(dt)
 		if err != nil {
 			t.Fatal(err)
 		}
 		err = spec2.SubstituteArgs(map[string]string{})
-		assert.NilError(t, err)
-		assert.Check(t, cmp.Equal(spec2.Build.Steps[0].Env["SOURCE_DATE_EPOCH"], "999999999"))
+		assert.NoError(t, err)
+		assert.Equal(t, spec2.Build.Steps[0].Env["SOURCE_DATE_EPOCH"], "999999999")
 	})
 
 	t.Run("SOURCE_DATE_EPOCH added to build environment", func(t *testing.T) {
@@ -1259,8 +1258,8 @@ build:
 		err = spec.SubstituteArgs(map[string]string{
 			"SOURCE_DATE_EPOCH": epochValue,
 		})
-		assert.NilError(t, err)
-		assert.Check(t, cmp.Equal(spec.Build.Env["SOURCE_DATE_EPOCH"], epochValue))
+		assert.NoError(t, err)
+		assert.Equal(t, spec.Build.Env["SOURCE_DATE_EPOCH"], epochValue)
 	})
 
 	t.Run("SOURCE_DATE_EPOCH respects existing environment", func(t *testing.T) {
@@ -1279,14 +1278,14 @@ build:
 		err = spec.SubstituteArgs(map[string]string{
 			"SOURCE_DATE_EPOCH": "1609459200",
 		})
-		assert.NilError(t, err)
-		assert.Check(t, cmp.Equal(spec.Build.Env["SOURCE_DATE_EPOCH"], "888888888"))
+		assert.NoError(t, err)
+		assert.Equal(t, spec.Build.Env["SOURCE_DATE_EPOCH"], "888888888")
 	})
 
 	t.Run("null", func(t *testing.T) {
 		dt := []byte(`null`)
 		_, err := LoadSpec(dt)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 	})
 }
 
@@ -1350,7 +1349,7 @@ func Test_validatePatch(t *testing.T) {
 				ps := PatchSpec{Path: "/test"}
 				err := validatePatch(ps, tc.patchSrc)
 				if tc.subpath {
-					assert.NilError(t, err)
+					assert.NoError(t, err)
 					return
 				}
 				assert.ErrorIs(t, err, errPatchFileNoSubpath)
@@ -1362,7 +1361,7 @@ func Test_validatePatch(t *testing.T) {
 					assert.ErrorIs(t, err, errPatchRequiresSubpath)
 					return
 				}
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 			})
 		})
 	}
@@ -1381,17 +1380,17 @@ targets:
 `)
 
 		spec, err := LoadSpec(dt)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
 		// image.base should be migrated to image.bases
-		assert.Check(t, cmp.Equal(spec.Image.Base, ""))
-		assert.Check(t, cmp.Equal(spec.Targets["foo"].Image.Base, ""))
-		assert.Check(t, cmp.Len(spec.Image.Bases, 1))
-		assert.Check(t, spec.Image.Bases[0].Rootfs.DockerImage != nil)
-		assert.Check(t, cmp.Equal(spec.Image.Bases[0].Rootfs.DockerImage.Ref, "busybox:latest"))
-		assert.Check(t, cmp.Len(spec.Targets["foo"].Image.Bases, 1))
-		assert.Check(t, spec.Targets["foo"].Image.Bases[0].Rootfs.DockerImage != nil)
-		assert.Check(t, cmp.Equal(spec.Targets["foo"].Image.Bases[0].Rootfs.DockerImage.Ref, "busybox:latest"))
+		assert.Equal(t, spec.Image.Base, "")
+		assert.Equal(t, spec.Targets["foo"].Image.Base, "")
+		assert.Len(t, spec.Image.Bases, 1)
+		assert.True(t, spec.Image.Bases[0].Rootfs.DockerImage != nil)
+		assert.Equal(t, spec.Image.Bases[0].Rootfs.DockerImage.Ref, "busybox:latest")
+		assert.Len(t, spec.Targets["foo"].Image.Bases, 1)
+		assert.True(t, spec.Targets["foo"].Image.Bases[0].Rootfs.DockerImage != nil)
+		assert.Equal(t, spec.Targets["foo"].Image.Bases[0].Rootfs.DockerImage.Ref, "busybox:latest")
 	})
 
 	t.Run("postinstall", testPostInstallFillDefaults)
@@ -1571,7 +1570,7 @@ func TestImage_validate(t *testing.T) {
 				assert.ErrorContains(t, err, tc.expectErr)
 				return
 			}
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 		})
 	}
 }
@@ -1704,8 +1703,8 @@ func checkExt[T any](t *testing.T, spec Spec, key string, expect T) {
 
 	var actual T
 	err := spec.Ext(key, &actual)
-	assert.NilError(t, err)
-	assert.Check(t, cmp.DeepEqual(actual, expect))
+	assert.NoError(t, err)
+	assert.Equal(t, expect, actual)
 }
 
 func TestExtensionFieldMarshalUnmarshal(t *testing.T) {
@@ -1720,9 +1719,9 @@ X-capitalized: world2
 
 	var spec Spec
 	err := yaml.Unmarshal(dt, &spec)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
-	assert.Check(t, cmp.Equal(spec.Name, "test"), spec)
+	assert.Equal(t, "test", spec.Name, spec)
 	checkExt(t, spec, "x-hello", "world")
 	checkExt(t, spec, "x-foo", []string{"bar", "baz"})
 	checkExt(t, spec, "X-capitalized", "world2")
@@ -1733,13 +1732,13 @@ X-capitalized: world2
 	// marshal and unmarshal to ensure the extension fields are preserved
 
 	dt, err = yaml.Marshal(spec)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	var spec2 Spec
 	err = yaml.Unmarshal(dt, &spec2)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
-	assert.Check(t, cmp.Equal(spec2.Name, "test"), spec2)
+	assert.Equal(t, "test", spec2.Name, spec2)
 	checkExt(t, spec2, "x-hello", "world")
 	checkExt(t, spec2, "x-foo", []string{"bar", "baz"})
 	checkExt(t, spec2, "X-capitalized", "world2")
@@ -1750,11 +1749,11 @@ X-capitalized: world2
 	assert.ErrorIs(t, err, ErrNodeNotFound)
 
 	err = spec3.WithExtension("x-foo", "bar")
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	checkExt(t, spec3, "x-foo", "bar")
 
 	err = spec3.WithExtension("x-foo", "baz")
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 	checkExt(t, spec3, "x-foo", "baz")
 }
 
@@ -2031,7 +2030,7 @@ func TestArtifactBuildValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.build.validate()
 			if tc.expectErr == "" {
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 			} else {
 				assert.ErrorContains(t, err, tc.expectErr)
 			}
@@ -2196,7 +2195,7 @@ func TestArtifactsValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.artifacts.validate()
 			if tc.expectErr == "" {
-				assert.NilError(t, err)
+				assert.NoError(t, err)
 			} else {
 				assert.ErrorContains(t, err, tc.expectErr)
 			}

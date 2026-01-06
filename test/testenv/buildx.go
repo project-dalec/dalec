@@ -27,11 +27,11 @@ import (
 	"github.com/opencontainers/go-digest"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
+	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"gotest.tools/v3/assert"
 )
 
 type BuildxEnv struct {
@@ -378,7 +378,7 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	withDockerAuth(&so)
 
 	err = withSourcePolicy(&so)
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	for _, f := range cfg.SolveOptFns {
 		f(&so)
@@ -419,20 +419,20 @@ func NewWithNetHostBuildxInstance(ctx context.Context, t *testing.T) *BuildxEnv 
 		if err := netHostTestEnv.bootstrap(ctxT); err != nil {
 			cmd := exec.CommandContext(ctx, "docker", "buildx", "create", "--name", name, "--driver", "docker-container", "--driver-opt", "network=host", "--buildkitd-flags", "'--allow-insecure-entitlement=network.host'")
 			out, err := cmd.CombinedOutput()
-			assert.NilError(t, err, "failed to create buildx builder: %s", string(out))
+			assert.NoError(t, err, "failed to create buildx builder: %s", string(out))
 
 			t.Cleanup(func() {
 				netHostTestEnvCleanupOnce.Do(func() {
 					ctx := context.WithoutCancel(ctx)
 					cmd := exec.CommandContext(ctx, "docker", "buildx", "rm", name)
 					out, err := cmd.CombinedOutput()
-					assert.NilError(t, err, "failed to remove buildx builder: %s", string(out))
+					assert.NoError(t, err, "failed to remove buildx builder: %s", string(out))
 				})
 			})
 
 			cmd = exec.CommandContext(ctx, "docker", "buildx", "inspect", name, "--bootstrap")
 			out, err = cmd.CombinedOutput()
-			assert.NilError(t, err, "failed to create buildx builder: %s", string(out))
+			assert.NoError(t, err, "failed to create buildx builder: %s", string(out))
 
 			netHostTestEnv = New().WithBuilder(name)
 			if err := netHostTestEnv.bootstrap(ctx); err != nil {
@@ -523,7 +523,7 @@ func withSocketProxies(t *testing.T, proxies []socketprovider.ProxyConfig) func(
 		}
 
 		handler, err := socketprovider.NewProxyHandler(proxies)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 		so.Session = append(so.Session, handler)
 	}
 }

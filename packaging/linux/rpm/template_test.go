@@ -8,8 +8,7 @@ import (
 	"testing"
 
 	"github.com/project-dalec/dalec"
-	"gotest.tools/v3/assert"
-	"gotest.tools/v3/assert/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTemplateSources(t *testing.T) {
@@ -845,7 +844,7 @@ func TestTemplateOptionalFields(t *testing.T) {
 
 	w := &strings.Builder{}
 	err := specTmpl.Execute(w, &specWrapper{Spec: spec})
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	actual := strings.TrimSpace(w.String())
 	expect := strings.TrimSpace(`
@@ -869,7 +868,7 @@ A helpful tool
 
 	spec.Packager = "Awesome Packager"
 	err = specTmpl.Execute(w, &specWrapper{Spec: spec})
-	assert.NilError(t, err)
+	assert.NoError(t, err)
 
 	actual = strings.TrimSpace(w.String())
 	expect = strings.TrimSpace(`
@@ -1081,26 +1080,26 @@ func TestTemplate_TargetSpecificOverrides(t *testing.T) {
 
 		// Test Replaces - should contain target-specific values and not root values for common-pkg
 		replaces := w.Replaces().String()
-		assert.Assert(t, cmp.Contains(replaces, "Obsoletes: common-pkg >= 2.1.0"))
-		assert.Assert(t, cmp.Contains(replaces, "Obsoletes: target-pkg-r >= 1.1.0"))
-		assert.Assert(t, !strings.Contains(replaces, "root-pkg-r"))
-		assert.Assert(t, !strings.Contains(replaces, ">= 2.0.0")) // common-pkg old version
+		assert.Contains(t, replaces, "Obsoletes: common-pkg >= 2.1.0")
+		assert.Contains(t, replaces, "Obsoletes: target-pkg-r >= 1.1.0")
+		assert.True(t, !strings.Contains(replaces, "root-pkg-r"))
+		assert.True(t, !strings.Contains(replaces, ">= 2.0.0")) // common-pkg old version
 
 		// Test Conflicts - should contain target-specific values and not root values for common-pkg
 		conflicts := w.Conflicts().String()
-		assert.Assert(t, cmp.Contains(conflicts, "Conflicts: common-pkg <= 4.1.0"))
-		assert.Assert(t, cmp.Contains(conflicts, "Conflicts: target-pkg-c <= 3.1.0"))
-		assert.Assert(t, !strings.Contains(conflicts, "root-pkg-c"))
-		assert.Assert(t, !strings.Contains(conflicts, "<= 4.0.0")) // common-pkg old version
+		assert.Contains(t, conflicts, "Conflicts: common-pkg <= 4.1.0")
+		assert.Contains(t, conflicts, "Conflicts: target-pkg-c <= 3.1.0")
+		assert.True(t, !strings.Contains(conflicts, "root-pkg-c"))
+		assert.True(t, !strings.Contains(conflicts, "<= 4.0.0")) // common-pkg old version
 
 		// Test Provides - should contain target-specific values and not root values for common-pkg
 		provides := w.Provides().String()
-		assert.Assert(t, cmp.Contains(provides, "Provides: common-pkg == 6.1.0"))
-		assert.Assert(t, cmp.Contains(provides, "Provides: target-pkg-p == 5.1.0"))
-		assert.Assert(t, !strings.Contains(provides, "root-pkg-p"))
-		assert.Assert(t, !strings.Contains(provides, "= 6.0.0")) // common-pkg old version
+		assert.Contains(t, provides, "Provides: common-pkg == 6.1.0")
+		assert.Contains(t, provides, "Provides: target-pkg-p == 5.1.0")
+		assert.True(t, !strings.Contains(provides, "root-pkg-p"))
+		assert.True(t, !strings.Contains(provides, "= 6.0.0")) // common-pkg old version
 
-		assert.Assert(t, cmp.Equal(w.DisableAutoReq(), "AutoReq: no"))
+		assert.Equal(t, w.DisableAutoReq(), "AutoReq: no")
 	})
 
 	t.Run("target2 should use empty maps", func(t *testing.T) {
@@ -1121,17 +1120,17 @@ func TestTemplate_TargetSpecificOverrides(t *testing.T) {
 
 		// Test Replaces - should contain root values
 		replaces := w.Replaces().String()
-		assert.Assert(t, cmp.Contains(replaces, "Obsoletes: common-pkg >= 2.0.0"))
-		assert.Assert(t, cmp.Contains(replaces, "Obsoletes: root-pkg-r >= 1.0.0"))
+		assert.Contains(t, replaces, "Obsoletes: common-pkg >= 2.0.0")
+		assert.Contains(t, replaces, "Obsoletes: root-pkg-r >= 1.0.0")
 
 		// Test Conflicts - should contain root values
 		conflicts := w.Conflicts().String()
-		assert.Assert(t, cmp.Contains(conflicts, "Conflicts: common-pkg <= 4.0.0"))
-		assert.Assert(t, cmp.Contains(conflicts, "Conflicts: root-pkg-c <= 3.0.0"))
+		assert.Contains(t, conflicts, "Conflicts: common-pkg <= 4.0.0")
+		assert.Contains(t, conflicts, "Conflicts: root-pkg-c <= 3.0.0")
 
 		// Test Provides - should contain root values
 		provides := w.Provides().String()
-		assert.Assert(t, cmp.Contains(provides, "Provides: common-pkg == 6.0.0"))
-		assert.Assert(t, cmp.Contains(provides, "Provides: root-pkg-p == 5.0.0"))
+		assert.Contains(t, provides, "Provides: common-pkg == 6.0.0")
+		assert.Contains(t, provides, "Provides: root-pkg-p == 5.0.0")
 	})
 }

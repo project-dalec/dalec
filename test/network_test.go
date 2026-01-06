@@ -9,7 +9,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/project-dalec/dalec"
-	"gotest.tools/v3/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func testBuildNetworkMode(ctx context.Context, t *testing.T, cfg targetConfig) {
@@ -69,7 +69,7 @@ func testBuildNetworkMode(ctx context.Context, t *testing.T, cfg targetConfig) {
 
 				_, err := gwc.Solve(ctx, sr)
 				if tc.canHazInternetz {
-					assert.NilError(t, err)
+					assert.NoError(t, err)
 					return
 				}
 
