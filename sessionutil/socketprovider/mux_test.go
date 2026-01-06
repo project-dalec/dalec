@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	"github.com/moby/buildkit/session/sshforward"
-	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"gotest.tools/v3/assert"
+	"gotest.tools/v3/assert/cmp"
 )
 
 // mockSSHServer implements the sshforward.SSHServer interface for testing
@@ -74,10 +75,10 @@ func (m *mockForwardAgentServer) Recv() (*sshforward.BytesMessage, error) {
 func TestNewMux(t *testing.T) {
 	// Test creating a new mux without options
 	mux := NewMux()
-	require.NotNil(t, mux)
-	require.Empty(t, mux.routes)
-	require.Empty(t, mux.ordered)
-	require.Nil(t, mux.defaultHandler)
+	assert.Assert(t, mux != nil)
+	assert.Assert(t, cmp.Len(mux.routes, 0))
+	assert.Assert(t, cmp.Len(mux.ordered, 0))
+	assert.Assert(t, mux.defaultHandler == nil)
 
 	// Test with options
 	handler1 := &mockSSHServer{id: "handler1"}
@@ -90,14 +91,14 @@ func TestNewMux(t *testing.T) {
 		WithDefaultHandler(defaultHandler),
 	)
 
-	require.NotNil(t, mux)
-	require.Len(t, mux.routes, 2)
-	require.Len(t, mux.ordered, 2)
-	require.Equal(t, defaultHandler, mux.defaultHandler)
+	assert.Assert(t, mux != nil)
+	assert.Assert(t, cmp.Len(mux.routes, 2))
+	assert.Assert(t, cmp.Len(mux.ordered, 2))
+	assert.Equal(t, mux.defaultHandler, defaultHandler)
 
 	// Check that routes are stored correctly
-	require.Equal(t, handler1, mux.routes["prefix1"])
-	require.Equal(t, handler2, mux.routes["prefix2"])
+	assert.Equal(t, mux.routes["prefix1"], handler1)
+	assert.Equal(t, mux.routes["prefix2"], handler2)
 }
 
 func TestMuxCheckAgent(t *testing.T) {
@@ -107,7 +108,7 @@ func TestMuxCheckAgent(t *testing.T) {
 	targetHandler := &mockSSHServer{
 		id: "test-handler",
 		checkAgentFunc: func(ctx context.Context, req *sshforward.CheckAgentRequest) (*sshforward.CheckAgentResponse, error) {
-			require.Equal(t, "test-id", req.ID)
+			assert.Equal(t, req.ID, "test-id")
 			return &sshforward.CheckAgentResponse{}, nil
 		},
 	}
@@ -119,12 +120,12 @@ func TestMuxCheckAgent(t *testing.T) {
 	)
 
 	_, err := mux.CheckAgent(context.Background(), &sshforward.CheckAgentRequest{ID: "test-id"})
-	require.NoError(t, err)
+	assert.NilError(t, err)
 
 	// Verify only the target handler was called
-	require.True(t, targetHandler.checkAgentCalled, "Target handler should have been called")
-	require.False(t, handler1.checkAgentCalled, "Handler1 should not have been called")
-	require.False(t, handler2.checkAgentCalled, "Handler2 should not have been called")
+	assert.Assert(t, targetHandler.checkAgentCalled, "Target handler should have been called")
+	assert.Assert(t, !handler1.checkAgentCalled, "Handler1 should not have been called")
+	assert.Assert(t, !handler2.checkAgentCalled, "Handler2 should not have been called")
 }
 
 func TestMuxForwardAgent(t *testing.T) {
@@ -142,17 +143,17 @@ func TestMuxForwardAgent(t *testing.T) {
 		forwardAgentFunc: func(stream sshforward.SSH_ForwardAgentServer) error {
 			// Test receiving data from client
 			msg, err := stream.Recv()
-			require.NoError(t, err)
-			require.Equal(t, testData1, msg.Data)
+			assert.NilError(t, err)
+			assert.DeepEqual(t, testData1, msg.Data)
 
 			// Test sending data to client
 			err = stream.Send(&sshforward.BytesMessage{Data: testData2})
-			require.NoError(t, err)
+			assert.NilError(t, err)
 
 			// Test another round of communication
 			msg, err = stream.Recv()
-			require.NoError(t, err)
-			require.Equal(t, testData3, msg.Data)
+			assert.NilError(t, err)
+			assert.DeepEqual(t, testData3, msg.Data)
 
 			return nil
 		},
@@ -178,16 +179,16 @@ func TestMuxForwardAgent(t *testing.T) {
 	}
 
 	err := mux.ForwardAgent(stream)
-	require.NoError(t, err)
+	assert.NilError(t, err)
 
 	// Verify only the target handler was called
-	require.True(t, targetHandler.forwardAgentCalled, "Target handler should have been called")
-	require.False(t, handler1.forwardAgentCalled, "Handler1 should not have been called")
-	require.False(t, handler2.forwardAgentCalled, "Handler2 should not have been called")
+	assert.Assert(t, targetHandler.forwardAgentCalled, "Target handler should have been called")
+	assert.Assert(t, !handler1.forwardAgentCalled, "Handler1 should not have been called")
+	assert.Assert(t, !handler2.forwardAgentCalled, "Handler2 should not have been called")
 
 	// Verify the response was sent back by the handler
-	require.Len(t, stream.sentMsgs, 1)
-	require.Equal(t, testData2, stream.sentMsgs[0].Data)
+	assert.Assert(t, cmp.Len(stream.sentMsgs, 1))
+	assert.DeepEqual(t, testData2, stream.sentMsgs[0].Data)
 
 	// Test with error during stream communication
 	recvErrStream := &mockForwardAgentServer{
@@ -205,8 +206,7 @@ func TestMuxForwardAgent(t *testing.T) {
 
 	errMux := NewMux(WithMuxRoute("test-id", errHandler))
 	err = errMux.ForwardAgent(recvErrStream)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "simulated receive error")
+	assert.ErrorContains(t, err, "simulated receive error")
 
 	// Test with error during send
 	sendErrStream := &mockForwardAgentServer{
@@ -225,8 +225,7 @@ func TestMuxForwardAgent(t *testing.T) {
 
 	sendErrMux := NewMux(WithMuxRoute("test-id", sendErrHandler))
 	err = sendErrMux.ForwardAgent(sendErrStream)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "simulated send error")
+	assert.ErrorContains(t, err, "simulated send error")
 }
 
 func TestPrefixOrdering(t *testing.T) {
@@ -243,7 +242,7 @@ func TestPrefixOrdering(t *testing.T) {
 
 	// This should match "prefix/longer" and not just "prefix"
 	h := mux.getHandler("prefix/longer/path")
-	require.Equal(t, handler2, h)
+	assert.Equal(t, h, handler2)
 }
 
 func TestMultipleMatchingPrefixes(t *testing.T) {
@@ -261,13 +260,13 @@ func TestMultipleMatchingPrefixes(t *testing.T) {
 	// This should match the longest prefix (prefix/med/long)
 	testID := "prefix/med/long/extra"
 	h := mux.getHandler(testID)
-	require.Equal(t, longHandler, h)
+	assert.Equal(t, h, longHandler)
 
 	// Test with CheckAgent to verify the right handler is called
 	_, err := mux.CheckAgent(context.Background(), &sshforward.CheckAgentRequest{ID: testID})
-	require.NoError(t, err)
+	assert.NilError(t, err)
 
-	require.True(t, longHandler.checkAgentCalled)
-	require.False(t, mediumHandler.checkAgentCalled)
-	require.False(t, shortHandler.checkAgentCalled)
+	assert.Assert(t, longHandler.checkAgentCalled)
+	assert.Assert(t, !mediumHandler.checkAgentCalled)
+	assert.Assert(t, !shortHandler.checkAgentCalled)
 }
