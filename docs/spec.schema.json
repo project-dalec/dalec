@@ -1122,7 +1122,7 @@
 					"type": [
 						"array"
 					],
-					"description": "Replace applies go.mod replace directives before downloading module dependencies.\nEach entry can be either a string \"old:new\" or a struct with Old and New fields."
+					"description": "Replace applies go.mod replace directives before downloading module dependencies.\nEach entry can be either a string \"old =\u003e new\" or a struct with Old and New fields."
 				}
 			},
 			"additionalProperties": {

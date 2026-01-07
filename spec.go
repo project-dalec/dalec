@@ -208,12 +208,13 @@ type SymlinkTarget struct {
 // before downloading module dependencies.
 type GomodEdits struct {
 	// Replace applies go.mod replace directives before downloading module dependencies.
-	// Each entry can be either a string "old:new" or a struct with Old and New fields.
+	// Each entry can be either a string "old => new" or a struct with Old and New fields.
 	Replace []GomodReplace `yaml:"replace,omitempty" json:"replace,omitempty"`
 }
 
 // GomodReplace represents a go.mod replace directive.
-// It can be specified as a string "old:new" or as a struct with Original and Update fields.
+// It can be specified as a string "old => new" or as a struct with Original and Update fields.
+// The string format matches Go's native go.mod syntax.
 // This allows users to substitute module dependencies before go mod download runs,
 // useful for pointing to local forks or alternate versions.
 type GomodReplace struct {
@@ -226,7 +227,7 @@ type GomodReplace struct {
 }
 
 func (r GomodReplace) String() string {
-	return r.Original + ":" + r.Update
+	return r.Original + " => " + r.Update
 }
 
 func (r GomodReplace) goModEditArg() (string, error) {
@@ -243,9 +244,9 @@ func (r *GomodReplace) UnmarshalYAML(ctx context.Context, node ast.Node) error {
 		if err := yaml.NodeToValue(node, &raw, decodeOpts(ctx)...); err != nil {
 			return err
 		}
-		parts := strings.SplitN(raw, ":", 2)
+		parts := strings.SplitN(raw, " => ", 2)
 		if len(parts) != 2 {
-			return errors.Errorf("invalid gomod replace %q, expected format old:new", raw)
+			return errors.Errorf("invalid gomod replace %q, expected format 'old => new'", raw)
 		}
 		r.Original = strings.TrimSpace(parts[0])
 		r.Update = strings.TrimSpace(parts[1])
@@ -284,9 +285,9 @@ func (r *GomodReplace) UnmarshalJSON(b []byte) error {
 	// Try to unmarshal as a string first (shorthand format)
 	var raw string
 	if err := json.Unmarshal(b, &raw); err == nil {
-		parts := strings.SplitN(raw, ":", 2)
+		parts := strings.SplitN(raw, " => ", 2)
 		if len(parts) != 2 {
-			return errors.Errorf("invalid gomod replace %q, expected format old:new", raw)
+			return errors.Errorf("invalid gomod replace %q, expected format 'old => new'", raw)
 		}
 		r.Original = strings.TrimSpace(parts[0])
 		r.Update = strings.TrimSpace(parts[1])

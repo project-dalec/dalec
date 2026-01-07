@@ -20,7 +20,7 @@ func TestGomodReplaceUnmarshal(t *testing.T) {
 	}{
 		{
 			name:        "YAML string format",
-			input:       `"github.com/stretchr/testify:github.com/stretchr/testify@v1.8.0"`,
+			input:       `"github.com/stretchr/testify => github.com/stretchr/testify@v1.8.0"`,
 			unmarshal:   yaml.Unmarshal,
 			expectErr:   false,
 			expectedOld: "github.com/stretchr/testify",
@@ -39,7 +39,7 @@ new: github.com/cpuguy83/tar2go@v0.3.1
 		},
 		{
 			name:        "JSON string format",
-			input:       `"github.com/stretchr/testify:github.com/stretchr/testify@v1.8.0"`,
+			input:       `"github.com/stretchr/testify => github.com/stretchr/testify@v1.8.0"`,
 			unmarshal:   json.Unmarshal,
 			expectErr:   false,
 			expectedOld: "github.com/stretchr/testify",
@@ -54,7 +54,7 @@ new: github.com/cpuguy83/tar2go@v0.3.1
 			expectedNew: "github.com/cpuguy83/tar2go@v0.3.1",
 		},
 		{
-			name:      "invalid string format - no colon",
+			name:      "invalid string format - no arrow",
 			input:     `"github.com/stretchr/testify"`,
 			unmarshal: yaml.Unmarshal,
 			expectErr: true,
