@@ -17,17 +17,17 @@ import (
 // Spec is the specification for a package build.
 type Spec struct {
 	// Name is the name of the package.
-	Name string `yaml:"name" json:"name" jsonschema:"required"`
+	Name string `yaml:"name" json:"name,omitempty" jsonschema:"required"`
 	// Description is a short description of the package.
-	Description string `yaml:"description" json:"description" jsonschema:"required"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"required"`
 	// Website is the URL to store in the metadata of the package.
-	Website string `yaml:"website" json:"website"`
+	Website string `yaml:"website" json:"website,omitempty" jsonschema:"required"`
 
 	// Version sets the version of the package.
-	Version string `yaml:"version" json:"version" jsonschema:"required"`
+	Version string `yaml:"version" json:"version,omitempty" jsonschema:"required"`
 	// Revision sets the package revision.
 	// This will generally get merged into the package version when generating the package.
-	Revision string `yaml:"revision" json:"revision" jsonschema:"required,oneof_type=string;integer"`
+	Revision string `yaml:"revision" json:"revision,omitempty" jsonschema:"required,oneof_type=string;integer"`
 
 	// Marks the package as architecture independent.
 	// It is up to the package author to ensure that the package is actually architecture independent.
@@ -70,7 +70,7 @@ type Spec struct {
 	Args map[string]string `yaml:"args,omitempty" json:"args,omitempty"`
 
 	// License is the license of the package.
-	License string `yaml:"license" json:"license"`
+	License string `yaml:"license" json:"license,omitempty" jsonschema:"required"`
 	// Vendor is the vendor of the package.
 	Vendor string `yaml:"vendor,omitempty" json:"vendor,omitempty"`
 	// Packager is the name of the person,team,company that packaged the package.
