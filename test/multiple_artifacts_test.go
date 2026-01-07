@@ -108,18 +108,25 @@ func testTargetArtifactsTakePrecedence(ctx context.Context, t *testing.T, target
 			primaryTarget: {
 				Artifacts: &dalec.Artifacts{
 					Binaries: map[string]dalec.ArtifactConfig{
-						"hello.txt": {},
+						"from-" + primaryTarget: {},
 					},
 				},
 				Tests: []*dalec.TestSpec{
 					{
 						Name: "test1",
 						Files: map[string]dalec.FileCheckOutput{
-							"/usr/bin/hello.txt": {},
-							"/usr/bin/contributors.md": {
+							"/usr/bin/from-" + primaryTarget: {
+								CheckOutput: dalec.CheckOutput{
+									Equals: "hello world\n",
+								},
+							},
+							"/usr/bin/from-" + secondaryTarget: {
 								NotExist: true,
 							},
-							"/usr/bin/readme.md": {
+							"/usr/bin/from-" + tertiaryTarget: {
+								NotExist: true,
+							},
+							"/usr/bin/from-main": {
 								NotExist: true,
 							},
 						},
@@ -129,60 +136,36 @@ func testTargetArtifactsTakePrecedence(ctx context.Context, t *testing.T, target
 			secondaryTarget: {
 				Artifacts: &dalec.Artifacts{
 					Binaries: map[string]dalec.ArtifactConfig{
-						"contributors.md": {},
-					},
-				},
-				Tests: []*dalec.TestSpec{
-					{
-						Name: "test2",
-						Files: map[string]dalec.FileCheckOutput{
-							"/usr/bin/contributors.md": {},
-							"/usr/bin/hello.txt": {
-								NotExist: true,
-							},
-							"/usr/bin/readme.md": {
-								NotExist: true,
-							},
-						},
+						"from-" + secondaryTarget: {},
 					},
 				},
 			},
 			tertiaryTarget: {
 				Artifacts: &dalec.Artifacts{
 					Binaries: map[string]dalec.ArtifactConfig{
-						"readme.md":       {},
-						"contributors.md": {},
-					},
-				},
-				Tests: []*dalec.TestSpec{
-					{
-						Name: "test3",
-						Files: map[string]dalec.FileCheckOutput{
-							"/usr/bin/readme.md":       {},
-							"/usr/bin/contributors.md": {},
-							"/usr/bin/hello.txt": {
-								NotExist: true,
-							},
-						},
+						"from-" + tertiaryTarget: {},
 					},
 				},
 			},
 		},
 		Artifacts: dalec.Artifacts{
-			Docs: map[string]dalec.ArtifactConfig{
-				"readme.md": {},
+			Binaries: map[string]dalec.ArtifactConfig{
+				"from-main": {},
 			},
 		},
 		Build: dalec.ArtifactBuild{
 			Steps: []dalec.BuildStep{
 				{
-					Command: "echo 'hello world' > hello.txt",
+					Command: "echo 'hello world' > from-" + primaryTarget,
 				},
 				{
-					Command: "echo 'readme' > readme.md",
+					Command: "echo 'hello world' > from-" + secondaryTarget,
 				},
 				{
-					Command: "echo 'contributors welcome!' > contributors.md",
+					Command: "echo 'hello world' > from-" + tertiaryTarget,
+				},
+				{
+					Command: "echo 'hello world' > from-main",
 				},
 			},
 		},
@@ -192,22 +175,6 @@ func testTargetArtifactsTakePrecedence(ctx context.Context, t *testing.T, target
 		t.Parallel()
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(primaryTarget))
-			solveT(ctx, t, gwc, sr)
-		})
-	})
-
-	t.Run("secondary", func(t *testing.T) {
-		t.Parallel()
-		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(secondaryTarget))
-			solveT(ctx, t, gwc, sr)
-		})
-	})
-
-	t.Run("tertiary", func(t *testing.T) {
-		t.Parallel()
-		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(tertiaryTarget))
 			solveT(ctx, t, gwc, sr)
 		})
 	})
