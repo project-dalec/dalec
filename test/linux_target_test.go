@@ -197,12 +197,74 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		testTargetArtifactsTakePrecedence(ctx, t, testConfig.Target)
 	})
 
-	t.Run("container", func(t *testing.T) {
+	t.Run("build_steps", func(t *testing.T) {
 		t.Parallel()
-		ctx := startTestSpan(baseCtx, t)
 
-		const src2Patch3File = "patch3"
-		src2Patch3Content := []byte(`
+		t.Run("multiline_command_works_with_env_vars", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							// Test that a multiline command works with env vars
+							Env: map[string]string{
+								"FOO": "foo",
+								"BAR": "bar",
+							},
+							Command: `
+echo "${FOO}_0" > foo0.txt
+echo "${FOO}_1" > foo1.txt
+echo "$BAR" > bar.txt
+`,
+						},
+					},
+				},
+
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						// These are files we created in the build step
+						// They aren't really binaries but we want to test that they are created and have the right content
+						"foo0.txt": {},
+						"foo1.txt": {},
+						"bar.txt":  {},
+					},
+				},
+
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Check that multi-line command (from build step) with env vars propagates env vars to whole command",
+						Files: map[string]dalec.FileCheckOutput{
+							"/usr/bin/foo0.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_0\n"}},
+							"/usr/bin/foo1.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_1\n"}},
+							"/usr/bin/bar.txt":  {CheckOutput: dalec.CheckOutput{StartsWith: "bar\n"}},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+	})
+
+	t.Run("sources", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("patches_are_applied_in_order", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			const src2Patch3File = "patch3"
+			src2Patch3Content := []byte(`
 diff --git a/file3 b/file3
 new file mode 100700
 index 0000000..5260cb1
@@ -214,7 +276,7 @@ index 0000000..5260cb1
 +echo "Added another new file"
 `)
 
-		src2Patch4Content := []byte(`
+			src2Patch4Content := []byte(`
 diff --git a/file4 b/file4
 new file mode 100700
 index 0000000..5260cb1
@@ -226,7 +288,7 @@ index 0000000..5260cb1
 +echo "Added yet another new file"
 `)
 
-		src2Patch5Content := []byte(`
+			src2Patch5Content := []byte(`
 diff --git a/file5 b/file5
 new file mode 100700
 index 0000000..5260cb1
@@ -238,47 +300,31 @@ index 0000000..5260cb1
 +echo "Added yet again...another new file"
 `)
 
-		const src2Patch4File = "patches/patch4"
-		const src2Patch5File = "patches/patch5"
-		const patchContextName = "patch-context"
+			const src2Patch4File = "patches/patch4"
+			const src2Patch5File = "patches/patch5"
+			const patchContextName = "patch-context"
 
-		patchContext := llb.Scratch().
-			File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content)).
-			File(llb.Mkdir("patches", 0o755)).
-			File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content)).
-			File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content))
+			patchContext := llb.Scratch().
+				File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content)).
+				File(llb.Mkdir("patches", 0o755)).
+				File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content)).
+				File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content))
 
-		spec := dalec.Spec{
-			Name:        "test-container-build",
-			Version:     "0.0.1",
-			Revision:    "1",
-			License:     "MIT",
-			Website:     "https://github.com/project-dalec/dalec",
-			Vendor:      "Dalec",
-			Packager:    "Dalec",
-			Description: "Testing container target",
-			Sources: map[string]dalec.Source{
-				"src1": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o700,
-						},
-					},
-				},
-				"src2": {
-					Inline: &dalec.SourceInline{
-						Dir: &dalec.SourceInlineDir{
-							Files: map[string]*dalec.SourceInlineFile{
-								"file1": {Contents: "file1 contents\n"},
+			spec := testLinuxSpec(t, dalec.Spec{
+				Sources: map[string]dalec.Source{
+					"src2": {
+						Inline: &dalec.SourceInline{
+							Dir: &dalec.SourceInlineDir{
+								Files: map[string]*dalec.SourceInlineFile{
+									"file1": {Contents: "file1 contents\n"},
+								},
 							},
 						},
 					},
-				},
-				"src2-patch1": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents: `
+					"src2-patch1": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents: `
 diff --git a/file1 b/file1
 index 84d55c5..22b9b11 100644
 --- a/file1
@@ -287,15 +333,15 @@ index 84d55c5..22b9b11 100644
 -file1 contents
 +file1 contents patched
 `,
+							},
 						},
 					},
-				},
-				"src2-patch2": {
-					Inline: &dalec.SourceInline{
-						Dir: &dalec.SourceInlineDir{
-							Files: map[string]*dalec.SourceInlineFile{
-								"the-patch": {
-									Contents: `
+					"src2-patch2": {
+						Inline: &dalec.SourceInline{
+							Dir: &dalec.SourceInlineDir{
+								Files: map[string]*dalec.SourceInlineFile{
+									"the-patch": {
+										Contents: `
 diff --git a/file2 b/file2
 new file mode 100700
 index 0000000..5260cb1
@@ -306,155 +352,214 @@ index 0000000..5260cb1
 +
 +echo "Added a new file"
 `,
+									},
 								},
 							},
 						},
 					},
-				},
-				"src2-patch3": {
-					Context: &dalec.SourceContext{
-						Name: patchContextName,
+					"src2-patch3": {
+						Context: &dalec.SourceContext{
+							Name: patchContextName,
+						},
+					},
+					"src2-patch4": {
+						Context: &dalec.SourceContext{
+							Name: patchContextName,
+						},
+						Includes: []string{src2Patch4File},
+					},
+					"src2-patch5": {
+						Context: &dalec.SourceContext{
+							Name: patchContextName,
+						},
+						Path: src2Patch5File,
 					},
 				},
-				"src2-patch4": {
-					Context: &dalec.SourceContext{
-						Name: patchContextName,
+				Patches: map[string][]dalec.PatchSpec{
+					"src2": {
+						{Source: "src2-patch1"},
+						{Source: "src2-patch2", Path: "the-patch"},
+						{Source: "src2-patch3", Path: src2Patch3File},
+						{Source: "src2-patch4", Path: src2Patch4File},
+						{Source: "src2-patch5", Path: filepath.Base(src2Patch5File)},
 					},
-					Includes: []string{src2Patch4File},
 				},
-				"src2-patch5": {
-					Context: &dalec.SourceContext{
-						Name: patchContextName,
+
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							// file added by patch
+							Command: "ls -lh ./src2/file2",
+						},
+						{
+							// file added by patch
+							Command: "test -f ./src2/file2",
+						},
+						{
+							// file added by patch
+							Command: "test -x ./src2/file2",
+						},
+						{
+							Command: "grep 'Added a new file' ./src2/file2",
+						},
+						{
+							// file added by patch
+							Command: "test -f ./src2/file3",
+						},
+						{
+							// file added by patch
+							Command: "test -x ./src2/file3",
+						},
+						{
+							Command: "grep 'Added another new file' ./src2/file3",
+						},
 					},
-					Path: src2Patch5File,
 				},
-				"src3": {
+
+				Image: &dalec.ImageConfig{
+					Post: &dalec.PostInstall{
+						Symlinks: map[string]dalec.SymlinkTarget{
+							"/usr/bin/src2": {
+								Paths: []string{"/non/existing/dir/src2"},
+								Group: "coffee",
+							},
+						},
+					},
+				},
+
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"src2/file2": {},
+					},
+					Links: []dalec.ArtifactSymlinkConfig{
+						{
+							Source: "/usr/bin/src2/file2",
+							Dest:   "/bin/owned-link2",
+							User:   "need",
+						},
+					},
+					Users: []dalec.AddUserConfig{
+						{
+							Name: "need",
+						},
+					},
+					Groups: []dalec.AddGroupConfig{
+						{
+							Name: "coffee",
+						},
+					},
+				},
+
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Check that the binary artifacts execute and provide the expected output",
+						Steps: []dalec.TestStep{
+							{
+								Command: "/usr/bin/file2",
+								Stdout:  dalec.CheckOutput{Equals: "Added a new file\n"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+						},
+					},
+					{
+						Name: "Post-install symlinks should be created and have correct ownership",
+						Steps: []dalec.TestStep{
+							{Command: "/bin/bash -exc 'test -L /non/existing/dir/src2'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src2)\" = \"/usr/bin/src2\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						},
+					},
+					{
+						Name: "Artifact symlinks should have correct ownership",
+						Steps: []dalec.TestStep{
+							{Command: "/bin/bash -exc 'test -L /bin/owned-link2'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link2)\" = \"/usr/bin/src2/file2\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+					withBuildContext(ctx, t, patchContextName, patchContext),
+				)
+				sr.Evaluate = true
+
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("are_available_in_build_steps", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Sources: map[string]dalec.Source{
+					"src1": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho hello world",
+								Permissions: 0o700,
+							},
+						},
+					},
+				},
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						// These are "build" steps where we aren't really building things just verifying
+						// that sources are in the right place and have the right permissions and content
+						{
+							// file added by patch
+							Command: "test -f ./src1",
+						},
+						{
+							Command: "test -x ./src1",
+						},
+						{
+							Command: "test ! -d ./src1",
+						},
+						{
+							Command: "./src1 | grep 'hello world'",
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+	})
+
+	t.Run("artifacts", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"src1": {
 					Inline: &dalec.SourceInline{
 						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho goodbye",
+							Contents:    "#!/usr/bin/env bash\necho hello world",
 							Permissions: 0o700,
 						},
 					},
 				},
 			},
-			Patches: map[string][]dalec.PatchSpec{
-				"src2": {
-					{Source: "src2-patch1"},
-					{Source: "src2-patch2", Path: "the-patch"},
-					{Source: "src2-patch3", Path: src2Patch3File},
-					{Source: "src2-patch4", Path: src2Patch4File},
-					{Source: "src2-patch5", Path: filepath.Base(src2Patch5File)},
-				},
-			},
-
-			Dependencies: &dalec.PackageDependencies{
-				Runtime: map[string]dalec.PackageConstraints{
-					"bash":      {},
-					"coreutils": {},
-				},
-			},
-
-			Build: dalec.ArtifactBuild{
-				Steps: []dalec.BuildStep{
-					// These are "build" steps where we aren't really building things just verifying
-					// that sources are in the right place and have the right permissions and content
-					{
-						// file added by patch
-						Command: "test -f ./src1",
-					},
-					{
-						Command: "test -x ./src1",
-					},
-					{
-						Command: "test ! -d ./src1",
-					},
-					{
-						Command: "./src1 | grep 'hello world'",
-					},
-					{
-						// file added by patch
-						Command: "ls -lh ./src2/file2",
-					},
-					{
-						// file added by patch
-						Command: "test -f ./src2/file2",
-					},
-					{
-						// file added by patch
-						Command: "test -x ./src2/file2",
-					},
-					{
-						Command: "grep 'Added a new file' ./src2/file2",
-					},
-					{
-						// file added by patch
-						Command: "test -f ./src2/file3",
-					},
-					{
-						// file added by patch
-						Command: "test -x ./src2/file3",
-					},
-					{
-						Command: "grep 'Added another new file' ./src2/file3",
-					},
-					{
-						// Test that a multiline command works with env vars
-						Env: map[string]string{
-							"FOO": "foo",
-							"BAR": "bar",
-						},
-						Command: `
-echo "${FOO}_0" > foo0.txt
-echo "${FOO}_1" > foo1.txt
-echo "$BAR" > bar.txt
-`,
-					},
-				},
-			},
-
-			Image: &dalec.ImageConfig{
-				Post: &dalec.PostInstall{
-					Symlinks: map[string]dalec.SymlinkTarget{
-						"/usr/bin/src1": {
-							Path: "/src1",
-							User: "need",
-						},
-						"/usr/bin/src2": {
-							Paths: []string{"/non/existing/dir/src2"},
-							Group: "coffee",
-						},
-						"/usr/bin/src3": {
-							Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
-							User:  "need",
-							Group: "coffee",
-						},
-					},
-				},
-			},
-
 			Artifacts: dalec.Artifacts{
 				Binaries: map[string]dalec.ArtifactConfig{
-					"src1":       {},
-					"src2/file2": {},
-					"src3":       {},
-					// These are files we created in the build step
-					// They aren't really binaries but we want to test that they are created and have the right content
-					"foo0.txt": {},
-					"foo1.txt": {},
-					"bar.txt":  {},
+					"src1": {},
 				},
 				Links: []dalec.ArtifactSymlinkConfig{
-					{
-						Source: "/usr/bin/src3",
-						Dest:   "/bin/owned-link",
-						User:   "need",
-						Group:  "coffee",
-					},
-					{
-						Source: "/usr/bin/src2/file2",
-						Dest:   "/bin/owned-link2",
-						User:   "need",
-					},
 					{
 						Source: "/usr/bin/src1",
 						Dest:   "/bin/owned-link3",
@@ -477,79 +582,7 @@ echo "$BAR" > bar.txt
 					},
 				},
 			},
-
 			Tests: []*dalec.TestSpec{
-				{
-					Name: "Verify source mounts work",
-					Mounts: []dalec.SourceMount{
-						{
-							Dest: "/foo",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									File: &dalec.SourceInlineFile{
-										Contents: "hello world",
-									},
-								},
-							},
-						},
-						{
-							Dest: "/nested/foo",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									File: &dalec.SourceInlineFile{
-										Contents: "hello world nested",
-									},
-								},
-							},
-						},
-						{
-							Dest: "/dir",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									Dir: &dalec.SourceInlineDir{
-										Files: map[string]*dalec.SourceInlineFile{
-											"foo": {Contents: "hello from dir"},
-										},
-									},
-								},
-							},
-						},
-						{
-							Dest: "/nested/dir",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									Dir: &dalec.SourceInlineDir{
-										Files: map[string]*dalec.SourceInlineFile{
-											"foo": {Contents: "hello from nested dir"},
-										},
-									},
-								},
-							},
-						},
-					},
-					Steps: []dalec.TestStep{
-						{
-							Command: "/bin/sh -c 'cat /foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello world"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-						{
-							Command: "/bin/sh -c 'cat /nested/foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello world nested"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-						{
-							Command: "/bin/sh -c 'cat /dir/foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello from dir"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-						{
-							Command: "/bin/sh -c 'cat /nested/dir/foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello from nested dir"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-					},
-				},
 				{
 					Name: "Check that the binary artifacts execute and provide the expected output",
 					Steps: []dalec.TestStep{
@@ -558,72 +591,11 @@ echo "$BAR" > bar.txt
 							Stdout:  dalec.CheckOutput{Equals: "hello world\n"},
 							Stderr:  dalec.CheckOutput{Empty: true},
 						},
-						{
-							Command: "/usr/bin/file2",
-							Stdout:  dalec.CheckOutput{Equals: "Added a new file\n"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-					},
-				},
-				{
-					Name: "Check that multi-line command (from build step) with env vars propagates env vars to whole command",
-					Files: map[string]dalec.FileCheckOutput{
-						"/usr/bin/foo0.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_0\n"}},
-						"/usr/bin/foo1.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_1\n"}},
-						"/usr/bin/bar.txt":  {CheckOutput: dalec.CheckOutput{StartsWith: "bar\n"}},
-					},
-				},
-				{
-					Name: "Post-install symlinks should be created and have correct ownership",
-					Files: map[string]dalec.FileCheckOutput{
-						"/src1":                  {},
-						"/non/existing/dir/src3": {},
-					},
-					Steps: []dalec.TestStep{
-						{Command: "/bin/bash -exc 'test -L /src1'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir/src2'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src2)\" = \"/usr/bin/src2\"'"},
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir/src3'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir2/src3'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-						{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-						{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-					},
-				},
-				{
-					Name: "Check /etc/os-release",
-					Files: map[string]dalec.FileCheckOutput{
-						"/etc/os-release": {
-							CheckOutput: dalec.CheckOutput{
-								Matches: []string{
-									// Some distros have quotes around the values
-									// Regex is to match the values with or without quotes
-									// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rather than the full document.
-									//
-									// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
-									`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
-									`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
-								},
-							},
-						},
 					},
 				},
 				{
 					Name: "Artifact symlinks should have correct ownership",
 					Steps: []dalec.TestStep{
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link2'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link2)\" = \"/usr/bin/src2/file2\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
 						{Command: "/bin/bash -exc 'test -L /bin/owned-link3'"},
 						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link3)\" = \"/usr/bin/src1\"'"},
 						{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
@@ -633,43 +605,297 @@ echo "$BAR" > bar.txt
 					},
 				},
 			},
-		}
+		})
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 			sr := newSolveRequest(
 				withSpec(ctx, t, &spec),
 				withBuildTarget(testConfig.Target.Container),
-				withBuildContext(ctx, t, patchContextName, patchContext),
 			)
-			sr.Evaluate = true
+			solveT(ctx, t, gwc, sr)
+		})
+	})
 
-			beforeBuild := time.Now()
-			res := solveT(ctx, t, gwc, sr)
+	t.Run("tests", func(t *testing.T) {
+		t.Parallel()
 
-			dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-			assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+		t.Run("have_access_to_source_mounts", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(baseCtx, t)
 
-			var cfg dalec.DockerImageSpec
-			assert.Assert(t, json.Unmarshal(dt, &cfg))
-			assert.Check(t, cfg.Created.After(beforeBuild))
-			assert.Check(t, cfg.Created.Before(time.Now()))
-
-			// Make sure the test framework was actually executed by the build target.
-			// This appends a test case so that is expected to fail and as such cause the build to fail.
-			spec.Tests = append(spec.Tests, &dalec.TestSpec{
-				Name: "Test framework should be executed",
-				Steps: []dalec.TestStep{
-					{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+			spec := testLinuxSpec(t, dalec.Spec{
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Verify source mounts work",
+						Mounts: []dalec.SourceMount{
+							{
+								Dest: "/foo",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										File: &dalec.SourceInlineFile{
+											Contents: "hello world",
+										},
+									},
+								},
+							},
+							{
+								Dest: "/nested/foo",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										File: &dalec.SourceInlineFile{
+											Contents: "hello world nested",
+										},
+									},
+								},
+							},
+							{
+								Dest: "/dir",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										Dir: &dalec.SourceInlineDir{
+											Files: map[string]*dalec.SourceInlineFile{
+												"foo": {Contents: "hello from dir"},
+											},
+										},
+									},
+								},
+							},
+							{
+								Dest: "/nested/dir",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										Dir: &dalec.SourceInlineDir{
+											Files: map[string]*dalec.SourceInlineFile{
+												"foo": {Contents: "hello from nested dir"},
+											},
+										},
+									},
+								},
+							},
+						},
+						Steps: []dalec.TestStep{
+							{
+								Command: "/bin/sh -c 'cat /foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello world"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+							{
+								Command: "/bin/sh -c 'cat /nested/foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello world nested"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+							{
+								Command: "/bin/sh -c 'cat /dir/foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello from dir"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+							{
+								Command: "/bin/sh -c 'cat /nested/dir/foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello from nested dir"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+						},
+					},
 				},
 			})
 
-			// update the spec in the solve request
-			withSpec(ctx, t, &spec)(&newSolveRequestConfig{req: &sr})
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+	})
 
-			_, err := gwc.Solve(ctx, sr)
-			if err == nil {
-				t.Fatal("expected test spec to run with error but got none")
-			}
+	t.Run("container", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("creates_post_install_symlinks", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Sources: map[string]dalec.Source{
+					"src1": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho hello world",
+								Permissions: 0o700,
+							},
+						},
+					},
+					"src3": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho goodbye",
+								Permissions: 0o700,
+							},
+						},
+					},
+				},
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"src1": {},
+						"src3": {},
+					},
+					Users: []dalec.AddUserConfig{
+						{
+							Name: "need",
+						},
+					},
+					Groups: []dalec.AddGroupConfig{
+						{
+							Name: "coffee",
+						},
+					},
+				},
+				Image: &dalec.ImageConfig{
+					Post: &dalec.PostInstall{
+						Symlinks: map[string]dalec.SymlinkTarget{
+							"/usr/bin/src1": {
+								Path: "/src1",
+								User: "need",
+							},
+							"/usr/bin/src3": {
+								Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
+								User:  "need",
+								Group: "coffee",
+							},
+						},
+					},
+				},
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Post-install symlinks should be created and have correct ownership",
+						Files: map[string]dalec.FileCheckOutput{
+							"/src1":                  {},
+							"/non/existing/dir/src3": {},
+						},
+						Steps: []dalec.TestStep{
+							{Command: "/bin/bash -exc 'test -L /src1'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+
+							{Command: "/bin/bash -exc 'test -L /non/existing/dir/src3'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
+							{Command: "/bin/bash -exc 'test -L /non/existing/dir2/src3'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+							{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("contains_etc_os_release_file", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Check /etc/os-release",
+						Files: map[string]dalec.FileCheckOutput{
+							"/etc/os-release": {
+								CheckOutput: dalec.CheckOutput{
+									Matches: []string{
+										// Some distros have quotes around the values
+										// Regex is to match the values with or without quotes
+										// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rather than the full document.
+										//
+										// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
+										`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
+										`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
+									},
+								},
+							},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("runs_tests", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			// Make sure the test framework was actually executed by the build target.
+			// This appends a test case so that is expected to fail and as such cause the build to fail.
+			spec := testLinuxSpec(t, dalec.Spec{
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Test framework should be executed",
+						Steps: []dalec.TestStep{
+							{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				sr.Evaluate = true
+
+				_, err := gwc.Solve(ctx, sr)
+				if err == nil {
+					t.Fatal("Expected test spec to run with error but got none")
+				}
+			})
+		})
+
+		t.Run("has_image_config_available_with_build_time", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				sr.Evaluate = true
+
+				beforeBuild := time.Now()
+				res := solveT(ctx, t, gwc, sr)
+
+				dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+				assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+
+				var cfg dalec.DockerImageSpec
+				assert.Assert(t, json.Unmarshal(dt, &cfg))
+				assert.Check(t, cfg.Created.After(beforeBuild))
+				assert.Check(t, cfg.Created.Before(time.Now()))
+			})
 		})
 	})
 
@@ -3419,7 +3645,6 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 					// Make sure the error is an exit error
 					var xErr *moby_buildkit_v1_frontend.ExitError
 					assert.Check(t, cmp.ErrorType(pkgerrors.Cause(err), xErr))
-
 				}, testenv.WithSolveStatusFn(consumeLogs))
 
 				_, err = f.Seek(0, 0)
@@ -3752,7 +3977,6 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 
 			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			solveT(ctx, t, client, req)
-
 		})
 	})
 
@@ -4513,4 +4737,32 @@ echo "This is a third test binary"
 			t.Fatal(err)
 		}
 	})
+}
+
+func testLinuxSpec(t *testing.T, userSpec dalec.Spec) dalec.Spec {
+	t.Helper()
+
+	result := dalec.Spec{
+		Name:        "test-container-build",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Testing container target",
+
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+			},
+		},
+	}
+
+	userSpecRaw, err := json.Marshal(userSpec)
+	assert.NilError(t, err, "marshaling user spec to json")
+
+	assert.NilError(t, json.Unmarshal(userSpecRaw, &result), "unmarshaling user spec into result spec")
+
+	return result
 }
