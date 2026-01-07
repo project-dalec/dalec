@@ -1539,72 +1539,6 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		})
 	})
 
-	t.Run("gomod require directive", func(t *testing.T) {
-		t.Parallel()
-		ctx := startTestSpan(baseCtx, t)
-
-		spec := &dalec.Spec{
-			Name:        "test-gomod-require",
-			Version:     "0.0.1",
-			Revision:    "1",
-			License:     "MIT",
-			Website:     "https://github.com/project-dalec/dalec",
-			Vendor:      "Dalec",
-			Packager:    "Dalec",
-			Description: "Testing gomod require directive",
-			Sources: map[string]dalec.Source{
-				"src": {
-					Inline: &dalec.SourceInline{
-						Dir: &dalec.SourceInlineDir{
-							Files: map[string]*dalec.SourceInlineFile{
-								"go.mod": {Contents: "module example.com/test\n\ngo 1.18\n"},
-								"main.go": {Contents: `package main
-import (
-	"fmt"
-	"github.com/stretchr/testify/assert"
-)
-func main() {
-	fmt.Println("hello")
-	assert.True(nil, true)
-}
-`},
-							},
-						},
-					},
-					Generate: []*dalec.SourceGenerator{
-						{
-							Gomod: &dalec.GeneratorGomod{
-								Edits: &dalec.GomodEdits{
-									Require: []dalec.GomodRequire{
-										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			Dependencies: &dalec.PackageDependencies{
-				Build: map[string]dalec.PackageConstraints{
-					testConfig.GetPackage("golang"): {},
-				},
-			},
-			Build: dalec.ArtifactBuild{
-				Steps: []dalec.BuildStep{
-					// Verify go.mod was patched with the exact version specified
-					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
-					// Build the code - will fail if require didn't work
-					{Command: "cd ./src && go build"},
-				},
-			},
-		}
-
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
-			solveT(ctx, t, client, req)
-		})
-	})
-
 	t.Run("gomod replace directive", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
@@ -1672,19 +1606,19 @@ func main() {
 		})
 	})
 
-	t.Run("gomod combined replace and require", func(t *testing.T) {
+	t.Run("gomod replace directive", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 
 		spec := &dalec.Spec{
-			Name:        "test-gomod-combined",
+			Name:        "test-gomod-replace",
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
 			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
-			Description: "Testing gomod combined replace and require",
+			Description: "Testing gomod replace directive",
 			Sources: map[string]dalec.Source{
 				"src": {
 					Inline: &dalec.SourceInline{
@@ -1711,10 +1645,6 @@ func main() {
 						{
 							Gomod: &dalec.GeneratorGomod{
 								Edits: &dalec.GomodEdits{
-									// Require testify at v1.8.0
-									Require: []dalec.GomodRequire{
-										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
-									},
 									// Replace objx (another stretchr module) with a specific version.
 									Replace: []dalec.GomodReplace{
 										{Original: "github.com/stretchr/objx", Update: "github.com/stretchr/objx@v0.5.0"},
@@ -1732,8 +1662,7 @@ func main() {
 			},
 			Build: dalec.ArtifactBuild{
 				Steps: []dalec.BuildStep{
-					// Verify both directives were applied with correct versions
-					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Verify replace directive was applied with correct version
 					{Command: "grep -F 'replace github.com/stretchr/objx' ./src/go.mod"},
 					{Command: "grep -F 'github.com/stretchr/objx v0.5.0' ./src/go.mod"},
 					// Build the code - will fail if edits didn't work
@@ -1797,8 +1726,8 @@ func main() {
 							Gomod: &dalec.GeneratorGomod{
 								Paths: []string{"module1", "module2"},
 								Edits: &dalec.GomodEdits{
-									Require: []dalec.GomodRequire{
-										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify@v1.7.0", Update: "github.com/stretchr/testify@v1.8.0"},
 									},
 								},
 							},
@@ -1813,9 +1742,9 @@ func main() {
 			},
 			Build: dalec.ArtifactBuild{
 				Steps: []dalec.BuildStep{
-					// Verify both modules were patched with the exact version
-					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/module1/go.mod"},
-					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/module2/go.mod"},
+					// Verify both modules were patched with replace directive
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/module1/go.mod"},
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/module2/go.mod"},
 					{Command: "cd ./src/module1 && go build"},
 					{Command: "cd ./src/module2 && go build"},
 				},
@@ -1865,8 +1794,8 @@ func main() {
 							Subpath: "subdir",
 							Gomod: &dalec.GeneratorGomod{
 								Edits: &dalec.GomodEdits{
-									Require: []dalec.GomodRequire{
-										{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify@v1.7.0", Update: "github.com/stretchr/testify@v1.8.0"},
 									},
 								},
 							},
@@ -1881,8 +1810,8 @@ func main() {
 			},
 			Build: dalec.ArtifactBuild{
 				Steps: []dalec.BuildStep{
-					// Verify the go.mod in subdir was patched with the exact version
-					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/subdir/go.mod"},
+					// Verify the go.mod in subdir was patched with replace directive
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/subdir/go.mod"},
 					{Command: "cd ./src/subdir && go build"},
 				},
 			},
