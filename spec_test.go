@@ -49,9 +49,6 @@ func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
 			gen: &SourceGenerator{
 				Gomod: &GeneratorGomod{
 					Edits: &GomodEdits{
-						Require: []GomodRequire{
-							{Module: "github.com/stretchr/testify", Version: "github.com/stretchr/testify@v1.8.0"},
-						},
 						Replace: []GomodReplace{
 							{Original: "github.com/old/module", Update: "github.com/new/module@v1.0.0"},
 						},
@@ -59,34 +56,6 @@ func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
 				},
 			},
 			expectErr: false,
-		},
-		{
-			name: "invalid require - missing @version",
-			gen: &SourceGenerator{
-				Gomod: &GeneratorGomod{
-					Edits: &GomodEdits{
-						Require: []GomodRequire{
-							{Module: "github.com/stretchr/testify", Version: "v1.8.0"}, // Missing @
-						},
-					},
-				},
-			},
-			expectErr:         true,
-			expectedErrSubstr: "version must include @version",
-		},
-		{
-			name: "invalid require - empty module",
-			gen: &SourceGenerator{
-				Gomod: &GeneratorGomod{
-					Edits: &GomodEdits{
-						Require: []GomodRequire{
-							{Module: "", Version: "github.com/stretchr/testify@v1.8.0"},
-						},
-					},
-				},
-			},
-			expectErr:         true,
-			expectedErrSubstr: "must be non-empty",
 		},
 		{
 			name: "invalid replace - empty old",
@@ -121,9 +90,6 @@ func TestSourceGeneratorValidateGomodEdits(t *testing.T) {
 			gen: &SourceGenerator{
 				Gomod: &GeneratorGomod{
 					Edits: &GomodEdits{
-						Require: []GomodRequire{
-							{Module: "", Version: "v1.8.0"}, // Both invalid
-						},
 						Replace: []GomodReplace{
 							{Original: "", Update: ""}, // Both invalid
 						},

@@ -963,7 +963,7 @@
 				},
 				"edits": {
 					"$ref": "#/$defs/GomodEdits",
-					"description": "Edits contains go.mod manipulation directives (replace, require) that are applied\nbefore downloading module dependencies."
+					"description": "Edits contains go.mod manipulation directives (replace) that are applied\nbefore downloading module dependencies."
 				},
 				"paths": {
 					"items": {
@@ -1123,15 +1123,6 @@
 						"array"
 					],
 					"description": "Replace applies go.mod replace directives before downloading module dependencies.\nEach entry can be either a string \"old:new\" or a struct with Old and New fields."
-				},
-				"require": {
-					"items": {
-						"$ref": "#/$defs/GomodRequire"
-					},
-					"type": [
-						"array"
-					],
-					"description": "Require applies go.mod require directives before downloading module dependencies.\nEach entry can be either a string \"module:version\" or a struct with Module and Version fields."
 				}
 			},
 			"additionalProperties": {
@@ -1224,34 +1215,6 @@
 				"null"
 			],
 			"description": "GomodReplace represents a go.mod replace directive."
-		},
-		"GomodRequire": {
-			"required": [
-				"module",
-				"version"
-			],
-			"properties": {
-				"module": {
-					"type": [
-						"string"
-					],
-					"description": "Module is the module path that appears in go.mod"
-				},
-				"version": {
-					"type": [
-						"string"
-					],
-					"description": "Version is the target module and version (e.g., \"module@version\")"
-				}
-			},
-			"additionalProperties": {
-				"not": {}
-			},
-			"type": [
-				"object",
-				"null"
-			],
-			"description": "GomodRequire represents a go.mod require directive."
 		},
 		"ImageConfig": {
 			"properties": {

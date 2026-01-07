@@ -37,7 +37,7 @@ func (s *Spec) Preprocess(client gwclient.Client, sOpt SourceOpts, worker llb.St
 	return nil
 }
 
-// preprocessGomodEdits generates patch LLB states for all gomod replace/require directives
+// preprocessGomodEdits generates patch LLB states for all gomod replace directives
 // and registers them as context sources that can be retrieved later.
 func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) error {
 	gomodSources := s.gomodSources()
@@ -103,7 +103,7 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 	return nil
 }
 
-// gomodEditCommand generates the "go mod edit" command string from replace/require directives
+// gomodEditCommand generates the "go mod edit" command string from replace directives
 func gomodEditCommand(g *GeneratorGomod) (string, error) {
 	if g == nil || g.Edits == nil {
 		return "", nil
@@ -118,15 +118,6 @@ func gomodEditCommand(g *GeneratorGomod) (string, error) {
 			return "", err
 		}
 		args = append(args, "-replace="+arg)
-	}
-
-	// Process require directives
-	for _, r := range g.Edits.Require {
-		arg, err := r.goModEditArg()
-		if err != nil {
-			return "", err
-		}
-		args = append(args, "-require="+arg)
 	}
 
 	if len(args) == 0 {
