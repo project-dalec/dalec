@@ -241,6 +241,25 @@ jobs:
           echo
 
           echo "================ CLEANUP COMPLETE ================"
+
+      - name: Pre-build base images
+        run: |
+          set -eu
+
+          docker buildx bake frontend
+          if [ "${TEST_SUITE}" = "other" ]; then
+            exit 0
+          fi
+
+          # downcase the test suite to get the worker target
+          worker="${TEST_SUITE,,}"
+          if [ "${worker}" = "windows" ]; then
+            worker="windowscross"
+          fi
+          export WORKER_TARGET=${worker}/worker
+          docker buildx bake worker
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
       - name: Run integration tests
         run: |
           set -ex
