@@ -2,7 +2,6 @@ package frontend
 
 import (
 	"context"
-	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -24,6 +23,13 @@ import (
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"github.com/project-dalec/dalec/internal/testrunner"
 )
+
+const (
+	testErrorsOutputFile = ".errors.txt"
+	testOutputPath       = "/tmp/dalec/internal/test/step/output"
+)
+
+var errorsOutputFullPath = filepath.Join(testOutputPath, testErrorsOutputFile)
 
 // RunTests runs the tests defined in the spec against the given the input state.
 // The result of this is either the provided `finalState` or a state that errors when executed with the errors produced by the tests.
@@ -75,39 +81,10 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, fin
 
 		var group errGroup
 
-		const errorsOutputFile = ".errors.txt"
-		const outputPath = "/tmp/dalec/internal/test/step/output"
-		errorsOutputFullPath := filepath.Join(outputPath, errorsOutputFile)
-
 		for _, test := range tests {
-			base := in
-			for k, v := range test.Env {
-				base = base.AddEnv(k, v)
-			}
-
-			var opts []llb.RunOption
 			pg := llb.ProgressGroup(identity.NewID(), "Test: "+path.Join(target, test.Name), false)
-			opts = append(opts, pg)
 
-			for _, sm := range test.Mounts {
-				opts = append(opts, sm.ToRunOption(sOpt, pg))
-			}
-
-			result := base
-			result = result.File(llb.Mkdir(outputPath, 0o755, llb.WithParents(true)), pg)
-
-			for i, step := range test.Steps {
-				opts := append(opts, testrunner.WithTestStep(frontendSt, &step, i, errorsOutputFullPath))
-				opts = append(opts, step.GetSourceLocation(result))
-				result = result.Run(opts...).Root()
-			}
-
-			if len(test.Files) > 0 {
-				opts := append(opts, testrunner.WithFileChecks(frontendSt, test, errorsOutputFullPath))
-
-				opts = append(opts, llb.WithCustomNamef("Execute file checks for test: %s", test.Name))
-				result = result.Run(opts...).Root()
-			}
+			result := in.With(runTest(frontendSt, sOpt, test, pg))
 
 			group.Go(func() (retErr error) {
 				defer func() {
@@ -117,76 +94,7 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, fin
 					}
 				}()
 
-				// Make sure we force evaluation here otherwise errors won't surface until
-				// later, e.g. when we try to read the output file.
-				resultFS, err := bkfs.EvalFromState(ctx, &result, client, dalec.Platform(platform))
-				if err != nil {
-					err = testrunner.FilterStepError(err)
-					return errors.Wrapf(err, "%q", test.Name)
-				}
-
-				p := strings.TrimPrefix(errorsOutputFullPath, "/")
-				f, err := resultFS.Open(p)
-				if err != nil {
-					if !stderrors.Is(err, fs.ErrNotExist) {
-						return errors.Wrapf(err, "failed to read test result for %q", test.Name)
-					}
-					// No errors file means no errors.
-					return nil
-				}
-				defer f.Close()
-
-				dec := json.NewDecoder(f)
-
-				var errs []error
-				for {
-					var fileCheckResults []testrunner.FileCheckErrResult
-					err := dec.Decode(&fileCheckResults)
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						return errors.Wrapf(err, "failed to decode test result for %q", test.Name)
-					}
-
-					for _, r := range fileCheckResults {
-						for _, checkErr := range r.Checks {
-							var src *errdefs.Source
-							if r.StepIndex != nil {
-								idx := *r.StepIndex
-								step := test.Steps[idx]
-								err := errors.Wrapf(checkErr, "step %d", idx)
-								err = errors.Wrapf(err, "%q", test.Name)
-								switch r.Filename {
-								case "stdout":
-									src = step.Stdout.GetErrSource(checkErr)
-								case "stderr":
-									src = step.Stderr.GetErrSource(checkErr)
-								default:
-									return errors.Wrapf(err, "unknown output stream name for step command check, if you see this it is a bug and should be reported: stream %q", r.Filename)
-								}
-
-								err = wrapWithSource(err, src)
-								errs = append(errs, err)
-								continue
-							}
-
-							var err error = checkErr
-							f, ok := test.Files[r.Filename]
-							if ok {
-								src := f.GetErrSource(checkErr)
-								err = errors.Wrap(err, r.Filename)
-								err = errors.Wrapf(err, "%q", test.Name)
-								err = wrapWithSource(err, src)
-								errs = append(errs, err)
-								continue
-							}
-							errs = append(errs, errors.Wrapf(err, "unknown file %q in test %q, if you see this it is a bug and should be reported", r.Filename, test.Name))
-						}
-					}
-				}
-
-				return stderrors.Join(errs...)
+				return checkTestResult(ctx, client, test, result, platform)
 			})
 		}
 
@@ -196,6 +104,110 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, fin
 		}
 
 		return in.With(withTestError(err, frontendSt))
+	}
+}
+
+func checkTestResult(ctx context.Context, client gwclient.Client, test *dalec.TestSpec, result llb.State, platform *ocispecs.Platform) error {
+	// Make sure we force evaluation here otherwise errors won't surface until
+	// later, e.g. when we try to read the output file.
+	resultFS, err := bkfs.EvalFromState(ctx, &result, client, dalec.Platform(platform))
+	if err != nil {
+		err = testrunner.FilterStepError(err)
+		return errors.Wrapf(err, "%q", test.Name)
+	}
+
+	p := strings.TrimPrefix(errorsOutputFullPath, "/")
+	f, err := resultFS.Open(p)
+	if err != nil {
+		if !stderrors.Is(err, fs.ErrNotExist) {
+			return errors.Wrapf(err, "failed to read test result for %q", test.Name)
+		}
+		// No errors file means no errors.
+		return nil
+	}
+	defer f.Close()
+
+	var errs []error
+	for r, err := range testrunner.DecodeResults(f) {
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return errors.Wrapf(err, "failed to decode test result for %q", test.Name)
+		}
+
+		for _, checkErr := range r.Checks {
+			var src *errdefs.Source
+			if r.StepIndex != nil {
+				idx := *r.StepIndex
+				step := test.Steps[idx]
+				err := errors.Wrapf(checkErr, "step %d", idx)
+				err = errors.Wrapf(err, "%q", test.Name)
+				switch r.Filename {
+				case "stdout":
+					src = step.Stdout.GetErrSource(checkErr)
+				case "stderr":
+					src = step.Stderr.GetErrSource(checkErr)
+				default:
+					return errors.Wrapf(err, "unknown output stream name for step command check, if you see this it is a bug and should be reported: stream %q", r.Filename)
+				}
+
+				err = wrapWithSource(err, src)
+				errs = append(errs, err)
+				continue
+			}
+
+			var err error = checkErr
+			f, ok := test.Files[r.Filename]
+			if ok {
+				src := f.GetErrSource(checkErr)
+				err = errors.Wrap(err, r.Filename)
+				err = errors.Wrapf(err, "%q", test.Name)
+				err = wrapWithSource(err, src)
+				errs = append(errs, err)
+				continue
+			}
+			errs = append(errs, errors.Wrapf(err, "unknown file %q in test %q, if you see this it is a bug and should be reported", r.Filename, test.Name))
+		}
+	}
+
+	return stderrors.Join(errs...)
+}
+
+func runTest(frontend llb.State, sOpt dalec.SourceOpts, test *dalec.TestSpec, opts ...llb.ConstraintsOpt) llb.StateOption {
+	return func(in llb.State) llb.State {
+		base := in
+
+		errorsOutputFullPath := filepath.Join(testOutputPath, testErrorsOutputFile)
+
+		for k, v := range test.Env {
+			base = base.AddEnv(k, v)
+		}
+
+		var rOpts []llb.RunOption
+		rOpts = append(rOpts, dalec.WithConstraints(opts...))
+
+		for _, sm := range test.Mounts {
+			rOpts = append(rOpts, sm.ToRunOption(sOpt, dalec.WithConstraints(opts...)))
+		}
+
+		result := base
+		result = result.File(llb.Mkdir(testOutputPath, 0o755, llb.WithParents(true)), opts...)
+
+		for i, step := range test.Steps {
+			rOpts := append(rOpts, testrunner.WithTestStep(frontend, &step, i, errorsOutputFullPath))
+			rOpts = append(rOpts, step.GetSourceLocation(result))
+			result = result.Run(rOpts...).Root()
+		}
+
+		if len(test.Files) > 0 {
+			rOpts := append(rOpts, testrunner.WithFileChecks(frontend, test, errorsOutputFullPath))
+
+			rOpts = append(rOpts, llb.WithCustomNamef("Execute file checks for test: %s", test.Name))
+			result = result.Run(rOpts...).Root()
+		}
+
+		return result
 	}
 }
 
