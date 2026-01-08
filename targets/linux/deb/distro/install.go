@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/packaging/linux/deb"
 )
@@ -21,10 +22,11 @@ func AptInstall(packages []string, opts ...llb.ConstraintsOpt) llb.RunOption {
 		const installScript = `#!/usr/bin/env sh
 set -ex
 
+
 # Make sure any cached data from local repos is purged since this should not
 # be shared between builds.
 rm -f /var/lib/apt/lists/_*
-apt autoclean -y
+apt autoclean -y 
 
 # Remove any previously failed attempts to get repo data
 rm -rf /var/lib/apt/lists/partial/*
@@ -41,6 +43,187 @@ apt install -y "$@"
 		p := "/tmp/dalec/internal/deb/install.sh"
 		llb.AddMount(p, script, llb.SourcePath("install.sh")).SetRunOption(ei)
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive").SetRunOption(ei)
+		llb.Args(append([]string{p}, packages...)).SetRunOption(ei)
+	})
+}
+
+// AptInstallIntoRoot installs packages into a mounted root filesystem (rootfsPath)
+// while running apt/dpkg from the *current* container environment (i.e. build platform).
+// Notes:
+//   - This relies on the target rootfs containing valid /etc/apt and /var/lib/dpkg state.
+//   - Maintainer scripts execute inside the target rootfs. If they invoke target-arch binaries,
+//     they will require emulation (binfmt/qemu) on the build host.
+//     This still avoids running the entire apt install pipeline under emulation: dependency
+//     resolution/download/unpack are native; only maintainer scripts may be emulated.
+func AptInstallIntoRoot(rootfsPath string, packages []string, targetArch string, buildPlat ocispecs.Platform) llb.RunOption {
+	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
+		// CRITICAL: this exec must run on the build platform (native),
+		// not the target platform. Otherwise we hit exec format error when QEMU is off.
+		bp := buildPlat
+		ei.Constraints.Platform = &bp
+
+		const installScript = `#!/bin/sh
+set -eu
+
+# Exit codes:
+#   2 - Required environment variables missing
+#   3 - Target rootfs invalid / missing apt sources
+#   4 - Target rootfs dpkg arch mismatch
+#   6 - No downloaded .deb files found for target arch
+
+log() { echo "dalec(deb): $*" >&2; }
+
+ROOTFS="${DALEC_ROOTFS:-}"
+ARCH="${DALEC_TARGET_ARCH:-}"
+if [ -z "${ROOTFS}" ] || [ -z "${ARCH}" ]; then
+  log "DALEC_ROOTFS and DALEC_TARGET_ARCH must be set"
+  exit 2
+fi
+
+if [ -f "${ROOTFS}/var/lib/dpkg/arch" ]; then
+  native_arch="$(head -n1 "${ROOTFS}/var/lib/dpkg/arch" 2>/dev/null | tr -d '\n' || true)"
+  if [ -n "${native_arch}" ] && [ "${native_arch}" != "${ARCH}" ]; then
+    log "target rootfs dpkg arch (${native_arch}) != requested (${ARCH})"
+    exit 4
+  fi
+fi
+
+SOURCELIST=""
+SOURCEPARTS=""
+[ -f "${ROOTFS}/etc/apt/sources.list" ] && SOURCELIST="${ROOTFS}/etc/apt/sources.list"
+[ -d "${ROOTFS}/etc/apt/sources.list.d" ] && SOURCEPARTS="${ROOTFS}/etc/apt/sources.list.d"
+if [ -z "${SOURCELIST}" ] && [ -z "${SOURCEPARTS}" ]; then
+  log "target rootfs at ${ROOTFS} is missing apt sources under /etc/apt"
+  exit 3
+fi
+
+mkdir -p /tmp/dalec
+chmod 0700 /tmp/dalec
+
+mkdir -p \
+  "${ROOTFS}/var/lib/dpkg" \
+  "${ROOTFS}/var/lib/apt/lists/partial" \
+  "${ROOTFS}/var/cache/apt/archives" \
+  "${ROOTFS}/var/cache/apt/archives/partial" \
+  "${ROOTFS}/usr/bin" \
+  "${ROOTFS}/usr/sbin"
+
+if [ ! -f "${ROOTFS}/var/lib/dpkg/status" ]; then
+  : > "${ROOTFS}/var/lib/dpkg/status"
+fi
+
+# --- dpkg wrappers for APT solver (native) ---
+# NOTE: These wrappers must operate on ROOTFS dpkg DB (NOT host), otherwise
+# apt will solve against the wrong installed-set/arch.
+cat > /tmp/dalec/dpkg <<'EOF'
+#!/bin/sh
+set -e
+ROOTFS="${DALEC_ROOTFS}"
+ADMINDIR="${ROOTFS}/var/lib/dpkg"
+ARCH="${DALEC_TARGET_ARCH}"
+case "${1:-}" in
+  --print-architecture) echo "${ARCH}"; exit 0 ;;
+  --print-foreign-architectures) exit 0 ;;
+  --add-architecture) exit 0 ;;
+esac
+
+exec /usr/bin/dpkg \
+  --root="${ROOTFS}" \
+  --admindir="${ADMINDIR}" \
+  --force-architecture \
+  "$@"
+EOF
+chmod +x /tmp/dalec/dpkg
+
+cat > /tmp/dalec/dpkg-query <<'EOF'
+#!/bin/sh
+set -e
+ROOTFS="${DALEC_ROOTFS}"
+ADMINDIR="${ROOTFS}/var/lib/dpkg"
+exec /usr/bin/dpkg-query \
+  --root="${ROOTFS}" \
+  --admindir="${ADMINDIR}" \
+  "$@"
+EOF
+chmod +x /tmp/dalec/dpkg-query
+
+# Host-side arch-scoped APT caches (speed + avoid collisions)
+ARCHIVE_DIR="/var/cache/apt/archives-${ARCH}"
+LISTS_DIR="/var/cache/apt/lists-${ARCH}"
+mkdir -p "${ARCHIVE_DIR}/partial" "${LISTS_DIR}/partial"
+rm -rf "${LISTS_DIR}/"* 2>/dev/null || true
+mkdir -p "${LISTS_DIR}/partial"
+
+APT_OPTS="
+ -o Dir::State=${ROOTFS}/var/lib/apt
+ -o Dir::State::Lists=${LISTS_DIR}
+ -o Dir::State::status=${ROOTFS}/var/lib/dpkg/status
+ -o Dir::Cache=/var/cache/apt
+ -o Dir::Cache::archives=${ARCHIVE_DIR}
+ -o APT::Architecture=${ARCH}
+ -o APT::Architectures::=${ARCH}
+ -o APT::Architectures::=all
+ -o Dir::Bin::dpkg=/tmp/dalec/dpkg
+ -o Dir::Bin::dpkg-query=/tmp/dalec/dpkg-query
+ -o Acquire::Languages=none
+ -o Dpkg::Use-Pty=0
+"
+if [ -n "${SOURCELIST}" ]; then
+  APT_OPTS="${APT_OPTS} -o Dir::Etc::sourcelist=${SOURCELIST}"
+fi
+if [ -n "${SOURCEPARTS}" ]; then
+  APT_OPTS="${APT_OPTS} -o Dir::Etc::sourceparts=${SOURCEPARTS}"
+fi
+
+apt-get ${APT_OPTS} update
+
+DEBIAN_FRONTEND=noninteractive apt-get ${APT_OPTS} --download-only install -y "$@"
+
+# We must have target-arch and/or arch-independent .debs downloaded.
+if ! ls "${ARCHIVE_DIR}"/*_"${ARCH}".deb "${ARCHIVE_DIR}"/*_all.deb >/dev/null 2>&1; then
+  log "no downloaded debs found in ${ARCHIVE_DIR} for arch=${ARCH}"
+  exit 6
+fi
+
+# Prevent daemons from starting during maintainer scripts.
+POLICY="${ROOTFS}/usr/sbin/policy-rc.d"
+cat > "${POLICY}" <<'EOF'
+#!/bin/sh
+exit 101
+EOF
+chmod +x "${POLICY}"
+trap 'rm -f "${POLICY}" 2>/dev/null || true' EXIT
+
+chroot_configure() { chroot "${ROOTFS}" /usr/bin/dpkg --configure -a; }
+
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+export DEBIAN_PRIORITY=critical
+export NEEDRESTART_MODE=a
+
+# Phase 2a: UNPACK (native, outside chroot) into mounted ROOTFS using dpkg --root.
+# This is the fast path: avoids running unpack under QEMU.
+for deb in "${ARCHIVE_DIR}"/*_"${ARCH}".deb "${ARCHIVE_DIR}"/*_all.deb; do
+	[ -f "${deb}" ] || continue
+	/tmp/dalec/dpkg --unpack --force-depends --no-triggers "$deb"
+done
+
+# Phase 2b: configure inside target rootfs.
+chroot_configure
+
+cnt="$(awk '/^Package: /{n++} END{print n+0}' "${ROOTFS}/var/lib/dpkg/status" 2>/dev/null || echo 0)"
+log "ROOTFS dpkg status packages: ${cnt}"
+`
+		script := llb.Scratch().File(
+			llb.Mkfile("install-into-root.sh", 0o755, []byte(installScript)),
+			dalec.WithConstraint(&ei.Constraints),
+		)
+
+		p := "/tmp/dalec/internal/deb/install-into-root.sh"
+		llb.AddMount(p, script, llb.SourcePath("install-into-root.sh")).SetRunOption(ei)
+		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive").SetRunOption(ei)
+		llb.AddEnv("DALEC_ROOTFS", rootfsPath).SetRunOption(ei)
+		llb.AddEnv("DALEC_TARGET_ARCH", targetArch).SetRunOption(ei)
 		llb.Args(append([]string{p}, packages...)).SetRunOption(ei)
 	})
 }
@@ -70,7 +253,6 @@ func InstallLocalPkg(pkg llb.State, upgrade bool, opts ...llb.ConstraintsOpt) ll
 		// pinning dependency packages to older versions.
 		const installScript = `#!/usr/bin/env sh
 set -ex
-
 # Make sure any cached data from local repos is purged since this should not
 # be shared between builds.
 rm -f /var/lib/apt/lists/_*
