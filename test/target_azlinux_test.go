@@ -129,7 +129,6 @@ func TestAzlinux3(t *testing.T) {
 }
 
 func testAzlinuxExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
-
 	t.Run("base deps", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
@@ -199,14 +198,18 @@ createrepo --compatibility ` + repoPath + `
 gpg --detach-sign --default-key "$ID" --armor --yes ` + repoPath + `/repodata/repomd.xml
 `
 
+		pg := dalec.ProgressGroup("in-signing-script")
+
 		script := llb.Scratch().File(
 			llb.Mkfile("/script.sh", 0o755, []byte(scriptDt)),
+			pg,
 		)
 
 		return in.Run(
 			llb.AddMount("/tmp/signing", script, llb.Readonly),
 			llb.AddMount("/tmp/gpg", gpgKey, llb.Readonly),
 			dalec.ShArgs("/tmp/signing/script.sh"),
+			pg,
 		).Root()
 	}
 }
@@ -238,14 +241,18 @@ createrepo --compatibility ` + repoPath + `
 gpg --detach-sign --default-key "$ID" --armor --yes ` + repoPath + `/repodata/repomd.xml
 `
 
+		pg := dalec.ProgressGroup("in-signing-script")
+
 		script := llb.Scratch().File(
 			llb.Mkfile("/script.sh", 0o755, []byte(scriptDt)),
+			pg,
 		)
 
 		return in.Run(
 			llb.AddMount("/tmp/signing", script, llb.Readonly),
 			llb.AddMount("/tmp/gpg", gpgKey, llb.Readonly),
 			dalec.ShArgs("/tmp/signing/script.sh"),
+			pg,
 		).Root()
 	}
 }

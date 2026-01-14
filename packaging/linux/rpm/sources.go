@@ -8,13 +8,13 @@ import (
 	"github.com/project-dalec/dalec"
 )
 
-func buildScriptSourceState(spec *dalec.Spec) *llb.State {
+func buildScriptSourceState(spec *dalec.Spec, opts ...llb.ConstraintsOpt) *llb.State {
 	if len(spec.Build.Steps) == 0 {
 		return nil
 	}
 
 	script := buildScript(spec)
-	st := llb.Scratch().File(llb.Mkfile("build.sh", 0755, []byte(script)))
+	st := llb.Scratch().File(llb.Mkfile("build.sh", 0755, []byte(script)), opts...)
 	return &st
 }
 
@@ -118,7 +118,7 @@ func Sources(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...
 		out = append(out, st)
 	}
 
-	scriptSt := buildScriptSourceState(spec)
+	scriptSt := buildScriptSourceState(spec, opts...)
 	if scriptSt != nil {
 		out = append(out, *scriptSt)
 	}

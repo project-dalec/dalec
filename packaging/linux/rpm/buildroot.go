@@ -31,11 +31,10 @@ func RPMSpec(spec *dalec.Spec, in llb.State, targetKey, dir string, opts ...llb.
 	return in.
 		File(llb.Mkdir(dir, 0755, llb.WithParents(true)), opts...).
 		File(llb.Mkfile(filepath.Join(dir, spec.Name)+".spec", 0640, buf.Bytes()), opts...)
-
 }
 
 func BuildRoot(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Create RPM buildroot"))
 	sources := Sources(worker, spec, sOpt, opts...)
-	return RPMSpec(spec, dalec.MergeAtPath(llb.Scratch(), sources, "SOURCES"), targetKey, "", opts...)
+	return RPMSpec(spec, dalec.MergeAtPath(llb.Scratch(), sources, "SOURCES", opts...), targetKey, "", opts...)
 }

@@ -20,7 +20,9 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/tonistiigi/fsutil/types"
@@ -278,16 +280,109 @@ func withListTargetsOnly(cfg *newSolveRequestConfig) {
 
 func solveT(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient.SolveRequest) *gwclient.Result {
 	t.Helper()
+
 	res, err := gwc.Solve(ctx, req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Unexpected error solving request: %v", err)
 	}
 
-	if err := res.EachRef(func(ref gwclient.Reference) error { _, err := ref.ToState(); return err }); err != nil {
-		t.Fatalf("One of refs cannot be converted to state: %v", err)
-	}
+	// Running this validation as part of this function allows us to verify most test scenarios.
+	verifyConstraintsPropagation(ctx, t, res)
 
 	return res
+}
+
+func verifyConstraintsPropagation(ctx context.Context, t *testing.T, res *gwclient.Result) {
+	t.Helper()
+
+	allOps := []llbOp{}
+
+	if err := res.EachRef(func(ref gwclient.Reference) error {
+		res := &gwclient.Result{
+			Ref: ref,
+		}
+
+		ops, err := llbOpsFromState(ctx, resultToState(t, res))
+		if err != nil {
+			t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
+		}
+
+		allOps = append(allOps, ops...)
+
+		return nil
+	}); err != nil {
+		t.Fatalf("Unexpected error iterating over refs: %v", err)
+	}
+
+	badOps := []llbOp{}
+
+	for _, op := range allOps {
+		// - Checking metadata for progress group presence is a good gauge for constraints propagation.
+		// - As far as observed, merge OP does not inherit constraints.
+		// - "llb.customname" property comes from current frontend context Dockerfile, where constraints cannot be applied
+		//   at the moment, so those operations won't have e.g. a progress group we can check against.
+		if op.OpMetadata.ProgressGroup != nil || op.Op.GetMerge() != nil || op.OpMetadata.Description["llb.customname"] != "" {
+			continue
+		}
+
+		badOps = append(badOps, op)
+	}
+
+	if len(badOps) == 0 {
+		return
+	}
+
+	opsJSON, err := llbOpsToJSON(badOps)
+	if err != nil {
+		t.Fatalf("Unexpected error converting bad ops to JSON: %v", err)
+	}
+
+	t.Errorf("Found %d operations without progress group metadata:\n%s", len(badOps), opsJSON)
+}
+
+// This function and llbOp type has been inspired by
+// https://github.com/moby/buildkit/blob/c70e8e666f8f6ee3c0d83b20c338be5aedeaa97a/cmd/buildctl/debug/dumpllb.go#L59.
+func llbOpsFromState(ctx context.Context, state llb.State) ([]llbOp, error) {
+	def, err := state.Marshal(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var ops []llbOp
+	for _, dt := range def.Def {
+		var op pb.Op
+		if err := op.UnmarshalVT(dt); err != nil {
+			return nil, errors.Wrap(err, "failed to parse op")
+		}
+		dgst := digest.FromBytes(dt)
+		ent := llbOp{Op: &op, OpMetadata: def.Metadata[dgst].ToPB()}
+
+		ops = append(ops, ent)
+	}
+
+	if len(ops) != 0 {
+		ops = ops[:len(ops)-1] // Last operation is a final export, it has no operations.
+	}
+
+	return ops, nil
+}
+
+func llbOpsToJSON(ops []llbOp) (string, error) {
+	var buf bytes.Buffer
+
+	enc := json.NewEncoder(&buf)
+	for _, op := range ops {
+		if err := enc.Encode(op); err != nil {
+			return "", err
+		}
+	}
+
+	return buf.String(), nil
+}
+
+type llbOp struct {
+	Op         *pb.Op
+	OpMetadata *pb.OpMetadata
 }
 
 func solveTCh(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient.SolveRequest, rc chan<- *gwclient.Result, ec chan<- error) {
@@ -299,6 +394,9 @@ func solveTCh(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclie
 		if err != nil {
 			ec <- err
 		}
+
+		// Running this validation as part of this function allows us to verify most test scenarios.
+		verifyConstraintsPropagation(ctx, t, res)
 
 		rc <- res
 	}()
@@ -343,11 +441,32 @@ func withBuildContext(ctx context.Context, t *testing.T, name string, st llb.Sta
 
 func reqToState(ctx context.Context, gwc gwclient.Client, sr gwclient.SolveRequest, t *testing.T) llb.State {
 	t.Helper()
-	res := solveT(ctx, t, gwc, sr)
 
-	ref, err := res.SingleRef()
-	if err != nil {
-		t.Fatal(err)
+	return resultToState(t, solveT(ctx, t, gwc, sr))
+}
+
+func resultToState(t *testing.T, res *gwclient.Result) llb.State {
+	t.Helper()
+
+	var ref gwclient.Reference
+	var err error
+
+	if len(res.Refs) > 1 {
+		for _, v := range res.Refs {
+			ref = v
+			break
+		}
+	} else {
+		ref, err = res.SingleRef()
+		if err != nil {
+			t.Fatalf("Unexpected error getting single ref from a given result: %v", err)
+		}
+	}
+
+	if ref == nil {
+		t.Log("No ref in result")
+
+		return llb.Scratch()
 	}
 
 	st, err := ref.ToState()

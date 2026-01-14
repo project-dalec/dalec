@@ -106,17 +106,17 @@ func AddPath(pre, post []string) SourcePkgConfig {
 // It may be left blank but is highly recommended to set this.
 // Use [ReadDistroVersionID] to get a suitable value.
 func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worker, in llb.State, target, dir, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) llb.State {
-	control, err := controlFile(spec, in, target, dir)
+	control, err := controlFile(spec, in, target, dir, opts...)
 	if err != nil {
 		return dalec.ErrorState(in, errors.Wrap(err, "error generating control file"))
 	}
 
-	rules, err := Rules(spec, in, dir, target)
+	rules, err := Rules(spec, in, dir, target, opts...)
 	if err != nil {
 		return dalec.ErrorState(in, errors.Wrap(err, "error generating rules file"))
 	}
 
-	changelog, err := Changelog(spec, in, target, dir, distroVersionID)
+	changelog, err := Changelog(spec, in, target, dir, distroVersionID, opts...)
 	if err != nil {
 		return dalec.ErrorState(in, errors.Wrap(err, "error generating changelog file"))
 	}
@@ -126,7 +126,7 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 	}
 
 	base := llb.Scratch().File(llb.Mkdir(dir, 0o755), opts...)
-	installers := createInstallScripts(worker, spec, dir, target)
+	installers := createInstallScripts(worker, spec, dir, target, opts...)
 
 	const (
 		sourceFormat = "3.0 (quilt)"
@@ -185,7 +185,7 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, spec.Name+".links"), 0o644, buf.Bytes()), opts...))
 	}
 
-	return dalec.MergeAtPath(in, states, "/")
+	return dalec.MergeAtPath(in, states, "/", opts...)
 }
 
 func generatePostinst(spec *dalec.Spec, target string) []byte {
@@ -400,11 +400,11 @@ func createBuildScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 	return buf.Bytes()
 }
 
-func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string) []llb.State {
+func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string, opts ...llb.ConstraintsOpt) []llb.State {
 	artifacts := spec.GetArtifacts(target)
 
 	states := make([]llb.State, 1)
-	base := llb.Scratch().File(llb.Mkdir(dir, 0o755, llb.WithParents(true)))
+	base := llb.Scratch().File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...)
 
 	installBuf := bytes.NewBuffer(nil)
 	writeInstallHeader := sync.OnceFunc(func() {
@@ -419,7 +419,6 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 		name = strings.TrimSuffix(name, "*")
 		dest := filepath.Join("debian", spec.Name, dir, name)
 		fmt.Fprintln(installBuf, "do_install", filepath.Dir(dest), dest, src)
-
 	}
 
 	if len(artifacts.Binaries) > 0 {
@@ -455,7 +454,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 			fmt.Fprintln(buf, key)
 		}
 		if buf.Len() > 0 {
-			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".manpages"), 0o640, buf.Bytes())))
+			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".manpages"), 0o640, buf.Bytes()), opts...))
 		}
 
 	}
@@ -473,7 +472,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 			fmt.Fprintln(buf, filepath.Join("/var/lib", name))
 		}
 
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".dirs"), 0o640, buf.Bytes())))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".dirs"), 0o640, buf.Bytes()), opts...))
 	}
 
 	if len(artifacts.Docs) > 0 || len(artifacts.Licenses) > 0 {
@@ -502,7 +501,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 		}
 
 		if buf.Len() > 0 {
-			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".docs"), 0o640, buf.Bytes())))
+			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".docs"), 0o640, buf.Bytes()), opts...))
 		}
 	}
 
@@ -543,6 +542,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 			st := worker.Run(
 				llb.Dir(filepath.Join("/tmp/work", dir)),
 				dalec.ShArgs("ln -s ../"+key+" "+name),
+				dalec.WithConstraints(opts...),
 			).AddMount("/tmp/work", llb.Scratch())
 
 			states = append(states, st)
@@ -589,13 +589,13 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 	}
 
 	if installBuf.Len() > 0 {
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".install"), 0o700, installBuf.Bytes())))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".install"), 0o700, installBuf.Bytes()), opts...))
 	}
 
 	return states
 }
 
-func controlFile(spec *dalec.Spec, in llb.State, target, dir string) (llb.State, error) {
+func controlFile(spec *dalec.Spec, in llb.State, target, dir string, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	buf := bytes.NewBuffer(nil)
 	info, _ := debug.ReadBuildInfo()
 	buf.WriteString("# Automatically generated by " + info.Main.Path + "\n")
@@ -610,8 +610,8 @@ func controlFile(spec *dalec.Spec, in llb.State, target, dir string) (llb.State,
 	}
 
 	return in.
-			File(llb.Mkdir(dir, 0o755, llb.WithParents(true))).
-			File(llb.Mkfile(filepath.Join(dir, "control"), 0o640, buf.Bytes())),
+			File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...).
+			File(llb.Mkfile(filepath.Join(dir, "control"), 0o640, buf.Bytes()), opts...),
 		nil
 }
 

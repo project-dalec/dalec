@@ -77,18 +77,24 @@ func ubuntuCreateRepo(cfg *distro.Config) func(pkg llb.State, repoPath string, o
 		repoFile := []byte(`
 deb [trusted=yes] copy:` + repoPath + `/ /
 `)
+
+		c := dalec.ProgressGroup("Creating Ubuntu repo")
+
 		return func(in llb.State) llb.State {
 			withRepo := in.Run(
 				dalec.ShArgs("apt-get update && apt-get install -y apt-utils gnupg2"),
-				dalec.WithMountedAptCache(cfg.AptCachePrefix),
-			).File(llb.Copy(pkg, "/", repoPath, dalec.WithCreateDestPath())).
+				dalec.WithMountedAptCache(cfg.AptCachePrefix, c),
+				c,
+			).File(llb.Copy(pkg, "/", repoPath, dalec.WithCreateDestPath()), c).
 				Run(
 					llb.Dir(repoPath),
 					dalec.ShArgs("apt-ftparchive packages . > Packages"),
+					c,
 				).
 				Run(
 					llb.Dir(repoPath),
 					dalec.ShArgs("apt-ftparchive release . > Release"),
+					c,
 				).Root()
 
 			for _, opt := range opts {
@@ -96,7 +102,7 @@ deb [trusted=yes] copy:` + repoPath + `/ /
 			}
 
 			return withRepo.
-				File(llb.Mkfile("/etc/apt/sources.list.d/test-dalec-local-repo.list", 0o644, repoFile))
+				File(llb.Mkfile("/etc/apt/sources.list.d/test-dalec-local-repo.list", 0o644, repoFile), c)
 		}
 	}
 }

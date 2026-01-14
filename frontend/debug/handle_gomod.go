@@ -28,16 +28,18 @@ func Gomods(ctx context.Context, client gwclient.Client) (*gwclient.Result, erro
 			return nil, nil, err
 		}
 
+		pg := dalec.ProgressGroup("gomod-deps")
+
 		// Allow the client to override the worker image
 		// This is useful for keeping pre-built worker image, especially for CI.
 		worker, ok := inputs[keyGomodWorker]
 		if !ok {
-			worker = llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(client)).
-				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh")).Root()
+			worker = llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(client), pg).
+				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh"), pg).Root()
 		}
 		worker = worker.With(addedHosts(client))
 
-		st := spec.GomodDeps(sOpt, worker, dalec.Platform(platform))
+		st := spec.GomodDeps(sOpt, worker, dalec.Platform(platform), pg)
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

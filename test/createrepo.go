@@ -26,8 +26,13 @@ metadata_expire=0
 `)
 
 			pg := dalec.ProgressGroup("Install local repo for test")
+
+			installOpts := []distro.DnfInstallOpt{
+				distro.DnfInstallWithConstraints([]llb.ConstraintsOpt{pg}),
+			}
+
 			withRepos := in.
-				Run(installer.Install([]string{"createrepo"}), pg).
+				Run(installer.Install([]string{"createrepo"}, installOpts...), pg).
 				File(llb.Mkdir(filepath.Join(repoPath, "RPMS"), 0o755, llb.WithParents(true)), pg).
 				File(llb.Mkdir(filepath.Join(repoPath, "SRPMS"), 0o755), pg).
 				File(llb.Mkfile("/etc/yum.repos.d/local-"+suffix+".repo", 0o644, localRepo), pg).
@@ -36,8 +41,9 @@ metadata_expire=0
 					dalec.ShArgsf("cp /tmp/st/RPMS/$(uname -m)/* %s/RPMS/ && cp /tmp/st/SRPMS/* %s/SRPMS", repoPath, repoPath),
 					pg,
 				).
-				Run(dalec.ShArgs("createrepo --compatibility "+repoPath), pg).
-				Root()
+				Run(dalec.ShArgs("createrepo --compatibility "+repoPath),
+					pg,
+				).Root()
 
 			for _, opt := range opts {
 				withRepos = withRepos.With(opt)
