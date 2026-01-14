@@ -57,7 +57,7 @@ func createPatches(spec *dalec.Spec, sources map[string]llb.State, worker llb.St
 	patches := llb.Scratch()
 	if len(spec.Patches) > 0 {
 		patchesMountInput := llb.Scratch().
-			File(llb.Mkfile("dalec-changes.patch", 0o600, patchHeader))
+			File(llb.Mkfile("dalec-changes.patch", 0o600, patchHeader), opts...)
 
 		patches = worker.
 			Run(dalec.ShArgs("set -e; git config --global user.email phony; git config --global user.name Dalec")).
@@ -91,7 +91,8 @@ func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State,
 	}
 
 	dr := Debroot(ctx, sOpt, spec, worker, llb.Scratch(), targetKey, "", distroVersionID, cfg, opts...)
-	sources := dalec.Sources(spec, sOpt)
+
+	sources := dalec.Sources(spec, sOpt, opts...)
 
 	gomodSt := spec.GomodDeps(sOpt, worker, opts...)
 	if gomodSt != nil {

@@ -306,7 +306,7 @@ func (s *SourceInlineFile) toState(opts fetchOptions) llb.StateOption {
 			// certainly a dalec bug.
 			panic(fmt.Sprintf("invalid file name: %q", opts.Rename))
 		}
-		st := in.File(llb.Mkfile(opts.Rename, s.Permissions, []byte(s.Contents), llb.WithUIDGID(int(s.UID), int(s.GID))))
+		st := in.File(llb.Mkfile(opts.Rename, s.Permissions, []byte(s.Contents), llb.WithUIDGID(int(s.UID), int(s.GID))), opts.Constraints...)
 		return st
 	}
 }
