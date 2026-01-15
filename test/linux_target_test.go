@@ -1911,10 +1911,12 @@ func main() {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 
+		opts := dalec.ProgressGroup("gomod-multi-module")
+
 		// Create a multi-module repo with two modules
 		contextSt := llb.Scratch().
-			File(llb.Mkdir("/module1", 0755)).
-			File(llb.Mkfile("/module1/go.mod", 0644, []byte("module example.com/module1\n\ngo 1.18\n"))).
+			File(llb.Mkdir("/module1", 0755), opts).
+			File(llb.Mkfile("/module1/go.mod", 0644, []byte("module example.com/module1\n\ngo 1.18\n")), opts).
 			File(llb.Mkfile("/module1/main.go", 0644, []byte(`package main
 import (
 	"fmt"
@@ -1924,9 +1926,9 @@ func main() {
 	fmt.Println("module1")
 	assert.True(nil, true)
 }
-`))).
-			File(llb.Mkdir("/module2", 0755)).
-			File(llb.Mkfile("/module2/go.mod", 0644, []byte("module example.com/module2\n\ngo 1.18\n"))).
+`)), opts).
+			File(llb.Mkdir("/module2", 0755), opts).
+			File(llb.Mkfile("/module2/go.mod", 0644, []byte("module example.com/module2\n\ngo 1.18\n")), opts).
 			File(llb.Mkfile("/module2/main.go", 0644, []byte(`package main
 import (
 	"fmt"
@@ -1936,7 +1938,7 @@ func main() {
 	fmt.Println("module2")
 	assert.True(nil, true)
 }
-`)))
+`)), opts)
 
 		const contextName = "multi-module-edits"
 		spec := &dalec.Spec{
