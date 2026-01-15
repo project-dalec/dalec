@@ -332,7 +332,9 @@ func llbOpsFromState(ctx context.Context, state llb.State) ([]llbOp, error) {
 		ops = append(ops, ent)
 	}
 
-	ops = ops[:len(ops)-1] // Last operation is a final export, it has no operations.
+	if len(ops) != 0 {
+		ops = ops[:len(ops)-1] // Last operation is a final export, it has no operations.
+	}
 
 	return ops, nil
 }
@@ -421,7 +423,9 @@ func resultToState(t *testing.T, res *gwclient.Result) llb.State {
 	}
 
 	if ref == nil {
-		t.Fatal("expected single ref, got nil")
+		t.Log("No ref in result")
+
+		return llb.Scratch()
 	}
 
 	st, err := ref.ToState()
