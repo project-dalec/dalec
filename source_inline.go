@@ -333,7 +333,7 @@ func (s *SourceInlineDir) toState(opts fetchOptions) llb.State {
 }
 
 func (s *SourceInlineDir) baseState(opts fetchOptions) llb.State {
-	st := llb.Scratch().File(llb.Mkdir(opts.Rename, s.Permissions, llb.WithUIDGID(int(s.UID), int(s.GID))))
+	st := llb.Scratch().File(llb.Mkdir(opts.Rename, s.Permissions, llb.WithUIDGID(int(s.UID), int(s.GID))), opts.Constraints...)
 	sorted := SortMapKeys(s.Files)
 	for _, k := range sorted {
 		if !isRoot(opts.Path) && opts.Path != k {

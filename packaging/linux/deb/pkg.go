@@ -75,12 +75,12 @@ func createPatches(spec *dalec.Spec, sources map[string]llb.State, worker llb.St
 	return patches
 }
 
-func nestState(dest string) llb.StateOption {
+func nestState(dest string, opts ...llb.ConstraintsOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
 		return llb.Scratch().File(
-			llb.Mkdir(dest, 0o755, llb.WithParents(true)),
+			llb.Mkdir(dest, 0o755, llb.WithParents(true)), opts...,
 		).File(
-			llb.Copy(in, "/", dest, dalec.WithDirContentsOnly()),
+			llb.Copy(in, "/", dest, dalec.WithDirContentsOnly()), opts...,
 		)
 	}
 }
@@ -96,19 +96,20 @@ func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State,
 
 	gomodSt := spec.GomodDeps(sOpt, worker, opts...)
 	if gomodSt != nil {
-		st := gomodSt.With(nestState(gomodsName))
+		st := gomodSt.With(nestState(gomodsName, opts...))
 		gomodSt = &st
+
 	}
 
 	cargohomeSt := spec.CargohomeDeps(sOpt, worker, opts...)
 	if cargohomeSt != nil {
-		st := cargohomeSt.With(nestState(cargohomeName))
+		st := cargohomeSt.With(nestState(cargohomeName, opts...))
 		cargohomeSt = &st
 	}
 
 	pipDepsSt := spec.PipDeps(sOpt, worker, opts...)
 	if pipDepsSt != nil {
-		st := pipDepsSt.With(nestState(pipDepsName))
+		st := pipDepsSt.With(nestState(pipDepsName, opts...))
 		pipDepsSt = &st
 	}
 
@@ -198,7 +199,7 @@ func TarDebSources(work llb.State, spec *dalec.Spec, srcStates map[string]llb.St
 		// If the tar contains only a single directory, dpkg will extract its contents directly into the root directory.
 		// So nest it an extra step
 		if len(srcStates) == 1 && isDir {
-			state = state.With(nestState(key))
+			state = state.With(nestState(key, opts...))
 		}
 		states = append(states, state)
 	}

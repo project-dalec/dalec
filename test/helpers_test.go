@@ -293,7 +293,7 @@ func solveT(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient
 	badOps := []llbOp{}
 
 	for _, op := range ops {
-		if op.OpMetadata.ProgressGroup != nil || op.Op.GetMerge() != nil {
+		if op.OpMetadata.ProgressGroup != nil || op.Op.GetMerge() != nil || op.OpMetadata.Description["llb.customname"] != "" {
 			continue
 		}
 
@@ -418,6 +418,10 @@ func resultToState(t *testing.T, res *gwclient.Result) llb.State {
 	ref, err := res.SingleRef()
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if ref == nil {
+		t.Fatal("expected single ref, got nil")
 	}
 
 	st, err := ref.ToState()
