@@ -528,6 +528,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 			st := worker.Run(
 				llb.Dir(filepath.Join("/tmp/work", dir)),
 				dalec.ShArgs("ln -s ../"+key+" "+name),
+				dalec.WithConstraints(opts...),
 			).AddMount("/tmp/work", llb.Scratch())
 
 			states = append(states, st)

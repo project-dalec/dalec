@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
 )
 
 func createRepoSuffix() string {
@@ -68,8 +68,8 @@ func testCustomRepo(ctx context.Context, t *testing.T, workerCfg workerConfig, t
 				},
 
 				Test: map[string]dalec.PackageConstraints{
-					dep.Name: {},
-					"bash":   {},
+					dep.Name:    {},
+					"bash":      {},
 					"coreutils": {},
 				},
 
@@ -122,6 +122,8 @@ func testCustomRepo(ctx context.Context, t *testing.T, workerCfg workerConfig, t
 		return spec
 	}
 
+	opts := dalec.ProgressGroup("Test Custom Repo")
+
 	getRepoState := func(ctx context.Context, t *testing.T, client gwclient.Client, w llb.State, key llb.State, depSpec *dalec.Spec, repoPath string) llb.State {
 		sr := newSolveRequest(withSpec(ctx, t, depSpec), withBuildTarget(targetCfg.Package))
 		pkg := reqToState(ctx, client, sr, t)
@@ -130,7 +132,7 @@ func testCustomRepo(ctx context.Context, t *testing.T, workerCfg workerConfig, t
 		workerWithRepo := w.With(workerCfg.CreateRepo(pkg, repoPath, workerCfg.SignRepo(key, repoPath)))
 
 		// copy out just the contents of the repo
-		return llb.Scratch().File(llb.Copy(workerWithRepo, repoPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
+		return llb.Scratch().File(llb.Copy(workerWithRepo, repoPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}), opts)
 	}
 
 	t.Run("no public key", func(t *testing.T) {

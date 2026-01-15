@@ -304,11 +304,13 @@ index 0000000..5260cb1
 			const src2Patch5File = "patches/patch5"
 			const patchContextName = "patch-context"
 
+			opts := dalec.ProgressGroup("test-patch-sources")
+
 			patchContext := llb.Scratch().
-				File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content)).
-				File(llb.Mkdir("patches", 0o755)).
-				File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content)).
-				File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content))
+				File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content), opts).
+				File(llb.Mkdir("patches", 0o755), opts).
+				File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content), opts).
+				File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content), opts)
 
 			spec := testLinuxSpec(t, dalec.Spec{
 				Sources: map[string]dalec.Source{
@@ -946,11 +948,13 @@ index 0000000..5260cb1
 		const src2Patch5File = "patches/patch5"
 		const patchContextName = "patch-context"
 
+		opts := dalec.ProgressGroup("test-patch-sources")
+
 		patchContext := llb.Scratch().
-			File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content)).
-			File(llb.Mkdir("patches", 0o755)).
-			File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content)).
-			File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content))
+			File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content), opts).
+			File(llb.Mkdir("patches", 0o755), opts).
+			File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content), opts).
+			File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content), opts)
 
 		spec := dalec.Spec{
 			Name:        "test-sysext-build",
@@ -1993,10 +1997,12 @@ func main() {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 
+		opts := dalec.ProgressGroup("gomod-subpath")
+
 		// Create a context with a subdirectory structure
 		contextSt := llb.Scratch().
-			File(llb.Mkdir("/subdir", 0755)).
-			File(llb.Mkfile("/subdir/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n"))).
+			File(llb.Mkdir("/subdir", 0755), opts).
+			File(llb.Mkfile("/subdir/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n")), opts).
 			File(llb.Mkfile("/subdir/main.go", 0644, []byte(`package main
 import (
 	"fmt"
@@ -2006,7 +2012,7 @@ func main() {
 	fmt.Println("hello")
 	assert.True(nil, true)
 }
-`)))
+`)), opts)
 
 		const contextName = "subpath-test"
 		spec := &dalec.Spec{
