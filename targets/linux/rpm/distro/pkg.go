@@ -12,9 +12,7 @@ import (
 	"github.com/project-dalec/dalec/targets"
 )
 
-var (
-	defaultRepoConfig = &dnfRepoPlatform
-)
+var defaultRepoConfig = &dnfRepoPlatform
 
 func (c *Config) Validate(spec *dalec.Spec) error {
 	if err := rpm.ValidateSpec(spec); err != nil {
@@ -106,7 +104,12 @@ func (cfg *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec
 	return func(in llb.State) llb.State {
 		repos := spec.GetTestRepos(targetKey)
 		repoMounts, keyPaths := cfg.RepoMounts(repos, sOpt, opts...)
-		importRepos := []DnfInstallOpt{DnfAtRoot("/tmp/rootfs"), DnfWithMounts(repoMounts), DnfImportKeys(keyPaths)}
+		importRepos := []DnfInstallOpt{
+			DnfAtRoot("/tmp/rootfs"),
+			DnfWithMounts(repoMounts),
+			DnfImportKeys(keyPaths),
+			dnfInstallWithConstraints(opts),
+		}
 
 		opts = append(opts, dalec.ProgressGroup("Install test dependencies"))
 		worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))

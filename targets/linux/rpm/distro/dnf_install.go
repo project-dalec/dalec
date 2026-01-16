@@ -244,6 +244,7 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 			DnfWithMounts(llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS"), llb.Readonly)),
 			DnfWithMounts(repoMounts),
 			DnfImportKeys(keyPaths),
+			dnfInstallWithConstraints(opts),
 		}
 
 		install := cfg.Install([]string{filepath.Join(rpmMountDir, "*/*.rpm")}, installOpts...)
@@ -264,9 +265,13 @@ func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetK
 
 	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
+	installOpts := []DnfInstallOpt{
+		dnfInstallWithConstraints(opts),
+	}
+
 	worker = worker.Run(
 		dalec.WithConstraints(opts...),
-		cfg.Install([]string{"dnf-utils"}),
+		cfg.Install([]string{"dnf-utils"}, installOpts...),
 	).Root()
 
 	args := []string{"--downloaddir", "/output", "download"}
@@ -283,11 +288,10 @@ func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetK
 	installTimeRepos := spec.GetInstallRepos(targetKey)
 	repoMounts, keyPaths := cfg.RepoMounts(installTimeRepos, sOpt, opts...)
 
-	installOpts := []DnfInstallOpt{
+	installOpts = append(installOpts,
 		DnfWithMounts(repoMounts),
 		DnfImportKeys(keyPaths),
-		dnfInstallWithConstraints(opts),
-	}
+	)
 
 	var installCfg dnfInstallConfig
 	dnfInstallOptions(&installCfg, installOpts)

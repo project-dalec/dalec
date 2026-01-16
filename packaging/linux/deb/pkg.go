@@ -181,7 +181,7 @@ func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersio
 			}),
 		).AddMount("/tmp/out", llb.Scratch())
 
-	return dalec.MergeAtPath(llb.Scratch(), []llb.State{st, srcPkg}, "/")
+	return dalec.MergeAtPath(llb.Scratch(), []llb.State{st, srcPkg}, "/", opts...)
 }
 
 func TarDebSources(work llb.State, spec *dalec.Spec, srcStates map[string]llb.State, dest string, sOpts dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
@@ -204,6 +204,6 @@ func TarDebSources(work llb.State, spec *dalec.Spec, srcStates map[string]llb.St
 		states = append(states, state)
 	}
 
-	st := dalec.MergeAtPath(llb.Scratch(), states, "/")
+	st := dalec.MergeAtPath(llb.Scratch(), states, "/", opts...)
 	return dalec.Tar(work, st, dest, opts...)
 }

@@ -30,7 +30,11 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 
 	installTimeRepos := spec.GetInstallRepos(targetKey)
 	repoMounts, keyPaths := cfg.RepoMounts(installTimeRepos, sOpt, opts...)
-	importRepos := []DnfInstallOpt{DnfWithMounts(repoMounts), DnfImportKeys(keyPaths)}
+	importRepos := []DnfInstallOpt{
+		DnfWithMounts(repoMounts),
+		DnfImportKeys(keyPaths),
+		dnfInstallWithConstraints(opts),
+	}
 
 	rpmMountDir := "/tmp/rpms"
 
@@ -42,7 +46,7 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	}...)
 
 	baseMountPath := rpmMountDir + "-base"
-	basePkgs := llb.Scratch().File(llb.Mkdir("/RPMS", 0o755))
+	basePkgs := llb.Scratch().File(llb.Mkdir("/RPMS", 0o755), opts...)
 	pkgs := []string{
 		filepath.Join(rpmMountDir, "**/*.rpm"),
 	}
@@ -56,7 +60,7 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 			basePkgStates = append(basePkgStates, pkg)
 		}
 
-		basePkgs = dalec.MergeAtPath(basePkgs, basePkgStates, "/")
+		basePkgs = dalec.MergeAtPath(basePkgs, basePkgStates, "/", opts...)
 		pkgs = append(pkgs, filepath.Join(baseMountPath, "**/*.rpm"))
 	}
 

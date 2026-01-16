@@ -70,17 +70,26 @@ func (cfg *Config) Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb
 		}
 	}
 
+	installOpts := []DnfInstallOpt{
+		dnfInstallWithConstraints(opts),
+	}
+
 	return frontend.GetBaseImage(sOpt, cfg.ImageRef, opts...).
 		Run(
 			dalec.WithConstraints(opts...),
-			cfg.Install(cfg.BuilderPackages),
+			cfg.Install(cfg.BuilderPackages, installOpts...),
 		).Root()
 }
 
 func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
 	worker := cfg.Worker(sOpts, opts...)
+
+	installOpts := []DnfInstallOpt{
+		dnfInstallWithConstraints(opts),
+	}
+
 	return worker.Run(
 		dalec.WithConstraints(opts...),
-		cfg.Install([]string{"erofs-utils"}),
+		cfg.Install([]string{"erofs-utils"}, installOpts...),
 	).Root()
 }
