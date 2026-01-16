@@ -33,7 +33,7 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	importRepos := []DnfInstallOpt{
 		DnfWithMounts(repoMounts),
 		DnfImportKeys(keyPaths),
-		dnfInstallWithConstraints(opts),
+		DnfInstallWithConstraints(opts),
 	}
 
 	rpmMountDir := "/tmp/rpms"
@@ -42,7 +42,6 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	installOpts = append(installOpts, importRepos...)
 	installOpts = append(installOpts, []DnfInstallOpt{
 		IncludeDocs(spec.GetArtifacts(targetKey).HasDocs()),
-		dnfInstallWithConstraints(opts),
 	}...)
 
 	baseMountPath := rpmMountDir + "-base"
@@ -102,7 +101,7 @@ func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (
 
 		withDownloads := worker.Run(dalec.ShArgs("set -ex; mkdir -p /tmp/rpms/RPMS/$(uname -m)")).
 			Run(cfg.Install(deps,
-				DnfDownloadAllDeps("/tmp/rpms/RPMS/$(uname -m)"))).Root()
+				DnfDownloadAllDeps("/tmp/rpms/RPMS/$(uname -m)")), pg).Root()
 		rpmDir := llb.Scratch().File(llb.Copy(withDownloads, "/tmp/rpms", "/", dalec.WithDirContentsOnly()), pg)
 
 		ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, rpmDir, pg, pc)

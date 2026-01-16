@@ -3178,8 +3178,12 @@ func testPinnedBuildDeps(ctx context.Context, t *testing.T, cfg testLinuxConfig)
 			pkg := reqToState(ctx, client, sr, t)
 			pkgs = append(pkgs, pkg)
 		}
+
+		pg := dalec.ProgressGroup("Get worker")
+
 		repoPath := filepath.Join("/opt/repo", createRepoSuffix())
-		return w.With(cfg.Worker.CreateRepo(llb.Merge(pkgs), repoPath))
+
+		return w.With(cfg.Worker.CreateRepo(llb.Merge(pkgs, pg), repoPath))
 	}
 
 	for _, tt := range tests {

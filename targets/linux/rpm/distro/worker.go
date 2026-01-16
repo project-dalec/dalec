@@ -23,7 +23,7 @@ func (cfg *Config) HandleWorker(ctx context.Context, client gwclient.Client) (*g
 		}
 
 		pc := dalec.Platform(platform)
-		st := cfg.Worker(sOpt, pc, frontend.IgnoreCache(client))
+		st := cfg.Worker(sOpt, pc, frontend.IgnoreCache(client), dalec.ProgressGroup("Handle worker"))
 
 		def, err := st.Marshal(ctx, pc)
 		if err != nil {
@@ -59,6 +59,7 @@ func (cfg *Config) HandleWorker(ctx context.Context, client gwclient.Client) (*g
 
 func (cfg *Config) Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Prepare worker image"))
+
 	if cfg.ContextRef != "" {
 		st, err := sOpt.GetContext(cfg.ContextRef, dalec.WithConstraints(opts...))
 		if err != nil {
@@ -71,7 +72,7 @@ func (cfg *Config) Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb
 	}
 
 	installOpts := []DnfInstallOpt{
-		dnfInstallWithConstraints(opts),
+		DnfInstallWithConstraints(opts),
 	}
 
 	return frontend.GetBaseImage(sOpt, cfg.ImageRef, opts...).
@@ -82,10 +83,12 @@ func (cfg *Config) Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb
 }
 
 func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
+	opts = append(opts, dalec.ProgressGroup("Prepare sysext worker image"))
+
 	worker := cfg.Worker(sOpts, opts...)
 
 	installOpts := []DnfInstallOpt{
-		dnfInstallWithConstraints(opts),
+		DnfInstallWithConstraints(opts),
 	}
 
 	return worker.Run(
