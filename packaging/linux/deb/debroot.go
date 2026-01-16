@@ -160,18 +160,9 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "dalec/"+customSystemdPostinstFile), 0o600, customEnable), opts...))
 	}
 
-	postinst := bytes.NewBuffer(nil)
-	artifacts := spec.GetArtifacts(target)
-	writeUsersPostInst(postinst, artifacts.Users)
-	writeGroupsPostInst(postinst, artifacts.Groups)
-	setArtifactOwnershipPostInst(postinst, spec, target)
-	setArtifactCapabilitiesPostInst(postinst, spec, target)
-
-	if postinst.Len() > 0 {
-		dt := []byte("#!/usr/bin/env sh\nset -e\n")
-		dt = append(dt, postinst.Bytes()...)
-
-		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "postinst"), 0o700, dt), opts...))
+	postinst := generatePostinst(spec, target)
+	if len(postinst) > 0 {
+		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "postinst"), 0o700, postinst), opts...))
 	}
 
 	patchDir := dalecDir.File(llb.Mkdir(filepath.Join(dir, "dalec/patches"), 0o755), opts...)
@@ -181,6 +172,7 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		states = append(states, pls...)
 	}
 
+	artifacts := spec.GetArtifacts(target)
 	if len(artifacts.Links) > 0 {
 		buf := bytes.NewBuffer(nil)
 
@@ -194,6 +186,28 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 	}
 
 	return dalec.MergeAtPath(in, states, "/")
+}
+
+func generatePostinst(spec *dalec.Spec, target string) []byte {
+	buf := bytes.NewBuffer(nil)
+
+	artifacts := spec.GetArtifacts(target)
+	writeUsersPostInst(buf, artifacts.Users)
+	writeGroupsPostInst(buf, artifacts.Groups)
+	setArtifactOwnershipPostInst(buf, spec, target)
+	setArtifactCapabilitiesPostInst(buf, spec, target)
+
+	if buf.Len() == 0 {
+		return nil
+	}
+
+	// NOTE: `#DEBHELPER#` is a special marker that will be replaced by
+	// debhelper when it generates the final postinst script.
+	// Very important that this is included.
+	dt := []byte("#!/usr/bin/env sh\nset -e\n\n#DEBHELPER#\n\n")
+	dt = append(dt, buf.Bytes()...)
+
+	return dt
 }
 
 func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) []byte {
