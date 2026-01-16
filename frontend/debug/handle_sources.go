@@ -56,10 +56,12 @@ func PatchedSources(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 			return nil, nil, err
 		}
 
+		pg := dalec.ProgressGroup("Patch sources for " + targetKey + " rpm build: " + spec.Name)
+
 		worker, ok := inputs[keyPatchedSourcesWorker]
 		if !ok {
-			worker = llb.Image("alpine:latest", llb.WithMetaResolver(client)).
-				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch")).Root()
+			worker = llb.Image("alpine:latest", llb.WithMetaResolver(client), pg).
+				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch"), pg).Root()
 		}
 
 		pc := dalec.Platform(platform)
@@ -73,8 +75,6 @@ func PatchedSources(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 		sources := dalec.Sources(spec, sOpt, pc)
 
 		sources = dalec.PatchSources(worker, spec, sources, pc)
-
-		pg := dalec.ProgressGroup("Patch sources for " + targetKey + " rpm build: " + spec.Name)
 
 		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/", pg).Marshal(ctx)
 		if err != nil {
