@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
@@ -22,7 +20,11 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 	"github.com/tonistiigi/fsutil/types"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -258,7 +260,6 @@ func withIgnoreCache(refs ...string) srOpt {
 			v += ","
 		}
 		cfg.req.FrontendOpt["no-cache"] = v + strings.Join(refs, ",")
-
 	}
 }
 
@@ -283,7 +284,77 @@ func solveT(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient
 	if err != nil {
 		t.Fatal(err)
 	}
-	return res
+
+	ops, err := llbOpsFromState(ctx, resultToState(t, res))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	badOps := []llbOp{}
+
+	for _, op := range ops {
+		if op.OpMetadata.ProgressGroup != nil || op.Op.GetMerge() != nil || op.OpMetadata.Description["llb.customname"] != "" {
+			continue
+		}
+
+		badOps = append(badOps, op)
+	}
+
+	if len(badOps) == 0 {
+		return res
+	}
+
+	opsJSON, err := llbOpsToJSON(badOps)
+	if err != nil {
+		t.Fatal("failed to convert bad ops to JSON:", err)
+	}
+
+	t.Fatalf("Found %d operations without progress group metadata:\n%s", len(badOps), opsJSON)
+
+	return nil
+}
+
+func llbOpsFromState(ctx context.Context, state llb.State) ([]llbOp, error) {
+	def, err := state.Marshal(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var ops []llbOp
+	for _, dt := range def.Def {
+		var op pb.Op
+		if err := op.UnmarshalVT(dt); err != nil {
+			return nil, errors.Wrap(err, "failed to parse op")
+		}
+		dgst := digest.FromBytes(dt)
+		ent := llbOp{Op: &op, OpMetadata: def.Metadata[dgst].ToPB()}
+
+		ops = append(ops, ent)
+	}
+
+	if len(ops) != 0 {
+		ops = ops[:len(ops)-1] // Last operation is a final export, it has no operations.
+	}
+
+	return ops, nil
+}
+
+func llbOpsToJSON(ops []llbOp) (string, error) {
+	var buf bytes.Buffer
+
+	enc := json.NewEncoder(&buf)
+	for _, op := range ops {
+		if err := enc.Encode(op); err != nil {
+			return "", err
+		}
+	}
+
+	return buf.String(), nil
+}
+
+type llbOp struct {
+	Op         *pb.Op
+	OpMetadata *pb.OpMetadata
 }
 
 func solveTCh(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient.SolveRequest, rc chan<- *gwclient.Result, ec chan<- error) {
@@ -339,11 +410,22 @@ func withBuildContext(ctx context.Context, t *testing.T, name string, st llb.Sta
 
 func reqToState(ctx context.Context, gwc gwclient.Client, sr gwclient.SolveRequest, t *testing.T) llb.State {
 	t.Helper()
-	res := solveT(ctx, t, gwc, sr)
+
+	return resultToState(t, solveT(ctx, t, gwc, sr))
+}
+
+func resultToState(t *testing.T, res *gwclient.Result) llb.State {
+	t.Helper()
 
 	ref, err := res.SingleRef()
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if ref == nil {
+		t.Log("No ref in result")
+
+		return llb.Scratch()
 	}
 
 	st, err := ref.ToState()

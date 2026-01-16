@@ -12,9 +12,7 @@ import (
 	"github.com/project-dalec/dalec/targets"
 )
 
-var (
-	defaultRepoConfig = &dnfRepoPlatform
-)
+var defaultRepoConfig = &dnfRepoPlatform
 
 func (c *Config) Validate(spec *dalec.Spec) error {
 	if err := rpm.ValidateSpec(spec); err != nil {
@@ -45,9 +43,9 @@ func needsAutoGocache(spec *dalec.Spec, targetKey string) bool {
 }
 
 func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
-	opts = append(opts, frontend.IgnoreCache(client))
+	opts = append(opts, frontend.IgnoreCache(client), dalec.Platform(sOpt.TargetPlatform))
 
-	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
+	worker := c.Worker(sOpt, opts...)
 	worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, opts...))
 
 	// Preprocess the spec to generate patches for gomod edits and other generators
@@ -103,12 +101,18 @@ func (cfg *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec
 		return dalec.NoopStateOption
 	}
 
+	opts = append(opts, dalec.ProgressGroup("Install test dependencies"))
+
 	return func(in llb.State) llb.State {
 		repos := spec.GetTestRepos(targetKey)
 		repoMounts, keyPaths := cfg.RepoMounts(repos, sOpt, opts...)
-		importRepos := []DnfInstallOpt{DnfAtRoot("/tmp/rootfs"), DnfWithMounts(repoMounts), DnfImportKeys(keyPaths)}
+		importRepos := []DnfInstallOpt{
+			DnfAtRoot("/tmp/rootfs"),
+			DnfWithMounts(repoMounts),
+			DnfImportKeys(keyPaths),
+			DnfInstallWithConstraints(opts),
+		}
 
-		opts = append(opts, dalec.ProgressGroup("Install test dependencies"))
 		worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 		return worker.Run(
 			dalec.WithConstraints(opts...),

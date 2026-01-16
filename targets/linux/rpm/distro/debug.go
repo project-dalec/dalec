@@ -104,12 +104,15 @@ func (c *Config) HandleSources(ctx context.Context, client gwclient.Client) (*gw
 		}
 
 		pc := dalec.Platform(platform)
-		worker := c.DebugWorker(ctx, client, spec, targetKey, sOpt, pc)
 
-		sources := rpm.Sources(worker, spec, sOpt, pc)
+		pg := dalec.ProgressGroup("Handling sources for " + targetKey + " rpm build: " + spec.Name)
+
+		worker := c.DebugWorker(ctx, client, spec, targetKey, sOpt, pc, pg)
+
+		sources := rpm.Sources(worker, spec, sOpt, pc, pg)
 
 		// Now we can merge sources into the desired path
-		st := dalec.MergeAtPath(llb.Scratch(), sources, "/SOURCES")
+		st := dalec.MergeAtPath(llb.Scratch(), sources, "/SOURCES", pg)
 
 		def, err := st.Marshal(ctx, pc)
 		if err != nil {

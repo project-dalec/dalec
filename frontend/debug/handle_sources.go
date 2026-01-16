@@ -20,7 +20,9 @@ func Sources(ctx context.Context, client gwclient.Client) (*gwclient.Result, err
 
 		sources := dalec.Sources(spec, sOpt)
 
-		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/").Marshal(ctx)
+		pg := dalec.ProgressGroup("Sources for " + targetKey + " rpm build: " + spec.Name)
+
+		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/", pg).Marshal(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -54,10 +56,12 @@ func PatchedSources(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 			return nil, nil, err
 		}
 
+		pg := dalec.ProgressGroup("Patch sources for " + targetKey + " rpm build: " + spec.Name)
+
 		worker, ok := inputs[keyPatchedSourcesWorker]
 		if !ok {
-			worker = llb.Image("alpine:latest", llb.WithMetaResolver(client)).
-				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch")).Root()
+			worker = llb.Image("alpine:latest", llb.WithMetaResolver(client), pg).
+				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch"), pg).Root()
 		}
 
 		pc := dalec.Platform(platform)
@@ -72,7 +76,7 @@ func PatchedSources(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 
 		sources = dalec.PatchSources(worker, spec, sources, pc)
 
-		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/").Marshal(ctx)
+		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/", pg).Marshal(ctx)
 		if err != nil {
 			return nil, nil, err
 		}

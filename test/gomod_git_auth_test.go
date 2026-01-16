@@ -14,13 +14,13 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/test/cmd/git_repo/passwd"
 	gitservices "github.com/project-dalec/dalec/test/git_services"
 	"github.com/project-dalec/dalec/test/testenv"
-	"github.com/moby/buildkit/client/llb"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -383,7 +383,6 @@ func getDirName(ctx context.Context, t *testing.T, res *gwclient.Result, base, d
 		Path:           base,
 		IncludePattern: dirPattern,
 	})
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,8 +395,10 @@ func getDirName(ctx context.Context, t *testing.T, res *gwclient.Result, base, d
 }
 
 func initWorker(c gwclient.Client) llb.State {
-	worker := llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(c)).
-		Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh netcat-openbsd")).Root()
+	pg := dalec.ProgressGroup("init worker")
+
+	worker := llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(c), pg).
+		Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh netcat-openbsd"), pg).Root()
 	return worker
 }
 

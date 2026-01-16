@@ -10,14 +10,14 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/project-dalec/dalec"
 	"golang.org/x/exp/slices"
 )
 
 const distroVersionIDSeparator = "u"
 
-func Changelog(spec *dalec.Spec, in llb.State, target, dir, distroVersionID string) (llb.State, error) {
+func Changelog(spec *dalec.Spec, in llb.State, target, dir, distroVersionID string, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	buf := bytes.NewBuffer(nil)
 
 	if dir == "" {
@@ -29,8 +29,8 @@ func Changelog(spec *dalec.Spec, in llb.State, target, dir, distroVersionID stri
 	}
 
 	return in.
-			File(llb.Mkdir(dir, 0o755, llb.WithParents(true))).
-			File(llb.Mkfile(filepath.Join(dir, "changelog"), 0o644, buf.Bytes())),
+			File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...).
+			File(llb.Mkfile(filepath.Join(dir, "changelog"), 0o644, buf.Bytes()), opts...),
 		nil
 }
 
