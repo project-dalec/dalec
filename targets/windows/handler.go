@@ -21,28 +21,26 @@ const (
 	WindowscrossWorkerContextName = "dalec-windowscross-worker"
 )
 
-var (
-	distroConfig = &distro.Config{
-		ImageRef:       workerImgRef,
-		AptCachePrefix: aptCachePrefix,
-		VersionID:      "ubuntu22.04",
-		ContextRef:     WindowscrossWorkerContextName,
-		BuilderPackages: []string{
-			"aptitude",
-			"build-essential",
-			"binutils-mingw-w64",
-			"g++-mingw-w64-x86-64",
-			"gcc",
-			"git",
-			"make",
-			"pkg-config",
-			"zip",
-			"aptitude",
-			"dpkg-dev",
-			"debhelper",
-		},
-	}
-)
+var distroConfig = &distro.Config{
+	ImageRef:       workerImgRef,
+	AptCachePrefix: aptCachePrefix,
+	VersionID:      "ubuntu22.04",
+	ContextRef:     WindowscrossWorkerContextName,
+	BuilderPackages: []string{
+		"aptitude",
+		"build-essential",
+		"binutils-mingw-w64",
+		"g++-mingw-w64-x86-64",
+		"gcc",
+		"git",
+		"make",
+		"pkg-config",
+		"zip",
+		"aptitude",
+		"dpkg-dev",
+		"debhelper",
+	},
+}
 
 func Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	var mux frontend.BuildMux
@@ -76,7 +74,9 @@ func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result
 			return nil, nil, err
 		}
 
-		st := distroConfig.Worker(sOpt)
+		pg := dalec.ProgressGroup("Handle windows worker")
+
+		st := distroConfig.Worker(sOpt, pg)
 		def, err := st.Marshal(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -85,7 +85,6 @@ func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result
 		res, err := client.Solve(ctx, gwclient.SolveRequest{
 			Definition: def.ToPB(),
 		})
-
 		if err != nil {
 			return nil, nil, err
 		}
