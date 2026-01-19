@@ -108,8 +108,7 @@ jobs:
           echo "EXTRA_FLAGS=${EXTRA_FLAGS}" >> $GITHUB_ENV
 
           # Format repository name (lowercase) for registry mirror
-          FORMATTED_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          docker run -d --net=host ghcr.io/${FORMATTED_REPO}/mirror/dockerhub/library/registry:latest
+          docker run -d --net=host --restart=always -p 5000:5000 registry:2
       - if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
         name: Setup (tagged)
         env:
@@ -124,7 +123,7 @@ jobs:
           # Inline the cache with the image so others can use it as a cache-from for their own builds.
           EXTRA_FLAGS="--set worker.cache-to=type=inline,mode=max --set worker.tags=${ref} --push"
 
-          latest="$(gh release view --json tagName -q .tagName)"
+          latest="$(gh release view --json tagName -q .tagName 2>/dev/null || echo '')"
           if [ ${{ github.ref_name }} = "${latest}" ]; then
             # If this is the latest release, we also tag it as "latest"
             IMAGE_REPO_LATEST="${BASE_REPO}:latest"
