@@ -20,7 +20,7 @@ var ConfigV9 = &distro.Config{
 	ContextRef: v9WorkerContextName,
 
 	CacheName: dnfCacheNameV9,
-	CacheDir:  "/var/cache/dnf",
+	CacheDir:  []string{"/var/cache/dnf"},
 	// Alma's repo configs do not include the $basearch variable in the mirrorlist URL
 	// This means that the cache key that dnf computes for /var/cache/dnf/<repoid>-<hash>
 	// is the same across x86_64 and aarch64, which leads to incorrect repo metadata
