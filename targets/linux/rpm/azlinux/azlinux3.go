@@ -19,8 +19,10 @@ var Azlinux3Config = &distro.Config{
 	ImageRef:   Azlinux3Ref,
 	ContextRef: Azlinux3WorkerContextName,
 
-	CacheName: tdnfCacheNameAzlinux3,
-	CacheDir:  "/var/cache/tdnf",
+	CacheName:        tdnfCacheNameAzlinux3,
+	CacheDir:         "/var/cache/tdnf",
+	CacheAddPlatform: true,
+	ExtraCacheDirs:   []string{"/var/cache/dnf"},
 
 	ReleaseVer:         "3.0",
 	BuilderPackages:    builderPackages,

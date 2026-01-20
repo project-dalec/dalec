@@ -2,10 +2,12 @@ package distro
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/packaging/linux/rpm"
 )
@@ -40,9 +42,20 @@ type dnfInstallConfig struct {
 
 	// When true, don't omit docs from the installed RPMs.
 	includeDocs bool
+
+	forceArch string
 }
 
 type DnfInstallOpt func(*dnfInstallConfig)
+
+// joinUnderRoot joins a rootfs path with an absolute container path.
+// We must not use filepath.Join(root, "/abs") because that drops `root`.
+func joinUnderRoot(root, abs string) string {
+	if root == "" {
+		return abs
+	}
+	return path.Join(root, strings.TrimPrefix(abs, "/"))
+}
 
 // see comment in tdnfInstall for why this additional option is needed
 func DnfImportKeys(keys []string) DnfInstallOpt {
@@ -60,6 +73,12 @@ func DnfWithMounts(opts ...llb.RunOption) DnfInstallOpt {
 func DnfAtRoot(root string) DnfInstallOpt {
 	return func(cfg *dnfInstallConfig) {
 		cfg.root = root
+	}
+}
+
+func DnfForceArch(arch string) DnfInstallOpt {
+	return func(cfg *dnfInstallConfig) {
+		cfg.forceArch = arch
 	}
 }
 
@@ -145,16 +164,21 @@ func dnfCommand(cfg *dnfInstallConfig, releaseVer string, exe string, dnfSubCmd 
 
 	cacheDir := "/var/cache/" + exe
 	if cfg.root != "" {
-		cacheDir = filepath.Join(cfg.root, cacheDir)
+		cacheDir = joinUnderRoot(cfg.root, cacheDir)
 	}
 	installFlags := dnfInstallFlags(cfg)
+	installRoot := cfg.root
 	installFlags += " -y --setopt varsdir=/etc/dnf/vars --releasever=" + releaseVer + " "
-	installScriptDt := `#!/usr/bin/env bash
+	forceArch := cfg.forceArch
+	var installScriptDt string
+	if exe != "tdnf" {
+		installScriptDt = `#!/usr/bin/env bash
 set -eux -o pipefail
 
 import_keys_path="` + importKeysPath + `"
 cmd="` + exe + `"
 install_flags="` + installFlags + `"
+force_arch="` + forceArch + `"
 dnf_sub_cmd="` + strings.Join(dnfSubCmd, " ") + `"
 cache_dir="` + cacheDir + `"
 
@@ -162,8 +186,93 @@ if [ -x "$import_keys_path" ]; then
 	"$import_keys_path"
 fi
 
+supports_forcearch() {
+	local bin="${1}"
+	${bin} --help 2>/dev/null | grep -qi 'forcearch' && return 0
+	${bin} install --help 2>/dev/null | grep -qi 'forcearch' && return 0
+	return 1
+}
+
+if [ -n "$force_arch" ]; then
+        if supports_forcearch "$cmd"; then
+                install_flags="$install_flags --forcearch=$force_arch"
+        else
+                echo "$cmd does not support --forcearch; cannot install for arch=$force_arch" >&2
+                exit 70
+        fi
+fi
+
 $cmd $dnf_sub_cmd $install_flags "${@}"
 `
+	} else {
+		// TDNF path: if tdnf doesn't support --forcearch, try dnf; otherwise fall back to target-platform tdnf via chroot.
+		installScriptDt = `#!/usr/bin/env bash
+set -eux -o pipefail
+
+import_keys_path="` + importKeysPath + `"
+cmd="` + exe + `"
+install_flags="` + installFlags + `"
+install_root="` + installRoot + `"
+force_arch="` + forceArch + `"
+dnf_sub_cmd="` + strings.Join(dnfSubCmd, " ") + `"
+cache_dir="` + cacheDir + `"
+
+if [ -x "$import_keys_path" ]; then
+        "$import_keys_path"
+fi
+
+supports_forcearch() {
+        local bin="${1}"
+        ${bin} --help 2>/dev/null | grep -qi 'forcearch' && return 0
+        ${bin} install --help 2>/dev/null | grep -qi 'forcearch' && return 0
+        return 1
+}
+
+fallback_to_chroot_tdnf() {
+        echo "falling back to target-platform tdnf via chroot (qemu)" >&2
+
+        if [ -z "${install_root}" ] || [ ! -d "${install_root}" ]; then
+                echo "install_root is not set or invalid: '${install_root}'" >&2
+                exit 70
+        fi
+        if [ ! -x "${install_root}/usr/bin/tdnf" ]; then
+                echo "tdnf not found in target rootfs: ${install_root}/usr/bin/tdnf" >&2
+                exit 70
+        fi
+
+        # dnf_sub_cmd is like: "install pkg1 pkg2 ..."
+        # Convert it into argv so we can inject -y for tdnf.
+        # shellcheck disable=SC2086
+        set -- ${dnf_sub_cmd}
+        subcmd="${1:-install}"
+        shift || true
+        chroot "${install_root}" /usr/bin/tdnf "${subcmd}" -y "$@"
+        exit 0
+}
+
+if [ -n "$force_arch" ]; then
+        if supports_forcearch "$cmd"; then
+                install_flags="$install_flags --forcearch=$force_arch"
+        else
+                # tdnf lacks --forcearch: try dnf first, else fall back to target-platform tdnf (qemu) via chroot.
+                if ! command -v dnf >/dev/null 2>&1; then
+                       set +e
+                        tdnf install -y dnf
+                        set -e
+                fi
+
+                if command -v dnf >/dev/null 2>&1 && supports_forcearch dnf; then
+                        cmd="dnf"
+                        install_flags="$install_flags --forcearch=$force_arch"
+                else
+                        fallback_to_chroot_tdnf
+                fi
+        fi
+fi
+
+$cmd $dnf_sub_cmd $install_flags "${@}"
+`
+	}
 	var runOpts []llb.RunOption
 
 	installScript := llb.Scratch().File(llb.Mkfile("install.sh", 0o700, []byte(installScriptDt)), cfg.constraints...)
@@ -194,6 +303,48 @@ $cmd $dnf_sub_cmd $install_flags "${@}"
 	runOpts = append(runOpts, cfg.mounts...)
 
 	return dalec.WithRunOptions(runOpts...)
+}
+
+func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch string, buildPlat ocispecs.Platform) llb.RunOption {
+	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
+		// Ensure the package manager runs on the build/executor platform (native),
+		// while installing into the mounted target rootfs via --installroot.
+		bp := buildPlat
+		ei.Constraints.Platform = &bp
+
+		installOpts := []DnfInstallOpt{
+			DnfAtRoot(rootfsPath),
+			DnfForceArch(targetArch),
+			DnfInstallWithConstraints([]llb.ConstraintsOpt{dalec.WithConstraint(&ei.Constraints)}),
+		}
+
+		var installCfg dnfInstallConfig
+		dnfInstallOptions(&installCfg, installOpts)
+
+		cacheKey := cfg.CacheName
+		if cfg.CacheAddPlatform {
+			cacheKey += "-" + targetArch
+		}
+		runOpts := []llb.RunOption{
+			cfg.InstallFunc(&installCfg, cfg.ReleaseVer, pkgs),
+			llb.AddMount(joinUnderRoot(rootfsPath, cfg.CacheDir), llb.Scratch(),
+				llb.AsPersistentCacheDir(cacheKey, llb.CacheMountLocked)),
+		}
+
+		// Mount any extra cache dirs requested by the distro (e.g., tdnf-based distros
+		// that may switch to dnf during the install step).
+		for _, d := range cfg.ExtraCacheDirs {
+			if d == "" {
+				continue
+			}
+			runOpts = append(runOpts,
+				llb.AddMount(joinUnderRoot(rootfsPath, d),
+					llb.Scratch(),
+					llb.AsPersistentCacheDir(cacheKey+"-"+filepath.Base(d), llb.CacheMountLocked)),
+			)
+		}
+		dalec.WithRunOptions(runOpts...).SetRunOption(ei)
+	})
 }
 
 func DnfInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {

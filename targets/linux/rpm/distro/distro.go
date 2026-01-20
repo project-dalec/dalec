@@ -37,11 +37,13 @@ type Config struct {
 	CacheName string
 	// Whether to namespace the cache key by platform
 	// Not all distros need this, hence why it is configurable.
-	// The cache key is only added when the build platform and target platform differ.
 	CacheAddPlatform bool
 
 	// e.g. /var/cache/tdnf or /var/cache/dnf
 	CacheDir string
+
+	// Additional cache directories to mount (e.g. tdnf-based distros may also want /var/cache/dnf).
+	ExtraCacheDirs []string
 
 	// erofs-utils 1.7+ is required for tar support.
 	SysextSupported bool
@@ -61,7 +63,24 @@ func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
 			}
 			cacheKey += "-" + platforms.Format(*p)
 		}
-		llb.AddMount(filepath.Join(root, cfg.CacheDir), llb.Scratch(), llb.AsPersistentCacheDir(cacheKey, llb.CacheMountLocked)).SetRunOption(ei)
+
+		llb.AddMount(
+			joinUnderRoot(root, cfg.CacheDir),
+			llb.Scratch(),
+			llb.AsPersistentCacheDir(cacheKey, llb.CacheMountLocked),
+		).SetRunOption(ei)
+
+		// Extra cache dirs (each gets its own cache key suffix)
+		for _, d := range cfg.ExtraCacheDirs {
+			if d == "" {
+				continue
+			}
+			llb.AddMount(
+				joinUnderRoot(root, d),
+				llb.Scratch(),
+				llb.AsPersistentCacheDir(cacheKey+"-"+filepath.Base(d), llb.CacheMountLocked),
+			).SetRunOption(ei)
+		}
 	})
 }
 
