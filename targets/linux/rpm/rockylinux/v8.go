@@ -19,8 +19,9 @@ var ConfigV8 = &distro.Config{
 	ImageRef:   v8Ref,
 	ContextRef: v8WorkerContextName,
 
-	CacheName: dnfCacheNameV8,
-	CacheDir:  "/var/cache/dnf",
+	CacheName:        dnfCacheNameV8,
+	CacheDir:         []string{"/var/cache/dnf"},
+	CacheAddPlatform: true,
 
 	ReleaseVer:         "8",
 	BuilderPackages:    builderPackages,
