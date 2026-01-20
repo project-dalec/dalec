@@ -1386,12 +1386,11 @@ echo "$BAR" > bar.txt
 				t.Fatalf("error marshalling llb: %v", defErr)
 			}
 
-			res, resErr := gwc.Solve(ctx, gwclient.SolveRequest{
+			sr = gwclient.SolveRequest{
 				Definition: def.ToPB(),
-			})
-			if resErr != nil {
-				t.Fatal(resErr)
 			}
+
+			res = solveT(ctx, t, gwc, sr)
 
 			ref, refErr = res.SingleRef()
 			if refErr != nil {

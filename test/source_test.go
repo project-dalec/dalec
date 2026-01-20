@@ -599,10 +599,7 @@ index ea874f5..ba38f84 100644
 	// Note: module here should be moduyle+version because this is checking the go module path on disk
 	checkModule := func(ctx context.Context, gwc gwclient.Client, module string, spec *dalec.Spec) {
 		t.Helper()
-		res, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/gomods"), withSpec(ctx, t, spec)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/gomods"), withSpec(ctx, t, spec)))
 
 		ref, err := res.SingleRef()
 		if err != nil {
@@ -873,10 +870,7 @@ func TestSourceWithCargohome(t *testing.T) {
 	// Helper function to check if a specific Cargo registry directory exists
 	checkCargoRegistry := func(ctx context.Context, gwc gwclient.Client, registryPath string, spec *dalec.Spec) {
 		t.Helper()
-		res, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/cargohome"), withSpec(ctx, t, spec)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/cargohome"), withSpec(ctx, t, spec)))
 
 		ref, err := res.SingleRef()
 		if err != nil {
