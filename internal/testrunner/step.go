@@ -7,17 +7,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 
-	"github.com/project-dalec/dalec"
 	"github.com/google/shlex"
 	"github.com/moby/buildkit/client/llb"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (
@@ -191,4 +192,25 @@ func (s *stepCmdError) Error() string {
 
 func (s *stepCmdError) Unwrap() error {
 	return s.err
+}
+
+func DecodeResults(r io.Reader) iter.Seq2[*FileCheckErrResult, error] {
+	return func(yield func(*FileCheckErrResult, error) bool) {
+		dec := json.NewDecoder(r)
+		var results []FileCheckErrResult
+
+		for {
+			err := dec.Decode(&results)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+
+			for _, r := range results {
+				if !yield(&r, nil) {
+					return
+				}
+			}
+		}
+	}
 }

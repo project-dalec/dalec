@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/targets/linux/deb/distro"
-	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/targets/linux/deb/distro"
+	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 )
 
 func withPackageOverride(oldPkg, newPkg string) func(cfg *testLinuxConfig) {
@@ -198,21 +198,25 @@ func TestBionic(t *testing.T) {
 }
 
 func testUbuntuBaseDependencies(t *testing.T, target targetConfig) {
-	ctx := startTestSpan(baseCtx, t)
-	spec := newSimpleSpec()
-	spec.Tests = []*dalec.TestSpec{
-		{
-			Files: map[string]dalec.FileCheckOutput{
-				"/etc/ssl/certs": {
-					Permissions: 0755,
-					IsDir:       true,
+	t.Run("base deps", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(baseCtx, t)
+		spec := newSimpleSpec()
+		spec.Tests = []*dalec.TestSpec{
+			{
+				Files: map[string]dalec.FileCheckOutput{
+					"/etc/ssl/certs": {
+						Permissions: 0755,
+						IsDir:       true,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target.Container))
-		solveT(ctx, t, client, req)
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target.Container))
+			solveT(ctx, t, client, req)
+		})
 	})
 }

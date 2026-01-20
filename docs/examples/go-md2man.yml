@@ -42,4 +42,4 @@ tests:
   - name: Check bin
     files:
       /usr/bin/go-md2man:
-        permissions: 0755
+        permissions: 0o755

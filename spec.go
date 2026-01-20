@@ -17,17 +17,17 @@ import (
 // Spec is the specification for a package build.
 type Spec struct {
 	// Name is the name of the package.
-	Name string `yaml:"name" json:"name" jsonschema:"required"`
+	Name string `yaml:"name" json:"name,omitempty" jsonschema:"required"`
 	// Description is a short description of the package.
-	Description string `yaml:"description" json:"description" jsonschema:"required"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"required"`
 	// Website is the URL to store in the metadata of the package.
-	Website string `yaml:"website" json:"website"`
+	Website string `yaml:"website" json:"website,omitempty" jsonschema:"required"`
 
 	// Version sets the version of the package.
-	Version string `yaml:"version" json:"version" jsonschema:"required"`
+	Version string `yaml:"version" json:"version,omitempty" jsonschema:"required"`
 	// Revision sets the package revision.
 	// This will generally get merged into the package version when generating the package.
-	Revision string `yaml:"revision" json:"revision" jsonschema:"required,oneof_type=string;integer"`
+	Revision string `yaml:"revision" json:"revision,omitempty" jsonschema:"required,oneof_type=string;integer"`
 
 	// Marks the package as architecture independent.
 	// It is up to the package author to ensure that the package is actually architecture independent.
@@ -70,7 +70,7 @@ type Spec struct {
 	Args map[string]string `yaml:"args,omitempty" json:"args,omitempty"`
 
 	// License is the license of the package.
-	License string `yaml:"license" json:"license"`
+	License string `yaml:"license" json:"license,omitempty" jsonschema:"required"`
 	// Vendor is the vendor of the package.
 	Vendor string `yaml:"vendor,omitempty" json:"vendor,omitempty"`
 	// Packager is the name of the person,team,company that packaged the package.
@@ -204,14 +204,131 @@ type SymlinkTarget struct {
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
 }
 
+// GomodEdits groups the go.mod manipulation directives that can be applied
+// before downloading module dependencies.
+type GomodEdits struct {
+	// Replace applies go.mod replace directives before downloading module dependencies.
+	// Each entry can be either a string "old => new" or a struct with Old and New fields.
+	Replace []GomodReplace `yaml:"replace,omitempty" json:"replace,omitempty"`
+}
+
+// GomodReplace represents a go.mod replace directive.
+// It can be specified as a string "old => new" or as a struct with Original and Update fields.
+// The string format matches Go's native go.mod syntax.
+// This allows users to substitute module dependencies before go mod download runs,
+// useful for pointing to local forks or alternate versions.
+type GomodReplace struct {
+	// Original is the module path to replace (can include @version)
+	Original string `yaml:"old" json:"old"`
+	// Update is the replacement module path or local directory
+	Update string `yaml:"new" json:"new"`
+
+	_sourceMap *sourceMap `json:"-" yaml:"-"`
+}
+
+func (r GomodReplace) String() string {
+	return r.Original + " => " + r.Update
+}
+
+func (r GomodReplace) goModEditArg() (string, error) {
+	if r.Original == "" || r.Update == "" {
+		return "", errors.Errorf("invalid gomod replace, old and new must be non-empty")
+	}
+	return r.Original + "=" + r.Update, nil
+}
+
+func (r *GomodReplace) UnmarshalYAML(ctx context.Context, node ast.Node) error {
+	// Try to unmarshal as a string first (shorthand format)
+	if node.Type() == ast.StringType {
+		var raw string
+		if err := yaml.NodeToValue(node, &raw, decodeOpts(ctx)...); err != nil {
+			return err
+		}
+		parts := strings.SplitN(raw, " => ", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod replace %q, expected format 'old => new'", raw)
+		}
+		r.Original = strings.TrimSpace(parts[0])
+		r.Update = strings.TrimSpace(parts[1])
+		if r.Original == "" || r.Update == "" {
+			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
+		}
+		r._sourceMap = newSourceMap(ctx, node)
+		return nil
+	}
+
+	// Otherwise, try to unmarshal as a struct
+	type internal GomodReplace
+	var i internal
+
+	dec := getDecoder(ctx)
+	if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
+		return err
+	}
+	*r = GomodReplace(i)
+	if r.Original == "" || r.Update == "" {
+		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
+	}
+	r._sourceMap = newSourceMap(ctx, node)
+	return nil
+}
+
+func (r *GomodReplace) MarshalYAML() ([]byte, error) {
+	return yaml.Marshal(r.String())
+}
+
+func (r *GomodReplace) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.String())
+}
+
+func (r *GomodReplace) UnmarshalJSON(b []byte) error {
+	// Try to unmarshal as a string first (shorthand format)
+	var raw string
+	if err := json.Unmarshal(b, &raw); err == nil {
+		parts := strings.SplitN(raw, " => ", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod replace %q, expected format 'old => new'", raw)
+		}
+		r.Original = strings.TrimSpace(parts[0])
+		r.Update = strings.TrimSpace(parts[1])
+		if r.Original == "" || r.Update == "" {
+			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
+		}
+		return nil
+	}
+
+	// Otherwise, try to unmarshal as a struct
+	type gomodReplaceAlias GomodReplace
+	var alias gomodReplaceAlias
+	if err := json.Unmarshal(b, &alias); err != nil {
+		return err
+	}
+	*r = GomodReplace(alias)
+	if r.Original == "" || r.Update == "" {
+		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
+	}
+	return nil
+}
+
 // GeneratorGomod is used to generate a go module cache from go module sources
 type GeneratorGomod struct {
 	// Paths is the list of paths to run the generator on. Used to generate multi-module in a single source.
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	// Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host.
 	Auth map[string]GomodGitAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// Edits contains go.mod manipulation directives (replace) that are applied
+	// before downloading module dependencies.
+	Edits *GomodEdits `yaml:"edits,omitempty" json:"edits,omitempty"`
 
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
+}
+
+// GetReplace returns the replace directives, handling nil Edits.
+func (g *GeneratorGomod) GetReplace() []GomodReplace {
+	if g == nil || g.Edits == nil {
+		return nil
+	}
+	return g.Edits.Replace
 }
 
 // GeneratorCargohome is used to generate a cargo home from cargo sources

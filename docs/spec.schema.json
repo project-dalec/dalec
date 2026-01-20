@@ -961,6 +961,10 @@
 					],
 					"description": "Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host."
 				},
+				"edits": {
+					"$ref": "#/$defs/GomodEdits",
+					"description": "Edits contains go.mod manipulation directives (replace) that are applied\nbefore downloading module dependencies."
+				},
 				"paths": {
 					"items": {
 						"type": [
@@ -1109,6 +1113,27 @@
 			],
 			"description": "GoBuildCache is a cache for Go build artifacts."
 		},
+		"GomodEdits": {
+			"properties": {
+				"replace": {
+					"items": {
+						"$ref": "#/$defs/GomodReplace"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Replace applies go.mod replace directives before downloading module dependencies.\nEach entry can be either a string \"old =\u003e new\" or a struct with Old and New fields."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GomodEdits groups the go.mod manipulation directives that can be applied before downloading module dependencies."
+		},
 		"GomodGitAuth": {
 			"properties": {
 				"header": {
@@ -1162,6 +1187,34 @@
 				"object",
 				"null"
 			]
+		},
+		"GomodReplace": {
+			"required": [
+				"old",
+				"new"
+			],
+			"properties": {
+				"new": {
+					"type": [
+						"string"
+					],
+					"description": "Update is the replacement module path or local directory"
+				},
+				"old": {
+					"type": [
+						"string"
+					],
+					"description": "Original is the module path to replace (can include @version)"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GomodReplace represents a go.mod replace directive."
 		},
 		"ImageConfig": {
 			"properties": {

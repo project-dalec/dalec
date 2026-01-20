@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
-	"github.com/stretchr/testify/assert"
+	"gotest.tools/v3/assert"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -23,17 +23,17 @@ func TestStateWrapper_ReadAt(t *testing.T) {
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		rfs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		f, err := rfs.Open("foo")
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		r, ok := f.(io.ReaderAt)
-		assert.True(t, ok)
+		assert.Assert(t, ok)
 
 		b := make([]byte, 11)
 		n, err := r.ReadAt(b, 0)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 		assert.Equal(t, n, 11)
 
 		b = make([]byte, 1)
@@ -42,7 +42,11 @@ func TestStateWrapper_ReadAt(t *testing.T) {
 		assert.Equal(t, n, 0)
 
 		n, err = r.ReadAt(b, -1)
-		assert.Equal(t, err, &fs.PathError{Op: "read", Path: "foo", Err: fs.ErrInvalid})
+		var pe *fs.PathError
+		assert.Assert(t, errors.As(err, &pe))
+		assert.Equal(t, pe.Op, "read")
+		assert.Equal(t, pe.Path, "foo")
+		assert.Assert(t, errors.Is(pe.Err, fs.ErrInvalid))
 		assert.Equal(t, n, 0)
 	})
 }
@@ -54,7 +58,7 @@ func TestStateWrapper_OpenInvalidPath(t *testing.T) {
 	st := llb.Scratch().File(llb.Mkfile("/bar", 0644, []byte("hello world")))
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		rfs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		// cannot prefix path with "/", per go path conventions
 		_, err = rfs.Open("/bar")
@@ -62,7 +66,7 @@ func TestStateWrapper_OpenInvalidPath(t *testing.T) {
 			t.Fatal("expected error")
 		}
 
-		assert.True(t, errors.Is(err, fs.ErrInvalid))
+		assert.Assert(t, errors.Is(err, fs.ErrInvalid))
 	})
 }
 
@@ -75,14 +79,14 @@ func TestStateWrapper_Open(t *testing.T) {
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		fs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		f, err := fs.Open("foo")
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		b := make([]byte, 11)
 		n, err := f.Read(b)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 		assert.Equal(t, n, 11)
 
 		b = make([]byte, 1)
@@ -99,13 +103,13 @@ func TestStateWrapper_Stat(t *testing.T) {
 	st := llb.Scratch().File(llb.Mkfile("/foo", 0755, []byte("contents")))
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		rfs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		f, err := rfs.Open("foo")
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		info, err := f.Stat()
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		assert.Equal(t, info.IsDir(), false)
 		assert.Equal(t, info.Mode(), fs.FileMode(0755))
@@ -122,7 +126,7 @@ func TestStateWrapper_ReadDir(t *testing.T) {
 		File(llb.Mkfile("/bar/foo", 0644, []byte("file contents"))).
 		File(llb.Mkdir("/bar/baz", 0644))
 
-	var expectInfo = map[string]struct {
+	expectInfo := map[string]struct {
 		perms    fs.FileMode
 		isDir    bool
 		contents []byte
@@ -141,19 +145,19 @@ func TestStateWrapper_ReadDir(t *testing.T) {
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		rfs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		root := "/bar"
 		entries, err := rfs.ReadDir(root)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		for _, e := range entries {
 			p := path.Join(root, e.Name())
 			want, ok := expectInfo[p]
-			assert.True(t, ok)
+			assert.Assert(t, ok)
 
 			info, err := e.Info()
-			assert.Nil(t, err)
+			assert.NilError(t, err)
 
 			assert.Equal(t, want.perms, info.Mode())
 			assert.Equal(t, want.perms.String(), info.Mode().String())
@@ -188,7 +192,7 @@ func TestStateWrapper_Walk(t *testing.T) {
 		File(llb.Mkfile("/dir/c/d/e/f123.txt", 0644, []byte("f123.txt contents"))).
 		File(llb.Mkfile("h.exe", 0755, []byte("h.exe contents")))
 
-	var expectInfo = map[string]struct {
+	expectInfo := map[string]struct {
 		perms    fs.FileMode
 		isDir    bool
 		contents []byte
@@ -236,7 +240,7 @@ func TestStateWrapper_Walk(t *testing.T) {
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		rfs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 		totalCalls := 0
 		err = fs.WalkDir(rfs, ".", func(currentPath string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -248,10 +252,10 @@ func TestStateWrapper_Walk(t *testing.T) {
 			}
 
 			expect, ok := expectInfo[currentPath]
-			assert.True(t, ok)
+			assert.Assert(t, ok)
 
 			info, err := d.Info()
-			assert.Nil(t, err)
+			assert.NilError(t, err)
 			assert.Equal(t, expect.perms, info.Mode())
 			assert.Equal(t, expect.isDir, info.IsDir())
 
@@ -259,21 +263,20 @@ func TestStateWrapper_Walk(t *testing.T) {
 
 			if !d.IsDir() { // file
 				f, err := rfs.Open(currentPath)
-				assert.Nil(t, err)
+				assert.NilError(t, err)
 
 				contents, err := io.ReadAll(f)
 				if err != nil {
 					return err
 				}
-				assert.Equal(t, contents, expect.contents)
+				assert.DeepEqual(t, contents, expect.contents)
 			}
 
 			return nil
 		})
 		assert.Equal(t, len(expectInfo), totalCalls)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 	})
-
 }
 
 func TestStateWrapper_ReadPartial(t *testing.T) {
@@ -289,41 +292,41 @@ func TestStateWrapper_ReadPartial(t *testing.T) {
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		rfs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		f, err := rfs.Open("foo")
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		// read 10 bytes
 		b := make([]byte, 10)
 		n, err := f.Read(b)
 		assert.Equal(t, err, nil)
 		assert.Equal(t, n, 10)
-		assert.Equal(t, b, contents[0:10])
+		assert.DeepEqual(t, b, contents[0:10])
 
 		// read 9 bytes
 		b = make([]byte, 9)
 		n, err = f.Read(b)
 		assert.Equal(t, err, nil)
 		assert.Equal(t, n, 9)
-		assert.Equal(t, b, contents[10:19])
+		assert.DeepEqual(t, b, contents[10:19])
 
 		// purposefully exceed length of remainder of file to
 		// read the rest of the contents (14 bytes)
 		b = make([]byte, 40)
 		n, err = f.Read(b)
 		assert.Equal(t, n, 14)
-		assert.Equal(t, b[:14], contents[19:])
+		assert.DeepEqual(t, b[:14], contents[19:])
 
 		// the rest of the buffer should be an unfilled 26 bytes
-		assert.Equal(t, b[14:], make([]byte, 26))
+		assert.DeepEqual(t, b[14:], make([]byte, 26))
 		assert.Equal(t, err, io.EOF)
 
 		// subsequent read of any size should return io.EOF
 		b = make([]byte, 1)
 		n, err = f.Read(b)
 		assert.Equal(t, n, 0)
-		assert.Equal(t, b, []byte{0x0})
+		assert.DeepEqual(t, b, []byte{0x0})
 		assert.Equal(t, err, io.EOF)
 	})
 }
@@ -342,13 +345,13 @@ func TestStateWrapper_ReadAll(t *testing.T) {
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		rfs, err := bkfs.FromState(ctx, &st, gwc)
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		f, err := rfs.Open("file")
-		assert.Nil(t, err)
+		assert.NilError(t, err)
 
 		contents, err := io.ReadAll(f)
-		assert.Nil(t, err)
-		assert.Equal(t, contents, b)
+		assert.NilError(t, err)
+		assert.DeepEqual(t, contents, b)
 	})
 }

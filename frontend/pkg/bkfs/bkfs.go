@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	_ fs.DirEntry  = (*stateRefDirEntry)(nil)
-	_ fs.ReadDirFS = (*StateRefFS)(nil)
-	_ io.ReaderAt  = (*stateRefFile)(nil)
-	_ fs.ReadDirFS = (*nullFS)(nil)
+	_ fs.DirEntry   = (*stateRefDirEntry)(nil)
+	_ fs.ReadDirFS  = (*StateRefFS)(nil)
+	_ io.ReaderAt   = (*stateRefFile)(nil)
+	_ fs.ReadDirFile = (*stateRefFile)(nil)
+	_ fs.ReadDirFS  = (*nullFS)(nil)
 )
 
 type StateRefFS struct {
@@ -173,6 +174,26 @@ func (s *stateRefFile) Stat() (fs.FileInfo, error) {
 	}
 
 	return info, nil
+}
+
+func (s *stateRefFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	contents, err := s.ref.ReadDir(s.ctx, gwclient.ReadDirRequest{
+		Path: s.path,
+	})
+	if err != nil {
+		return nil, &fs.PathError{Op: "readdir", Path: s.path, Err: err}
+	}
+
+	entries := make([]fs.DirEntry, 0, len(contents))
+	for _, stat := range contents {
+		entries = append(entries, &stateRefDirEntry{stat: stat})
+	}
+
+	if n > 0 && len(entries) > n {
+		entries = entries[:n]
+	}
+
+	return entries, nil
 }
 
 func (st *StateRefFS) Open(name string) (fs.File, error) {

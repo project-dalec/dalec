@@ -205,10 +205,16 @@ target "build" {
 }
 
 target "examples" {
-    name = "examples-${f}"
+    name = "examples-${replace(f, ".", "-")}"
     matrix = {
         distro = ["azlinux3"]
-        f = ["go-md2man"]
+        f = [
+            "go-md2man",
+            "hello.inline",
+            "config-and-systemd",
+            "patch-during-build",
+            "my-daemon.kitchensink",
+        ]
     }
     args = {
         "BUILDKIT_SYNTAX" = "dalec_frontend"
@@ -281,4 +287,3 @@ target "worker" {
         "dalec_frontend" = "target:frontend"
     }
 }
-

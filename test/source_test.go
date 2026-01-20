@@ -771,6 +771,47 @@ index ea874f5..ba38f84 100644
 			}
 		})
 	})
+
+	t.Run("with replace directive", func(t *testing.T) {
+		t.Parallel()
+		testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+			spec := &dalec.Spec{
+				Sources: map[string]dalec.Source{
+					srcName: {
+						Generate: []*dalec.SourceGenerator{
+							{
+								Gomod: &dalec.GeneratorGomod{
+									Edits: &dalec.GomodEdits{
+										Replace: []dalec.GomodReplace{
+											{Original: "github.com/cpuguy83/tar2go@v0.3.1", Update: "github.com/cpuguy83/tar2go@v0.3.0"},
+										},
+									},
+								},
+							},
+						},
+						Inline: &dalec.SourceInline{
+							Dir: &dalec.SourceInlineDir{
+								Files: map[string]*dalec.SourceInlineFile{
+									"main.go": {Contents: gomodFixtureMain},
+									"go.mod":  {Contents: gomodFixtureMod},
+									"go.sum":  {Contents: gomodFixtureSum},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/patched-sources"), withSpec(ctx, t, spec)))
+			gomodContent := readFile(ctx, t, filepath.Join(srcName, "go.mod"), res)
+
+			content := string(gomodContent)
+			assert.Check(t, strings.Contains(content, "replace github.com/cpuguy83/tar2go"),
+				"go.mod should contain replace directive, got:\n%s", content)
+			assert.Check(t, strings.Contains(content, "v0.3.0"),
+				"go.mod should reference v0.3.0, got:\n%s", content)
+		})
+	})
 }
 
 var (
