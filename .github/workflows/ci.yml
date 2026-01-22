@@ -61,7 +61,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: false
       # Use the golang-ci lint action which automattically sets up GHA caching and other things
       # Note: There is also a "lint" target in docker-bake.hcl for local linting
@@ -69,7 +69,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.1.6
+          version: v2.8.0
           args: --timeout=30m
       - name: custom linters
         run: go run ./cmd/lint ./...
@@ -116,7 +116,7 @@ jobs:
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: false
 
       - name: checkout
@@ -306,7 +306,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: false
       - name: download deps
         run: go mod download

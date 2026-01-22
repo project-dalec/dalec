@@ -431,7 +431,9 @@ echo "$BAR" > bar.txt
 					actual := metaPlatforms.Platforms[i]
 
 					_, _, dt, err := gwc.ResolveImageConfig(ctx, ref.Rootfs.DockerImage.Ref, sourceresolver.Opt{
-						Platform: &windowsAmd64,
+						ImageOpt: &sourceresolver.ResolveImageOpt{
+							Platform: &windowsAmd64,
+						},
 					})
 					assert.NilError(t, err)
 

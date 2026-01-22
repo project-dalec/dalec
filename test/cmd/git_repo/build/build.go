@@ -25,7 +25,7 @@ func HTTPGitServer(ctx context.Context, gwc gwclient.Client) (*llb.State, error)
 	}
 
 	p := llb.Platform(dc.BuildPlatforms[0])
-	st := llb.Image("golang:1.24", llb.WithMetaResolver(gwc), p).
+	st := llb.Image("golang:1.25", llb.WithMetaResolver(gwc), p).
 		Run(
 			llb.Args([]string{"go", "build", "-o=/build/out/git_http_server", "./test/cmd/git_repo"}),
 			llb.AddEnv("CGO_ENABLED", "0"),

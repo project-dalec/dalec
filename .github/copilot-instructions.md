@@ -84,7 +84,7 @@ Always reference these instructions first and fallback to search or bash command
 ## Development Environment Requirements
 
 ### Required Tools
-- Go 1.24+ (check with `go version`)
+- Go 1.25+ (check with `go version`)
 - Docker with BuildKit support (check with `docker buildx version`)
 - Standard Unix tools (git, make, etc.)
 

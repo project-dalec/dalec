@@ -77,7 +77,9 @@ func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec,
 	}
 
 	dt, err := bi.ResolveImageConfig(ctx, sOpt, sourceresolver.Opt{
-		Platform: platform,
+		ImageOpt: &sourceresolver.ResolveImageOpt{
+			Platform: platform,
+		},
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error resolving base image config")

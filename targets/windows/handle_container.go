@@ -80,9 +80,9 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 		bi := bi
 		eg.Go(func() error {
 			dt, err := bi.ResolveImageConfig(grpCtx, sOpt, sourceresolver.Opt{
-				Platform: &basePlatform,
 				ImageOpt: &sourceresolver.ResolveImageOpt{
 					ResolveMode: dc.ImageResolveMode.String(),
+					Platform:    &basePlatform,
 				},
 			})
 			if err != nil {
