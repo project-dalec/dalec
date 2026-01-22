@@ -1,0 +1,20 @@
+services:
+  jaeger:
+    image: jaegertracing/jaeger:2.14.1
+    volumes:
+      - ./jaeger-config.yaml:/etc/jaeger/config.yaml:ro
+      - ./jaeger-ui-config.json:/etc/jaeger/ui-config.json:ro
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"  # Jaeger UI
+    network_mode: bridge
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.144.0
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./traces:/data:ro
+    depends_on:
+      - jaeger
+    network_mode: service:jaeger
+

@@ -1,0 +1,22 @@
+receivers:
+  otlpjsonfile:
+    include:
+      - /data/*.jsonl
+    start_at: beginning
+
+exporters:
+  otlp_grpc/jaeger:
+    endpoint: localhost:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: detailed
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlpjsonfile]
+      exporters: [debug, otlp_grpc/jaeger]
