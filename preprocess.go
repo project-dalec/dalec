@@ -95,7 +95,7 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 			s.Patches[sourceName] = append(s.Patches[sourceName], PatchSpec{
 				Source: patchSourceName,
 				// Path is empty - the entire source is the patch file
-				Strip:  &strip,
+				Strip: &strip,
 			})
 		}
 	}

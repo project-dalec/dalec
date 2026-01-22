@@ -112,7 +112,7 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 			name: "valid replace",
 			repl: GomodReplace{
 				Original: "github.com/stretchr/testify",
-				Update:      "github.com/stretchr/testify@v1.8.0",
+				Update:   "github.com/stretchr/testify@v1.8.0",
 			},
 			expectErr:   false,
 			expectedArg: "github.com/stretchr/testify=github.com/stretchr/testify@v1.8.0",
@@ -121,7 +121,7 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 			name: "empty old",
 			repl: GomodReplace{
 				Original: "",
-				Update:      "github.com/stretchr/testify@v1.8.0",
+				Update:   "github.com/stretchr/testify@v1.8.0",
 			},
 			expectErr: true,
 		},
@@ -129,7 +129,7 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 			name: "empty new",
 			repl: GomodReplace{
 				Original: "github.com/stretchr/testify",
-				Update:      "",
+				Update:   "",
 			},
 			expectErr: true,
 		},

@@ -3,9 +3,9 @@ package azlinux
 import (
 	"context"
 
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 )
 
 var (

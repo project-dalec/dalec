@@ -4,14 +4,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/test/testenv"
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
 	"github.com/google/go-cmp/cmp"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/test/testenv"
 )
 
 func getBuildPlatform(ctx context.Context, t *testing.T) *ocispecs.Platform {

@@ -3,9 +3,9 @@ package debug
 import (
 	"context"
 
-	"github.com/project-dalec/dalec/frontend"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 const DebugRoute = "debug"
