@@ -89,6 +89,10 @@ jobs:
 
   integration:
     runs-on: ubuntu-22.04
+    # Ensure integration tests can resolve a locally-exported dalec frontend image.
+    # The test harness (withDalecInput) uses FRONTEND_REF when provided.
+    env:
+      FRONTEND_REF: localhost:5000/dalec/frontend:ci
     strategy:
       fail-fast: false
       matrix:
@@ -136,6 +140,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local registry (for FRONTEND_REF)
+        run: |
+          set -eux
+          docker rm -f local-registry || true
+          docker run -d --restart=always --net=host --name local-registry registry:2
+
+      - name: Setup buildx builder (host network)
+        run: |
+          set -eux
+          if ! docker buildx inspect dalec-ci >/dev/null 2>&1; then
+            docker buildx create --name dalec-ci --use --driver docker-container --driver-opt network=host
+          else
+            docker buildx use dalec-ci
+          fi
+          docker buildx inspect --bootstrap
 
       - name: Setup otel-collector
         run: |
@@ -269,7 +289,15 @@ jobs:
         run: |
           set -eu
 
-          docker buildx bake frontend
+          # Build instrumented frontend and PUSH it to the local registry so the
+          # test harness/BuildKit can always resolve it by FRONTEND_REF.
+          docker buildx bake frontend \
+            --set frontend.args.DALEC_FRONTEND_COVERAGE=1 \
+            --set frontend.tags="${FRONTEND_REF}" \
+            --push
+
+          docker buildx imagetools inspect "${FRONTEND_REF}"
+
           if [ "${TEST_SUITE}" = "other" ]; then
             exit 0
           fi
@@ -280,22 +308,98 @@ jobs:
             worker="windowscross"
           fi
           export WORKER_TARGET=${worker}/worker
-          docker buildx bake worker
+          docker buildx bake worker \
+            --set frontend.args.DALEC_FRONTEND_COVERAGE=1
+
+          # Defensive: if building the worker caused any frontend rebuild/tagging,
+          # re-push instrumented frontend so FRONTEND_REF stays correct.
+          docker buildx bake frontend \
+            --set frontend.args.DALEC_FRONTEND_COVERAGE=1 \
+            --set frontend.tags="${FRONTEND_REF}" \
+            --push
         env:
           TEST_SUITE: ${{ matrix.suite }}
-      - name: Run integration tests
+
+      - name: Run integration tests (with coverage tracking)
         run: |
           set -ex
-          if [ -n "${TEST_SUITE}" ] && [ ! "${TEST_SUITE}" = "other" ]; then
+          mkdir -p coverage
+          
+
+          # IMPORTANT:
+          # The dalec frontend runs inside the buildkit container (docker-container buildx driver),
+          # so GOCOVERDIR must be a path that exists *inside that container*. We’ll copy it out after.
+          export DALEC_FRONTEND_GOCOVERDIR="/tmp/dalec-frontend-coverage/${TEST_SUITE}"
+          export GOCOVERDIR="${DALEC_FRONTEND_GOCOVERDIR}"
+
+          bk="$(docker ps --filter "name=buildx_buildkit_dalec-ci" --format '{{.ID}}' | head -n1)"
+          if [ -z "${bk}" ]; then
+            echo "::error::Unable to find buildkit container for buildx builder 'dalec-ci'"
+            docker ps -a
+            exit 1
+          fi
+
+          docker exec "${bk}" sh -c "rm -rf '${DALEC_FRONTEND_GOCOVERDIR}' && mkdir -p '${DALEC_FRONTEND_GOCOVERDIR}' && chmod -R 777 '${DALEC_FRONTEND_GOCOVERDIR}'"
+
+
+          run=""
+          skip=""
+          if [ -n "${TEST_SUITE}" ] && [ "${TEST_SUITE}" != "other" ]; then
             run="-run=${TEST_SUITE}"
           fi
           if [ -n "${TEST_SKIP}" ]; then
             skip="-skip=${TEST_SKIP}"
           fi
-          go test -timeout=59m -v -json ${run} ${skip} ./test | go run ./cmd/test2json2gha --slow 120s --logdir /tmp/testlogs
+
+          go test -timeout=59m -v -json \
+            -covermode=set -coverpkg=./... \
+            -coverprofile="coverage/integration-${TEST_SUITE}.out" \
+            ${run} ${skip} ./test \
+            | go run ./cmd/test2json2gha --slow 120s --logdir /tmp/testlogs
+
+          # Copy frontend covdata out of the buildkit container onto the runner
+          host_covdir="${GITHUB_WORKSPACE}/coverage/frontend-${TEST_SUITE}"
+          rm -rf "${host_covdir}"
+          mkdir -p "${host_covdir}"
+          docker cp "${bk}:${DALEC_FRONTEND_GOCOVERDIR}/." "${host_covdir}/" || true
+
+          # Convert frontend covdata -> legacy coverprofile (mode: set)
+          if ! ls "${host_covdir}"/covmeta.* >/dev/null 2>&1; then
+            echo "::group::frontend coverage debug"
+            echo "BUILDKIT_CONTAINER=${bk}"
+            echo "DALEC_FRONTEND_GOCOVERDIR(in-buildkit)=${DALEC_FRONTEND_GOCOVERDIR}"
+            echo "host_covdir=${host_covdir}"
+            echo "Contents in buildkit covdir:"
+            docker exec "${bk}" sh -c "ls -la '${DALEC_FRONTEND_GOCOVERDIR}' || true"
+            echo "Searching buildkit /tmp for covmeta/covcounters:"
+            docker exec "${bk}" sh -c "find /tmp -maxdepth 4 \\( -name 'covmeta.*' -o -name 'covcounters.*' \\) 2>/dev/null | head -n 200 || true"
+            echo "Contents copied to host:"
+            ls -la "${host_covdir}" || true
+            echo "Searching workspace for covmeta/covcounters..."
+            find "${GITHUB_WORKSPACE}" -name 'covmeta.*' -o -name 'covcounters.*' 2>/dev/null | head -n 200 || true
+            echo "::endgroup::"
+            echo "::error::No frontend coverage covmeta.* found (frontend coverage not collected)"
+            exit 1
+          fi
+
+          go tool covdata textfmt \
+            -i="${host_covdir}" \
+            -o="coverage/frontend-${TEST_SUITE}.out"
         env:
           TEST_SUITE: ${{ matrix.suite }}
           TEST_SKIP: ${{ matrix.skip }}
+
+      - name: Upload integration coverage profile
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-integration-${{ matrix.suite }}
+          path: |
+            coverage/integration-${{ matrix.suite }}.out
+            coverage/frontend-${{ matrix.suite }}.out  
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Get traces
         if: always()
         run: |
@@ -354,8 +458,27 @@ jobs:
           cache: false
       - name: download deps
         run: go mod download
-      - name: Run unit tests
-        run: go test -v --test.short --json ./... | go run ./cmd/test2json2gha
+      - name: Run unit tests (with coverage tracking)
+        run: |
+          set -eux
+          mkdir -p coverage
+
+          pkgs="$(go list ./... | grep -v '/test$' | grep -v '/test/' )"
+          go test -v --test.short --json \
+            -covermode=set \
+            -coverprofile="coverage/unit.out" \
+            ${pkgs} \
+            | go run ./cmd/test2json2gha
+      - name: Upload unit coverage profile
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-unit
+          path: coverage/unit.out
+          if-no-files-found: ignore
+          retention-days: 7
+
+
 
   e2e:
     runs-on: ubuntu-22.04
@@ -443,3 +566,82 @@ jobs:
           path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
           retention-days: 1
 
+  coverage-report:
+    runs-on: ubuntu-22.04
+    needs:
+      - unit
+      - integration
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e3f713f2d8f53843e71c69a996d56f51aa9adfb9 # v2.14.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.25"
+          cache: false
+
+      - name: Download deps
+        run: go mod download
+
+      - name: Download unit coverage artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: coverage-unit
+          path: coverage
+
+      - name: Download integration coverage artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: coverage/_integration
+
+      - name: Merge coverage + generate report
+        run: |
+          set -eux
+          go install github.com/wadey/gocovmerge@latest
+
+          integration_profiles="$(find coverage/_integration -type f -name 'integration-*.out' | sort | tr '\n' ' ')"
+          frontend_profiles="$(find coverage/_integration -type f -name 'frontend-*.out' | sort | tr '\n' ' ')"
+          if [ -z "${integration_profiles}" ]; then
+            echo "::error::No integration coverage profiles found"
+            exit 1
+          fi
+
+          if [ -z "${frontend_profiles}" ]; then
+            echo "::error::No frontend coverage profiles found"
+            exit 1
+          fi
+
+          if [ ! -f coverage/unit.out ]; then
+            echo "::error::Unit coverage profile not found (coverage/unit.out)"
+            exit 1
+          fi
+
+          "$(go env GOPATH)/bin/gocovmerge" coverage/unit.out ${integration_profiles} ${frontend_profiles} > coverage/all.out
+
+          go tool cover -func=coverage/all.out | tee coverage/summary.txt
+          go tool cover -html=coverage/all.out -o coverage/index.html
+
+          total="$(tail -n 1 coverage/summary.txt | awk '{print $3}')"
+          {
+            echo "## Coverage"
+            echo
+            echo "- Total: **${total}**"
+            echo "- Profiles merged: $(echo "${integration_profiles}" | wc -w) integration + $(echo "${frontend_profiles}" | wc -w) frontend"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload merged coverage report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-report
+          path: |
+            coverage/all.out
+            coverage/summary.txt
+            coverage/index.html
+          retention-days: 14

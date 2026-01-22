@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"net"
 	"os"
 	"os/exec"
@@ -399,6 +400,7 @@ type clientForceDalecWithInput struct {
 }
 
 func (c *clientForceDalecWithInput) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
+	covRoot := os.Getenv("DALEC_FRONTEND_GOCOVERDIR")
 	if req.Definition == nil {
 		// Only inject the frontend when there is no "definition" set.
 		// If a definition is set, it is intended for this to go directly to the buildkit solver.
@@ -406,7 +408,28 @@ func (c *clientForceDalecWithInput) Solve(ctx context.Context, req gwclient.Solv
 			return nil, err
 		}
 	}
-	return c.Client.Solve(ctx, req)
+
+        // IMPORTANT: set this *after* withDalecInput, since it may replace/normalize FrontendOpt.
+        if covRoot != "" {
+                if req.FrontendOpt == nil {
+                        req.FrontendOpt = map[string]string{}
+                }
+                // Frontend-only toggle (NOT a dalec build arg)
+                req.FrontendOpt["dalec.coverage"] = "1"
+        }
+        res, err := c.Client.Solve(ctx, req)
+        if err != nil {
+                return nil, err
+        }
+
+        if covRoot != "" {
+                // Make it suite-safe by letting CI set DALEC_FRONTEND_GOCOVERDIR per-suite.
+                // If they set a plain directory, we write directly there.
+                if err := writeFrontendCovdata(filepath.Clean(covRoot), res); err != nil {
+                        return nil, err
+                }
+        }
+        return res, nil
 }
 
 // gwClientInputInject is a gwclient.Client that injects the result of a build func into the solve request as an input named by the id.
