@@ -2,7 +2,6 @@ package distro
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -12,25 +11,18 @@ import (
 )
 
 func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) llb.State {
+	opts = append(opts, frontend.IgnoreCache(client), dalec.ProgressGroup("Build Container Image"))
+
+	baseImg := llb.Image(c.DefaultOutputImage, llb.WithMetaResolver(sOpt.Resolver), dalec.WithConstraints(opts...))
+
 	bi, err := spec.GetSingleBase(targetKey)
 	if err != nil {
 		return dalec.ErrorState(llb.Scratch(), err)
 	}
 
-	opts = append(opts, frontend.IgnoreCache(client))
-
-	var baseImg llb.State
 	if bi != nil {
-		img := bi.ToState(sOpt, opts...)
-		baseImg = img
-	} else {
-		if c.DefaultOutputImage == "" {
-			return dalec.ErrorState(llb.Scratch(), fmt.Errorf("no output image ref specified, cannot build from scratch"))
-		}
-		baseImg = llb.Image(c.DefaultOutputImage, llb.WithMetaResolver(sOpt.Resolver), dalec.WithConstraints(opts...))
+		baseImg = bi.ToState(sOpt, opts...)
 	}
-
-	opts = append(opts, dalec.ProgressGroup("Build Container Image"))
 
 	repos := dalec.GetExtraRepos(c.ExtraRepos, "install")
 	repos = append(repos, spec.GetInstallRepos(targetKey)...)
