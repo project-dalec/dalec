@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	_ fs.DirEntry   = (*stateRefDirEntry)(nil)
-	_ fs.ReadDirFS  = (*StateRefFS)(nil)
-	_ io.ReaderAt   = (*stateRefFile)(nil)
+	_ fs.DirEntry    = (*stateRefDirEntry)(nil)
+	_ fs.ReadDirFS   = (*StateRefFS)(nil)
+	_ io.ReaderAt    = (*stateRefFile)(nil)
 	_ fs.ReadDirFile = (*stateRefFile)(nil)
-	_ fs.ReadDirFS  = (*nullFS)(nil)
+	_ fs.ReadDirFS   = (*nullFS)(nil)
 )
 
 type StateRefFS struct {

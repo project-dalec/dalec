@@ -4,13 +4,13 @@ import (
 	"context"
 	"os"
 
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
+	"github.com/project-dalec/dalec/frontend"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
 )

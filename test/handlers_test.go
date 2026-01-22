@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/test/testenv"
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/test/testenv"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
 )

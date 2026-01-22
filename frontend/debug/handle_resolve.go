@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	yaml "github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 // Resolve is a handler that generates a resolved spec file with all the build args and variables expanded.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/project-dalec/dalec"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
 )
 
 // testEmptyArtifacts tests that a package with no artifacts defined in spec.artifacts builds and tests successfully.

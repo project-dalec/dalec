@@ -5,9 +5,9 @@ import (
 	"encoding/hex"
 	"path/filepath"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/targets/linux/rpm/distro"
-	"github.com/moby/buildkit/client/llb"
 )
 
 func createYumRepo(installer *distro.Config) func(rpms llb.State, repoPath string, opts ...llb.StateOption) llb.StateOption {
