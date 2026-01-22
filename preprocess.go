@@ -102,8 +102,9 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 	return nil
 }
 
-// gomodEditCommand generates the "go mod edit" command string from replace directives
-func gomodEditCommand(g *GeneratorGomod) (string, error) {
+// gomodEditArgs generates the list of -replace= arguments for go mod edit.
+// Returns a newline-separated list of arguments that can be safely passed to go mod edit.
+func gomodEditArgs(g *GeneratorGomod) (string, error) {
 	if g == nil || g.Edits == nil {
 		return "", nil
 	}
@@ -123,11 +124,12 @@ func gomodEditCommand(g *GeneratorGomod) (string, error) {
 		return "", nil
 	}
 
-	return "go mod edit " + strings.Join(args, " "), nil
+	// Return as newline-separated list for safe parsing in shell
+	return strings.Join(args, "\n"), nil
 }
 
 // buildGomodPatchEnv generates environment variables for the gomod patch script
-func buildGomodPatchEnv(editCmd string, paths []string, gen *SourceGenerator, sourceName string, patchOutputDir string) (map[string]string, error) {
+func buildGomodPatchEnv(editArgs string, paths []string, gen *SourceGenerator, sourceName string, patchOutputDir string, origWorkDir string) (map[string]string, error) {
 	const (
 		workDir = "/work/src"
 	)
@@ -177,10 +179,12 @@ func buildGomodPatchEnv(editCmd string, paths []string, gen *SourceGenerator, so
 	}
 
 	// Build module info for each path
-	// Format: rel_module_path|gomod_path|gosum_path|module_dir|rel_gomod_path|rel_gosum_path
+	// Format: rel_module_path|gomod_path|gosum_path|module_dir|rel_gomod_path|rel_gosum_path|orig_module_dir
+	joinedOrigWorkDir := filepath.Join(origWorkDir, sourceName, gen.Subpath)
 	var modulePaths []string
 	for _, relPath := range paths {
 		moduleDir := filepath.Clean(filepath.Join(joinedWorkDir, relPath))
+		origModuleDir := filepath.Clean(filepath.Join(joinedOrigWorkDir, relPath))
 		relModulePath := filepath.Clean(filepath.Join(gen.Subpath, relPath))
 		if relModulePath == "." {
 			relModulePath = ""
@@ -192,14 +196,14 @@ func buildGomodPatchEnv(editCmd string, paths []string, gen *SourceGenerator, so
 		goModPath := filepath.Join(moduleDir, gomodFilename)
 		goSumPath := filepath.Join(moduleDir, gosumFilename)
 
-		moduleInfo := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
-			relModulePath, goModPath, goSumPath, moduleDir, relGoModPath, relGoSumPath)
+		moduleInfo := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
+			relModulePath, goModPath, goSumPath, moduleDir, relGoModPath, relGoSumPath, origModuleDir)
 		modulePaths = append(modulePaths, moduleInfo)
 	}
 
 	env := map[string]string{
 		"PATCH_PATH":     patchPath,
-		"EDIT_CMD":       editCmd,
+		"EDIT_ARGS":      editArgs,
 		"GOMOD_FILENAME": gomodFilename,
 		"GOSUM_FILENAME": gosumFilename,
 		"MODULE_PATHS":   strings.Join(modulePaths, ":"),
@@ -222,12 +226,12 @@ func buildGomodPatchEnv(editCmd string, paths []string, gen *SourceGenerator, so
 // in a gomod generator by running go mod edit + tidy and capturing the diff.
 // Returns the LLB state containing the patch file, or nil if no changes are needed.
 func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGenerator, baseState llb.State, worker llb.State, credHelper llb.RunOption, opts ...llb.ConstraintsOpt) (*llb.State, error) {
-	editCmd, err := gomodEditCommand(gen.Gomod)
+	editArgs, err := gomodEditArgs(gen.Gomod)
 	if err != nil {
 		return nil, err
 	}
 
-	if editCmd == "" {
+	if editArgs == "" {
 		return nil, nil
 	}
 
@@ -237,15 +241,16 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 	}
 
 	const (
-		workDir   = "/work/src"
-		proxyPath = "/go/pkg/mod" // Standard Go module cache path
+		workDir      = "/work/src"
+		origWorkDir  = "/work/src-orig" // Read-only mount of original state for diffing
+		proxyPath    = "/go/pkg/mod"    // Standard Go module cache path
 	)
 
 	// Create a temporary directory for patch generation
 	patchOutputDir := "/tmp/patch-work"
 
 	// Generate environment variables for the script
-	envVars, err := buildGomodPatchEnv(editCmd, paths, gen, sourceName, patchOutputDir)
+	envVars, err := buildGomodPatchEnv(editArgs, paths, gen, sourceName, patchOutputDir, origWorkDir)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +270,7 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 		llb.Args([]string{"/gomod-patch.sh"}),
 		llb.AddMount("/gomod-patch.sh", scriptState, llb.SourcePath("/gomod-patch.sh")),
 		llb.AddMount(workDir, baseState),
+		llb.AddMount(origWorkDir, baseState, llb.Readonly), // Read-only mount for diffing
 		llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
 		llb.AddMount(patchOutputDir, patchOutput), // Mount scratch state to capture patch file
 		llb.AddEnv("GOPATH", "/go"),
