@@ -1,0 +1,60 @@
+# Example showing how to use make install with custom package file listings
+# This demonstrates the new PackageFiles functionality for projects that use
+# make install to place artifacts.
+
+name: make-install-example
+description: Example project using make install to place artifacts
+version: 1.0.0
+revision: 1
+license: MIT
+
+sources:
+  src:
+    inline:
+      dir:
+        files:
+          Makefile:
+            contents: |
+              PREFIX ?= /usr
+              DESTDIR ?=
+
+              all:
+              	@echo "Building example project..."
+              	@echo "#!/bin/bash" > myapp
+              	@echo "echo 'Hello from myapp!'" >> myapp
+              	@chmod +x myapp
+              	@echo ".TH MYAPP 1" > myapp.1
+              	@echo ".SH NAME" >> myapp.1  
+              	@echo "myapp \\- example application" >> myapp.1
+
+              install:
+              	install -D -m 755 myapp $(DESTDIR)$(PREFIX)/bin/myapp
+              	install -D -m 644 myapp.1 $(DESTDIR)$(PREFIX)/share/man/man1/myapp.1
+
+build:
+  steps:
+    - command: |
+        cd src
+        make all
+        make install DESTDIR=%{buildroot}
+
+artifacts:
+  # Instead of manually specifying individual artifacts, use package_files
+  # to list the files that were installed by make install
+  package_files:
+    rpm: |
+      %{_bindir}/myapp
+      %{_mandir}/man1/myapp.1*
+
+tests:
+  - name: verify installed files
+    files:
+      /usr/bin/myapp:
+        permissions: 0755
+      /usr/share/man/man1/myapp.1:
+  - name: test application
+    steps:
+      - command: myapp
+        stdout:
+          contains:
+            - "Hello from myapp!"
