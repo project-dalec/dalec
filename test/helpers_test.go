@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
@@ -23,6 +21,8 @@ import (
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 	"github.com/tonistiigi/fsutil/types"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -258,7 +258,6 @@ func withIgnoreCache(refs ...string) srOpt {
 			v += ","
 		}
 		cfg.req.FrontendOpt["no-cache"] = v + strings.Join(refs, ",")
-
 	}
 }
 
@@ -283,6 +282,11 @@ func solveT(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	if err := res.EachRef(func(ref gwclient.Reference) error { _, err := ref.ToState(); return err }); err != nil {
+		t.Fatalf("One of refs cannot be converted to state: %v", err)
+	}
+
 	return res
 }
 
