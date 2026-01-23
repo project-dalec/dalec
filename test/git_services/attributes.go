@@ -25,8 +25,6 @@ type Attributes struct {
 
 	// PrivateGomoduleHost is the hostname of the git server
 	PrivateGomoduleHost string
-	// GitRemoteAddr is the IPv4 address to which the hostname resolves
-	GitRemoteAddr string
 
 	// HTTPPort is the port on which the http git server runs
 	HTTPPort string
