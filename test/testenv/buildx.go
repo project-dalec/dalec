@@ -24,7 +24,6 @@ import (
 	"github.com/moby/buildkit/session/sshforward/sshprovider"
 	"github.com/moby/buildkit/solver/pb"
 	spb "github.com/moby/buildkit/sourcepolicy/pb"
-	"github.com/opencontainers/go-digest"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
 	"google.golang.org/grpc"
@@ -399,50 +398,6 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-var (
-	netHostTestEnv            *BuildxEnv
-	netHostTestEnvOnce        sync.Once
-	netHostTestEnvCleanupOnce sync.Once
-)
-
-// `NewWithNetHostBuildxInstance` creates a buildx instance with host networking enabled.
-func NewWithNetHostBuildxInstance(ctx context.Context, t *testing.T) *BuildxEnv {
-	dgst := digest.Canonical.FromString(t.Name()).Encoded()
-	name := "dalec_integration_test_" + dgst[:12]
-
-	netHostTestEnvOnce.Do(func() {
-		netHostTestEnv = New().WithBuilder(name)
-		ctxT, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		if err := netHostTestEnv.bootstrap(ctxT); err != nil {
-			cmd := exec.CommandContext(ctx, "docker", "buildx", "create", "--name", name, "--driver", "docker-container", "--driver-opt", "network=host", "--buildkitd-flags", "'--allow-insecure-entitlement=network.host'")
-			out, err := cmd.CombinedOutput()
-			assert.NilError(t, err, "failed to create buildx builder: %s", string(out))
-
-			t.Cleanup(func() {
-				netHostTestEnvCleanupOnce.Do(func() {
-					ctx := context.WithoutCancel(ctx)
-					cmd := exec.CommandContext(ctx, "docker", "buildx", "rm", name)
-					out, err := cmd.CombinedOutput()
-					assert.NilError(t, err, "failed to remove buildx builder: %s", string(out))
-				})
-			})
-
-			cmd = exec.CommandContext(ctx, "docker", "buildx", "inspect", name, "--bootstrap")
-			out, err = cmd.CombinedOutput()
-			assert.NilError(t, err, "failed to create buildx builder: %s", string(out))
-
-			netHostTestEnv = New().WithBuilder(name)
-			if err := netHostTestEnv.bootstrap(ctx); err != nil {
-				t.Fatalf("failed to bootstrap buildx environment: %v", err)
-			}
-		}
-
-	})
-
-	return netHostTestEnv
 }
 
 // clientForceDalecWithInput is a gwclient.Client that forces the solve request to use the main dalec frontend.

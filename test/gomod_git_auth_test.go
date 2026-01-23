@@ -11,7 +11,6 @@ import (
 	"net"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
@@ -29,26 +28,20 @@ func TestGomodGitAuth(t *testing.T) {
 	t.Parallel()
 	ctx := startTestSpan(baseCtx, t)
 
-	// In order to perform these tests, we need to run auxiliary services to
-	// act as git servers that host private git modules. Rather than create a
-	// separate virtual network, we are using host networking to accomplish
-	// this. In order to do so, the buildx instance we use to run the tests
-	// needs to have host networking enabled; otherwise, the solve request will
-	// fail.
-	netHostBuildxEnv := testenv.NewWithNetHostBuildxInstance(ctx, t)
-
 	secretName := "super-secret"
 	sshID := "dalecssh"
 
+	// Base attributes for the git services.
+	// Note: HTTPPort and SSHPort are still used to configure what port the servers
+	// listen on inside their containers.
 	attr := gitservices.Attributes{
 		ServerRoot:             "/",
 		PrivateRepoPath:        "username/private",
 		DependingRepoPath:      "username/public",
 		HTTPServerPath:         "/usr/local/bin/git_http_server",
 		PrivateGomoduleHost:    "host.docker.internal",
-		GitRemoteAddr:          "127.0.0.1",
-		HTTPPort:               findRandomAvailablePort(t),
-		SSHPort:                findRandomAvailablePort(t),
+		HTTPPort:               "8080",
+		SSHPort:                "2222",
 		HTTPServerBuildDir:     "/tmp/dalec/internal/dalec_coderoot",
 		HTTPServeCodeLocalPath: "./test/cmd/git_repo",
 		OutDir:                 "/tmp/dalec/internal/output",
@@ -109,17 +102,13 @@ go {{ .ModFileGoVersion }}
 
 	t.Run("HTTP", func(t *testing.T) {
 		t.Parallel()
-		netHostBuildxEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
+		testEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
 			// This gives buildkit access to a secret with the name
 			// `secretName` and the value `passwd.Password`. On the worker that
 			// fetches the gomod dependencies, a file will be mounted at the
 			// location `/run/secrets/super-secret` with the contents
 			// `passwd.Password`.
 			testenv.WithSecrets(secretName, passwd.Password),
-			// Host Networking MUST also be requested on the individual solve
-			// requests. It is necessary but not sufficient for the buildx
-			// instance to have host networking enabled.
-			testenv.WithHostNetworking,
 		}, func(ctx context.Context, client gwclient.Client) {
 			// This MUST be called at the  start of each test. Because we
 			// persist the go mod cache between runs, the git tag of the
@@ -132,7 +121,7 @@ go {{ .ModFileGoVersion }}
 
 			worker, _, gitHost := initStates(&testState)
 			httpGitHost := gitHost.With(testState.UpdatedGitconfig())
-			httpErrChan := testState.StartHTTPGitServer(httpGitHost)
+			httpServer := testState.StartHTTPGitServer(httpGitHost)
 
 			// Generate a basic spec file with the *depending* go module's
 			// go.mod file inlined, and the name of the secret corresponding to
@@ -144,7 +133,8 @@ go {{ .ModFileGoVersion }}
 			sr := newSolveRequest(
 				withBuildTarget("debug/gomods"),
 				withSpec(ctx, t, spec),
-				withExtraHost(testState.Attr.PrivateGomoduleHost, testState.Attr.GitRemoteAddr),
+				// Use the server's actual IP address for the extra host
+				withExtraHost(testState.Attr.PrivateGomoduleHost, httpServer.IP),
 				// We need to provide a custom worker to the gomod generator.
 				// The reason is described in the documentation to
 				// `updatedGitconfig`
@@ -157,7 +147,7 @@ go {{ .ModFileGoVersion }}
 
 			var res *gwclient.Result
 			select {
-			case err := <-httpErrChan:
+			case err := <-httpServer.ErrChan:
 				t.Fatalf("http server unexpectedly failed: %s", err)
 			case err := <-solveErrChan:
 				t.Fatalf("solve failed: %s", err)
@@ -182,11 +172,10 @@ go {{ .ModFileGoVersion }}
 		pubkey, privkey := generateKeyPair(t)
 		agentErrChan := startSSHAgent(t, privkey, sockaddr)
 
-		netHostBuildxEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
+		testEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
 			// This tells buildkit to forward the SSH Agent socket, giving the
 			// gomod generator worker access to the private key
 			testenv.WithSSHSocket(sshID, sockaddr),
-			testenv.WithHostNetworking,
 		}, func(ctx context.Context, client gwclient.Client) {
 			// This MUST be called at the  start of each test. Because we
 			// persist the go mod cache between runs, the git tag of the
@@ -211,7 +200,7 @@ go {{ .ModFileGoVersion }}
 				With(bareRepo(repo, attr.RepoAbsDir()))
 
 			const githostUsername = "root"
-			sshErrChan := testState.StartSSHServer(sshGitHost)
+			sshServer := testState.StartSSHServer(sshGitHost)
 
 			spec := testState.GenerateSpec(depModfileContents(t, attr), dalec.GomodGitAuth{
 				SSH: &dalec.GomodGitAuthSSH{
@@ -222,8 +211,8 @@ go {{ .ModFileGoVersion }}
 			sr := newSolveRequest(
 				withBuildTarget("debug/gomods"),
 				withSpec(ctx, t, spec),
-				// The extra host in fquestion here is the
-				withExtraHost(testState.Attr.PrivateGomoduleHost, testState.Attr.GitRemoteAddr),
+				// Use the server's actual IP address for the extra host
+				withExtraHost(testState.Attr.PrivateGomoduleHost, sshServer.IP),
 			)
 
 			solveResultChan := make(chan *gwclient.Result)
@@ -235,7 +224,7 @@ go {{ .ModFileGoVersion }}
 			select {
 			case err := <-agentErrChan:
 				t.Fatalf("ssh agent unexpededly failed: %s", err)
-			case err := <-sshErrChan:
+			case err := <-sshServer.ErrChan:
 				t.Fatalf("ssh server unexpectedly failed: %s", err)
 			case err := <-solveErrChan:
 				t.Fatalf("solve failed: %s", err)
@@ -400,29 +389,6 @@ func initWorker(c gwclient.Client) llb.State {
 	worker := llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(c), pg).
 		Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh netcat-openbsd"), pg).Root()
 	return worker
-}
-
-func findRandomAvailablePort(t *testing.T) string {
-	addr, err := net.ResolveTCPAddr("tcp", ":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	l, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func(t *testing.T) {
-		_ = l.Close() // if we got the port, ignore failure to close
-	}(t)
-
-	tcpa, ok := l.Addr().(*net.TCPAddr)
-	if !ok {
-		t.Fatalf("extpeccted return value of l.Addr() to be a (*net.TCPAddr)")
-	}
-
-	p := tcpa.Port
-	return strconv.Itoa(p)
 }
 
 func withExtraHost(host string, ipv4 string) func(cfg *newSolveRequestConfig) {

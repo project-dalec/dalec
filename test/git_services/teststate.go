@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
+	"iter"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -92,58 +95,47 @@ func (ts *TestState) GenerateSpec(gomodContents string, auth dalec.GomodGitAuth)
 	return spec
 }
 
+// ServerResult contains the result of starting a git server.
+type ServerResult struct {
+	// IP is the IP address of the container running the server.
+	IP string
+	// Port is the port the server is listening on.
+	Port string
+	// ErrChan receives errors from the server process.
+	ErrChan <-chan error
+}
+
 // `StartHTTPGitServer` starts a git HTTP server to serve the private go module
-// as a git repo.
-func (ts *TestState) StartHTTPGitServer(gitHost llb.State) <-chan error {
+// as a git repo. It returns the container's IP address and an error channel.
+func (ts *TestState) StartHTTPGitServer(gitHost llb.State) ServerResult {
 	t := ts.T
 
-	serverScript := Script{
-		Basename: "run_http_server.sh",
-		Template: `
-            #!/usr/bin/env sh
-
-            set -ex
-            exec {{ .HTTPServerPath }} {{ .ServerRoot }} {{ .GitRemoteAddr }} {{ .HTTPPort }}
-        `,
-	}
-
-	// This script attempts to connect to the http server. The `nc -z` flag
-	// discconnects and exits with status 0 if a successful connection is made.
-	// `nc -w5` gives up and exits with status 1 after a 5-second timeout.
-	waitScript := Script{
-		Basename: "wait_for_http.sh",
-		Template: `
-            #!/usr/bin/env sh
-            while ! nc -zw5 "{{ .PrivateGomoduleHost }}" "{{ .HTTPPort }}"; do
-                sleep 0.1
-            done
-        `,
-	}
-
 	// The Git HTTP server is coded in a separate program at test/cmd/git_repo.
-	// We need to build and inject it.
+	// It handles IP discovery and ready event emission internally via Go's net package.
 	httpServerBin := ts.buildHTTPGitServer()
 
 	gitHost = gitHost.
-		With(ts.customScript(serverScript)).
-		With(ts.customScript(waitScript)).
 		File(
 			llb.Copy(httpServerBin, "/", ts.Attr.HTTPServerDir()),
 		)
 
-	cont := ts.newContainer(gitHost)
+	cont := ts.newContainer(gitHost, nil)
 
 	env := ts.getStateEnv(gitHost)
-	errChan := ts.runContainer(cont, env, serverScript)
+	// Run the HTTP server binary with "serve" subcommand - it outputs JSON ready event on stdout
+	proc := ts.runContainerWithEventsDirect(cont, env, []string{
+		ts.Attr.HTTPServerPath,
+		"serve",
+		ts.Attr.ServerRoot,
+		ts.Attr.HTTPPort,
+	})
 
 	t.Log("waiting for http server to come online")
+	ready := ts.waitForReady(proc, waitOnlineTimeout)
 
-	timeout := waitOnlineTimeout
-	ts.runWaitScript(cont, env, waitScript, timeout)
+	t.Logf("http server is online at %s:%s", ready.IP, ready.Port)
 
-	t.Logf("http server is online")
-
-	return errChan
+	return ServerResult{IP: ready.IP, Port: ready.Port, ErrChan: proc.ErrChan()}
 }
 
 // `buildHTTPGitServer` builds the Git HTTP server helper program.
@@ -171,11 +163,28 @@ type CustomMount struct {
 	st  llb.State
 }
 
-func (ts *TestState) newContainer(rootfs llb.State, extraMounts ...CustomMount) gwclient.Container {
+type newContainerOpts struct {
+	extraHosts []*pb.HostIP
+}
+
+type NewContainerOpt func(*newContainerOpts)
+
+// WithExtraHosts adds extra host entries to the container.
+func WithExtraHosts(hosts ...*pb.HostIP) NewContainerOpt {
+	return func(o *newContainerOpts) {
+		o.extraHosts = append(o.extraHosts, hosts...)
+	}
+}
+
+func (ts *TestState) newContainer(rootfs llb.State, extraMounts []CustomMount, opts ...NewContainerOpt) gwclient.Container {
 	t := ts.T
 	ctx := ts.Ctx
 	client := ts.Client()
-	attr := ts.Attr
+
+	var o newContainerOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
 
 	mountCfgs := []CustomMount{
 		{
@@ -194,17 +203,11 @@ func (ts *TestState) newContainer(rootfs llb.State, extraMounts ...CustomMount) 
 	}
 
 	cont, err := client.NewContainer(ctx, gwclient.NewContainerRequest{
-		Mounts:  mounts,
-		NetMode: pb.NetMode_HOST,
-		ExtraHosts: []*pb.HostIP{
-			{
-				Host: attr.PrivateGomoduleHost,
-				IP:   attr.GitRemoteAddr,
-			},
-		},
+		Mounts:     mounts,
+		ExtraHosts: o.extraHosts,
 	})
 	if err != nil {
-		t.Fatalf("could not create ssh server container: %s", err)
+		t.Fatalf("could not create container: %s", err)
 	}
 
 	return cont
@@ -240,52 +243,64 @@ func (ts *TestState) customScript(s Script) llb.StateOption {
 }
 
 // startSSHServer starts an sshd instance in a container hosting the git repo.
-// It runs asynchronously and checks the connection after starting the server.
-func (ts *TestState) StartSSHServer(gitHost llb.State) <-chan error {
+// It runs asynchronously and returns the container's IP and an error channel.
+func (ts *TestState) StartSSHServer(gitHost llb.State) ServerResult {
 	t := ts.T
 
-	// This script runs an ssh server. Rather than create a new user, we will
-	// permit root login to simplify things. It is running in a container so
-	// this should not be a security issue.
+	// Build the git server binary which includes the getip subcommand
+	httpServerBin := ts.buildHTTPGitServer()
+
+	// This script uses the git_http_server getip subcommand to get the container's IP,
+	// then runs an ssh server. Rather than create a new user, we will permit root login
+	// to simplify things. It is running in a container so this should not be a security issue.
 	serverScript := Script{
 		Basename: "start_ssh_server.sh",
 		Template: `
             #!/usr/bin/env sh
-            set -ex
-            ssh-keygen -A
-            exec /usr/sbin/sshd -o PermitRootLogin=yes -p {{ .SSHPort }} -D
-        `,
-	}
+            set -e
 
-	// This script attempts to connect to the ssh server. The `nc -z` flag
-	// discconnects and exits with status 0 if a successful connection is made.
-	// `nc -w5` gives up and exits with status 1 after a 5-second timeout.
-	waitScript := Script{
-		Basename: "wait_for_ssh.sh",
-		Template: `
-            #!/usr/bin/env sh
-            while ! nc -zw5 "{{ .PrivateGomoduleHost }}" "{{ .SSHPort }}"; do
+            IP=$({{ .HTTPServerPath }} getip)
+            PORT="{{ .SSHPort }}"
+
+            # Generate host keys (redirect to stderr to keep stdout clean for JSON)
+            ssh-keygen -A >&2
+
+            # Start sshd in the background
+            /usr/sbin/sshd -o PermitRootLogin=yes -p "$PORT" -D &
+            SERVER_PID=$!
+
+            # Wait for server to be ready
+            while ! nc -zw5 127.0.0.1 "$PORT" 2>/dev/null; do
+                # Check if server is still running
+                if ! kill -0 $SERVER_PID 2>/dev/null; then
+                    echo '{"type":"error","error":{"message":"sshd exited unexpectedly"}}'
+                    exit 1
+                fi
                 sleep 0.1
             done
-`,
+
+            # Output ready event as JSON
+            printf '{"type":"ready","ready":{"ip":"%s","port":"%s"}}\n' "$IP" "$PORT"
+
+            # Wait for server process
+            wait $SERVER_PID
+        `,
 	}
 
 	gitHost = gitHost.
 		With(ts.customScript(serverScript)).
-		With(ts.customScript(waitScript))
+		File(llb.Copy(httpServerBin, "/", ts.Attr.HTTPServerDir()))
 
-	cont := ts.newContainer(gitHost)
+	cont := ts.newContainer(gitHost, nil)
 	env := ts.getStateEnv(gitHost)
-	errChan := ts.runContainer(cont, env, serverScript)
+	proc := ts.runContainerWithEvents(cont, env, serverScript)
 
 	t.Log("waiting for ssh server to come online")
+	ready := ts.waitForReady(proc, waitOnlineTimeout)
 
-	timeout := waitOnlineTimeout
-	ts.runWaitScript(cont, env, waitScript, timeout)
+	t.Logf("ssh server is online at %s:%s", ready.IP, ready.Port)
 
-	t.Logf("ssh server is online")
-
-	return errChan
+	return ServerResult{IP: ready.IP, Port: ready.Port, ErrChan: proc.ErrChan()}
 }
 
 var (
@@ -301,84 +316,128 @@ func (b *bufCloser) Close() error {
 	return nil
 }
 
-func (ts *TestState) startContainer(cont gwclient.Container, env []string, s Script) (gwclient.ContainerProcess, bufCloser, bufCloser) {
-	var (
-		t   = ts.T
-		ctx = ts.Ctx
-	)
-	stdout := bufCloser{bytes.NewBuffer(nil)}
-	stderr := bufCloser{bytes.NewBuffer(nil)}
-
-	cp, err := cont.Start(ctx, gwclient.StartRequest{
-		Env:    env,
-		Stdout: &stdout,
-		Stderr: &stderr,
-		Args:   []string{s.absPath()},
-	})
-	if err != nil {
-		t.Fatalf("could not start server: %s\nstdout:\n%s\n===\nstderr:\n%s\n", err, stdout.String(), stderr.String())
-	}
-
-	return cp, stdout, stderr
+// containerProcess wraps a running container and provides an iterator over JSON events from stdout.
+type containerProcess struct {
+	t       *testing.T
+	decoder *json.Decoder
+	pr      *io.PipeReader
+	errChan <-chan error
 }
 
-// Return a new TestState with the context set to a context with a deadline.
-func (ts *TestState) withTimeout(timeout time.Duration) (*TestState, func()) {
-	if ts == nil {
-		return ts, func() {}
-	}
-
-	ts2 := *ts
-
-	var cancel func()
-	ts2.Ctx, cancel = context.WithTimeout(ts2.Ctx, timeout)
-
-	return &ts2, cancel
-}
-
-// `runWaitScript` runs a script checking on the just-started server (http or ssh).
-func (ts *TestState) runWaitScript(cont gwclient.Container, env []string, s Script, timeout time.Duration) {
-	ts2, cancel := ts.withTimeout(timeout)
-	defer cancel()
-
-	untilConnected, stdout, stderr := ts2.startContainer(cont, env, s)
-
-	if err := untilConnected.Wait(); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			ts2.T.Fatalf("Could not start server, timed out: %s", err)
+// Events returns an iterator over server events from the container's stdout.
+// It yields (event, nil) on success or (zero, err) on decode error.
+func (cp *containerProcess) Events() iter.Seq2[ServerEvent, error] {
+	return func(yield func(ServerEvent, error) bool) {
+		for {
+			var event ServerEvent
+			err := cp.decoder.Decode(&event)
+			if err != nil {
+				if err != io.EOF {
+					yield(ServerEvent{}, err)
+				}
+				return
+			}
+			if !yield(event, nil) {
+				return
+			}
 		}
-
-		ts2.T.Fatalf("could not check progress of server, container command failed: %s\nstdout:\n%s\n=====\nstderr:\n%s\n", err, stdout.String(), stderr.String())
 	}
 }
 
-// runContainer runs a container in the background and sends errors to the returned channel
-func (ts *TestState) runContainer(cont gwclient.Container, env []string, s Script) <-chan error {
-	ctx := ts.Ctx
+// ErrChan returns a channel that receives container process errors.
+func (cp *containerProcess) ErrChan() <-chan error {
+	return cp.errChan
+}
 
-	stdout := bufCloser{bytes.NewBuffer(nil)}
+// runContainerWithEvents runs a container and returns a containerProcess for reading events.
+func (ts *TestState) runContainerWithEvents(cont gwclient.Container, env []string, s Script) *containerProcess {
+	return ts.runContainerWithEventsDirect(cont, env, []string{s.absPath()})
+}
+
+// runContainerWithEventsDirect runs a container with the given args and returns a containerProcess.
+func (ts *TestState) runContainerWithEventsDirect(cont gwclient.Container, env []string, args []string) *containerProcess {
+	var (
+		ctx = ts.Ctx
+		t   = ts.T
+	)
+
+	pr, pw := io.Pipe()
 	stderr := bufCloser{bytes.NewBuffer(nil)}
 
-	ts.T.Log("listening")
+	t.Log("starting container")
 	cp, err := cont.Start(ctx, gwclient.StartRequest{
-		Args:   []string{s.absPath()},
+		Args:   args,
 		Env:    env,
-		Stdout: &stdout,
+		Stdout: pw,
 		Stderr: &stderr,
 	})
 	if err != nil {
-		ts.T.Fatal(errors.Join(errContainerNoStart, err))
+		t.Fatal(errors.Join(errContainerNoStart, err))
 	}
 
-	// Log but do not fail, since you cannot fail from within a goroutine
-	ec := make(chan error)
+	ec := make(chan error, 1)
+
+	// Wait for container to exit
 	go func() {
-		if err := cp.Wait(); err != nil {
-			ec <- errors.Join(errContainerFailed, err, fmt.Errorf("stdout:\n%s\n=====\nstderr:\n%s", stdout.String(), stderr.String()))
+		err := cp.Wait()
+		if err != nil {
+			err = errors.Join(errContainerFailed, err, fmt.Errorf("stderr:\n%s", stderr.String()))
+			ec <- err
+			pw.CloseWithError(err)
+		} else {
+			pw.Close()
 		}
 	}()
 
-	return ec
+	return &containerProcess{
+		t:       t,
+		decoder: json.NewDecoder(pr),
+		pr:      pr,
+		errChan: ec,
+	}
+}
+
+// waitForReady waits for a Ready event from the container process.
+func (ts *TestState) waitForReady(proc *containerProcess, timeout time.Duration) *ReadyEvent {
+	t := ts.T
+	ctx, cancel := context.WithTimeout(ts.Ctx, timeout)
+	defer cancel()
+
+	// Close the pipe on timeout to unblock the decoder
+	go func() {
+		<-ctx.Done()
+		proc.pr.Close()
+	}()
+
+	for event, err := range proc.Events() {
+		if err != nil {
+			if ctx.Err() != nil {
+				t.Fatalf("timeout waiting for server ready event")
+			}
+			t.Fatalf("error reading event: %v", err)
+		}
+		switch event.Type {
+		case EventTypeReady:
+			if event.Ready == nil {
+				t.Fatal("received ready event with nil data")
+			}
+			return event.Ready
+		case EventTypeError:
+			if event.Error != nil {
+				t.Fatalf("server error: %s", event.Error.Message)
+			}
+		case EventTypeLog:
+			if event.Log != nil {
+				t.Logf("server: %s", event.Log.Message)
+			}
+		}
+	}
+
+	if ctx.Err() != nil {
+		t.Fatalf("timeout waiting for server ready event")
+	}
+	t.Fatal("event stream closed before receiving ready event")
+	return nil
 }
 
 // Returns the list of env vars from an llb.State
