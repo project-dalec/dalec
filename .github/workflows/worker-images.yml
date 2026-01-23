@@ -107,7 +107,8 @@ jobs:
 
           echo "EXTRA_FLAGS=${EXTRA_FLAGS}" >> $GITHUB_ENV
 
-          # Format repository name (lowercase) for registry mirror
+          # Format repository name (lowercase)  for registry mirror
+          # Temporary change
           docker run -d --net=host --restart=always -p 5000:5000 registry:2
       - if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
         name: Setup (tagged)
