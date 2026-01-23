@@ -498,7 +498,7 @@ type BazelCache struct {
 	// This is useful to differentiate between different build contexts if required.
 	//
 	// This is mainly intended for internal testing purposes.
-	Scope string `json:"scope,omitempty" yaml:"scope,omitepty"`
+	Scope string `json:"scope,omitempty" yaml:"scope,omitempty"`
 }
 
 func (c *BazelCache) validate() error {
