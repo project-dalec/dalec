@@ -2,8 +2,6 @@ package gitservices
 
 import (
 	"path/filepath"
-
-	"github.com/moby/buildkit/identity"
 )
 
 // Attributes are the basic pieces of information needed to host two git
@@ -52,17 +50,6 @@ func (a *Attributes) PrivateGoModuleGitTag() string {
 		panic("PrivateGoModuleGitTag() called with empty tag")
 	}
 	return a.tag
-}
-
-func (a *Attributes) WithNewPrivateGoModuleGitTag() *Attributes {
-	if a == nil {
-		return &Attributes{tag: identity.NewID()}
-	}
-
-	b := *a
-	b.tag = identity.NewID()
-
-	return &b
 }
 
 func (a *Attributes) RepoAbsDir() string {

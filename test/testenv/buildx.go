@@ -313,13 +313,6 @@ func WithHostNetworking(trc *TestRunnerConfig) {
 	})
 }
 
-// This function just puts the opts before the function argument, which makes
-// it harder to miss what's happening with the opts for those unfamiliar with
-// the pattern.
-func (b *BuildxEnv) RunTestOptsFirst(ctx context.Context, t *testing.T, opts []TestRunnerOpt, f TestFunc) {
-	b.RunTest(ctx, t, f, opts...)
-}
-
 func WithSocketProxies(proxies ...socketprovider.ProxyConfig) TestRunnerOpt {
 	return func(cfg *TestRunnerConfig) {
 		cfg.SocketProxies = append(cfg.SocketProxies, proxies...)

@@ -17,7 +17,6 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/test/cmd/git_repo/passwd"
 	gitservices "github.com/project-dalec/dalec/test/git_services"
 	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/crypto/ssh"
@@ -102,31 +101,19 @@ go {{ .ModFileGoVersion }}
 
 	t.Run("HTTP", func(t *testing.T) {
 		t.Parallel()
-		testEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
-			// This gives buildkit access to a secret with the name
-			// `secretName` and the value `passwd.Password`. On the worker that
-			// fetches the gomod dependencies, a file will be mounted at the
-			// location `/run/secrets/super-secret` with the contents
-			// `passwd.Password`.
-			testenv.WithSecrets(secretName, passwd.Password),
-		}, func(ctx context.Context, client gwclient.Client) {
-			// This MUST be called at the  start of each test. Because we
-			// persist the go mod cache between runs, the git tag of the
-			// private go module needs to be unique. Within a single run of the
-			// tests, the http and ssh tests cannot have the same tag or we
-			// risk a false positive due to caching.
-			attr := attr.WithNewPrivateGoModuleGitTag()
+		ctx := startTestSpan(baseCtx, t)
 
-			testState := gitservices.NewTestState(ctx, t, client, attr)
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			testState := gitservices.NewTestState(t, client, &attr)
 
 			worker, _, gitHost := initStates(&testState)
 			httpGitHost := gitHost.With(testState.UpdatedGitconfig())
-			httpServer := testState.StartHTTPGitServer(httpGitHost)
+			httpServer := testState.StartHTTPGitServer(ctx, httpGitHost)
 
 			// Generate a basic spec file with the *depending* go module's
 			// go.mod file inlined, and the name of the secret corresponding to
 			// the password required to authenticate to the git repository.
-			spec := testState.GenerateSpec(depModfileContents(t, attr), dalec.GomodGitAuth{
+			spec := testState.GenerateSpec(depModfileContents(t, &attr), dalec.GomodGitAuth{
 				Token: secretName,
 			})
 
@@ -155,9 +142,10 @@ go {{ .ModFileGoVersion }}
 				res = r
 			}
 
-			filename := calculateFilename(ctx, t, attr, res)
+			filename := calculateFilename(ctx, t, &attr, res)
 			checkFile(ctx, t, filename, res, []byte("bar\n"))
-		})
+		},
+			testenv.WithSecrets(secretName, "password"))
 	})
 
 	t.Run("SSH", func(t *testing.T) {
@@ -172,19 +160,8 @@ go {{ .ModFileGoVersion }}
 		pubkey, privkey := generateKeyPair(t)
 		agentErrChan := startSSHAgent(t, privkey, sockaddr)
 
-		testEnv.RunTestOptsFirst(ctx, t, []testenv.TestRunnerOpt{
-			// This tells buildkit to forward the SSH Agent socket, giving the
-			// gomod generator worker access to the private key
-			testenv.WithSSHSocket(sshID, sockaddr),
-		}, func(ctx context.Context, client gwclient.Client) {
-			// This MUST be called at the  start of each test. Because we
-			// persist the go mod cache between runs, the git tag of the
-			// private go module needs to be unique. Within a single run of the
-			// tests, the http and ssh tests cannot have the same tag or we
-			// risk a false positive due to caching.
-			attr := attr.WithNewPrivateGoModuleGitTag()
-
-			testState := gitservices.NewTestState(ctx, t, client, attr)
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			testState := gitservices.NewTestState(t, client, &attr)
 
 			_, repo, gitHost := initStates(&testState)
 			sshGitHost := gitHost.
@@ -200,9 +177,9 @@ go {{ .ModFileGoVersion }}
 				With(bareRepo(repo, attr.RepoAbsDir()))
 
 			const githostUsername = "root"
-			sshServer := testState.StartSSHServer(sshGitHost)
+			sshServer := testState.StartSSHServer(ctx, sshGitHost)
 
-			spec := testState.GenerateSpec(depModfileContents(t, attr), dalec.GomodGitAuth{
+			spec := testState.GenerateSpec(depModfileContents(t, &attr), dalec.GomodGitAuth{
 				SSH: &dalec.GomodGitAuthSSH{
 					ID:       sshID,
 					Username: githostUsername,
@@ -232,9 +209,11 @@ go {{ .ModFileGoVersion }}
 				res = r
 			}
 
-			filename := calculateFilename(ctx, t, attr, res)
+			filename := calculateFilename(ctx, t, &attr, res)
 			checkFile(ctx, t, filename, res, []byte("bar\n"))
-		})
+		},
+			testenv.WithSSHSocket(sshID, sockaddr),
+		)
 	})
 }
 

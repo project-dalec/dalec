@@ -10,9 +10,10 @@ import (
 
 	githttp "github.com/AaronO/go-git-http"
 	"github.com/AaronO/go-git-http/auth"
-	"github.com/project-dalec/dalec/test/cmd/git_repo/passwd"
 	gitservices "github.com/project-dalec/dalec/test/git_services"
 )
+
+const passwd = "password"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -52,7 +53,7 @@ func runServe() error {
 			return false, nil
 		}
 
-		if ai.Username == "x-access-token" && ai.Password == passwd.Password {
+		if ai.Username == "x-access-token" && ai.Password == passwd {
 			return true, nil
 		}
 
