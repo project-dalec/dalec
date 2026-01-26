@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/packaging/linux/rpm"
 )
@@ -40,6 +41,8 @@ type dnfInstallConfig struct {
 
 	// When true, don't omit docs from the installed RPMs.
 	includeDocs bool
+
+	forceArch string
 }
 
 type DnfInstallOpt func(*dnfInstallConfig)
@@ -61,6 +64,12 @@ func DnfAtRoot(root string) DnfInstallOpt {
 	return func(cfg *dnfInstallConfig) {
 		cfg.root = root
 	}
+}
+
+func DnfForceArch(arch string) DnfInstallOpt {
+        return func(cfg *dnfInstallConfig) {
+                cfg.forceArch = arch
+        }
 }
 
 func DnfDownloadAllDeps(dest string) DnfInstallOpt {
@@ -149,17 +158,30 @@ func dnfCommand(cfg *dnfInstallConfig, releaseVer string, exe string, dnfSubCmd 
 	}
 	installFlags := dnfInstallFlags(cfg)
 	installFlags += " -y --setopt varsdir=/etc/dnf/vars --releasever=" + releaseVer + " "
+	installRoot := cfg.root
+	forceArch := cfg.forceArch
 	installScriptDt := `#!/usr/bin/env bash
 set -eux -o pipefail
 
 import_keys_path="` + importKeysPath + `"
 cmd="` + exe + `"
 install_flags="` + installFlags + `"
+force_arch="` + forceArch + `"
+install_root="` + installRoot + `"
 dnf_sub_cmd="` + strings.Join(dnfSubCmd, " ") + `"
 cache_dir="` + cacheDir + `"
 
 if [ -x "$import_keys_path" ]; then
 	"$import_keys_path"
+fi
+
+if [ -n "$force_arch" ]; then
+	if $cmd --help 2>/dev/null | grep -q 'forcearch'; then
+                install_flags="$install_flags --forcearch=$force_arch"
+        else
+                echo "$cmd does not support --forcearch; cannot cross-install for arch=$force_arch" >&2
+                exit 70
+        fi
 fi
 
 $cmd $dnf_sub_cmd $install_flags "${@}"
@@ -194,6 +216,35 @@ $cmd $dnf_sub_cmd $install_flags "${@}"
 	runOpts = append(runOpts, cfg.mounts...)
 
 	return dalec.WithRunOptions(runOpts...)
+}
+
+
+func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch string, buildPlat ocispecs.Platform) llb.RunOption {
+        return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
+                // Ensure the package manager runs on the build/executor platform (native),
+                // while installing into the mounted target rootfs via --installroot.
+                bp := buildPlat
+                ei.Constraints.Platform = &bp
+
+                installOpts := []DnfInstallOpt{
+                        DnfAtRoot(rootfsPath),
+                        DnfForceArch(targetArch),
+                        dnfInstallWithConstraints([]llb.ConstraintsOpt{dalec.WithConstraint(&ei.Constraints)}),
+                }
+
+                var installCfg dnfInstallConfig
+                dnfInstallOptions(&installCfg, installOpts)
+
+                cacheKey := cfg.CacheName
+                if cfg.CacheAddPlatform {
+                        cacheKey += "-" + targetArch
+                }
+
+               dalec.WithRunOptions(
+                        cfg.InstallFunc(&installCfg, cfg.ReleaseVer, pkgs),
+                        llb.AddMount(filepath.Join(rootfsPath, cfg.CacheDir), llb.Scratch(), llb.AsPersistentCacheDir(cacheKey, llb.CacheMountLocked)),
+                ).SetRunOption(ei)
+        })
 }
 
 func DnfInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {

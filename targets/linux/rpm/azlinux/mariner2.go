@@ -19,6 +19,7 @@ var Mariner2Config = &distro.Config{
 
 	CacheName: tdnfCacheNameMariner2,
 	CacheDir:  "/var/cache/tdnf",
+	CacheAddPlatform: true,
 
 	ReleaseVer:         "2.0",
 	BuilderPackages:    builderPackages,

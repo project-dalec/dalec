@@ -21,6 +21,7 @@ var ConfigV9 = &distro.Config{
 
 	CacheName: dnfCacheNameV9,
 	CacheDir:  "/var/cache/dnf",
+	CacheAddPlatform: true,
 
 	ReleaseVer:         "9",
 	BuilderPackages:    append(builderPackages, "systemd-rpm-macros"),
