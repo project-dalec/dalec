@@ -95,7 +95,7 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 			s.Patches[sourceName] = append(s.Patches[sourceName], PatchSpec{
 				Source: patchSourceName,
 				// Path is empty - the entire source is the patch file
-				Strip:  &strip,
+				Strip: &strip,
 			})
 		}
 	}
@@ -242,9 +242,9 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 	}
 
 	const (
-		workDir      = "/work/src"
-		origWorkDir  = "/work/src-orig" // Read-only mount of original state for diffing
-		proxyPath    = "/go/pkg/mod"    // Standard Go module cache path
+		workDir     = "/work/src"
+		origWorkDir = "/work/src-orig" // Read-only mount of original state for diffing
+		proxyPath   = "/go/pkg/mod"    // Standard Go module cache path
 	)
 
 	// Create a temporary directory for patch generation
