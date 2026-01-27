@@ -6,5 +6,5 @@ import (
 )
 
 func main() {
-	singlechecker.Main(linters.YamlJSONTagsMatch)
+	singlechecker.Main(linters.NewYamlJSONTagsAnalyzer())
 }
