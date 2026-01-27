@@ -256,7 +256,8 @@ jobs:
           echo
 
           echo "================ CLEANUP COMPLETE ================"
-
+      - name: Use azure ubuntu archive
+        uses: ./.github/actions/dns-spoof-ubuntu-archive
       - name: Pre-build base images
         run: |
           set -eu
@@ -383,6 +384,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/format-repo
         id: format-repo
+      - name: Use azure ubuntu archive
+        uses: ./.github/actions/dns-spoof-ubuntu-archive
       - name: Setup builder
         run: |
           # Sometimes the builder runs out of space... so cleanup anything we can first.
