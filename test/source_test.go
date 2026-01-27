@@ -599,10 +599,7 @@ index ea874f5..ba38f84 100644
 	// Note: module here should be moduyle+version because this is checking the go module path on disk
 	checkModule := func(ctx context.Context, gwc gwclient.Client, module string, spec *dalec.Spec) {
 		t.Helper()
-		res, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/gomods"), withSpec(ctx, t, spec)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/gomods"), withSpec(ctx, t, spec)))
 
 		ref, err := res.SingleRef()
 		if err != nil {
@@ -714,15 +711,18 @@ index ea874f5..ba38f84 100644
 					go.sum
 					main.go
 		*/
-		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644)).
-			File(llb.Mkdir("/dir/module1", 0644)).
-			File(llb.Mkfile("/dir/module1/go.mod", 0644, []byte(alternativeGomodFixtureMod))).
-			File(llb.Mkfile("/dir/module1/go.sum", 0644, []byte(alternativeGomodFixtureSum))).
-			File(llb.Mkfile("/dir/module1/main.go", 0644, []byte(alternativeGomodFixtureMain))).
-			File(llb.Mkdir("/dir/module2", 0644)).
-			File(llb.Mkfile("/dir/module2/go.mod", 0644, []byte(gomodFixtureMod))).
-			File(llb.Mkfile("/dir/module2/go.sum", 0644, []byte(gomodFixtureSum))).
-			File(llb.Mkfile("/dir/module2/main.go", 0644, []byte(gomodFixtureMain)))
+
+		pg := dalec.ProgressGroup("test-multi-module-gomod")
+
+		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644), pg).
+			File(llb.Mkdir("/dir/module1", 0644), pg).
+			File(llb.Mkfile("/dir/module1/go.mod", 0644, []byte(alternativeGomodFixtureMod)), pg).
+			File(llb.Mkfile("/dir/module1/go.sum", 0644, []byte(alternativeGomodFixtureSum)), pg).
+			File(llb.Mkfile("/dir/module1/main.go", 0644, []byte(alternativeGomodFixtureMain)), pg).
+			File(llb.Mkdir("/dir/module2", 0644), pg).
+			File(llb.Mkfile("/dir/module2/go.mod", 0644, []byte(gomodFixtureMod)), pg).
+			File(llb.Mkfile("/dir/module2/go.sum", 0644, []byte(gomodFixtureSum)), pg).
+			File(llb.Mkfile("/dir/module2/main.go", 0644, []byte(gomodFixtureMain)), pg)
 
 		const contextName = "multi-module"
 		spec := &dalec.Spec{
@@ -760,7 +760,6 @@ index ea874f5..ba38f84 100644
 				stat, err := ref.StatFile(ctx, gwclient.StatRequest{
 					Path: dep,
 				})
-
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -871,10 +870,7 @@ func TestSourceWithCargohome(t *testing.T) {
 	// Helper function to check if a specific Cargo registry directory exists
 	checkCargoRegistry := func(ctx context.Context, gwc gwclient.Client, registryPath string, spec *dalec.Spec) {
 		t.Helper()
-		res, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/cargohome"), withSpec(ctx, t, spec)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/cargohome"), withSpec(ctx, t, spec)))
 
 		ref, err := res.SingleRef()
 		if err != nil {
@@ -976,16 +972,18 @@ func TestSourceWithCargohome(t *testing.T) {
 	t.Run("multi-module", func(t *testing.T) {
 		t.Parallel()
 
+		pg := dalec.ProgressGroup("test-multi-module-cargo")
+
 		// Create a context with multiple cargo modules
-		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644)).
-			File(llb.Mkdir("/dir/module1", 0644)).
-			File(llb.Mkfile("/dir/module1/Cargo.toml", 0644, []byte(cargoFixtureToml))).
-			File(llb.Mkfile("/dir/module1/Cargo.lock", 0644, []byte(cargoFixtureLock))).
-			File(llb.Mkfile("/dir/module1/main.rs", 0644, []byte(cargoFixtureMain))).
-			File(llb.Mkdir("/dir/module2", 0644)).
-			File(llb.Mkfile("/dir/module2/Cargo.toml", 0644, []byte(cargoFixtureToml))).
-			File(llb.Mkfile("/dir/module2/Cargo.lock", 0644, []byte(cargoFixtureLock))).
-			File(llb.Mkfile("/dir/module2/main.rs", 0644, []byte(cargoFixtureMain)))
+		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644), pg).
+			File(llb.Mkdir("/dir/module1", 0644), pg).
+			File(llb.Mkfile("/dir/module1/Cargo.toml", 0644, []byte(cargoFixtureToml)), pg).
+			File(llb.Mkfile("/dir/module1/Cargo.lock", 0644, []byte(cargoFixtureLock)), pg).
+			File(llb.Mkfile("/dir/module1/main.rs", 0644, []byte(cargoFixtureMain)), pg).
+			File(llb.Mkdir("/dir/module2", 0644), pg).
+			File(llb.Mkfile("/dir/module2/Cargo.toml", 0644, []byte(cargoFixtureToml)), pg).
+			File(llb.Mkfile("/dir/module2/Cargo.lock", 0644, []byte(cargoFixtureLock)), pg).
+			File(llb.Mkfile("/dir/module2/main.rs", 0644, []byte(cargoFixtureMain)), pg)
 
 		const contextName = "multi-cargo-module"
 		spec := &dalec.Spec{
@@ -1013,6 +1011,7 @@ func TestSourceWithCargohome(t *testing.T) {
 
 		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
 			req := newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt), withBuildTarget("debug/cargohome"))
+
 			res := solveT(ctx, t, gwc, req)
 			ref, err := res.SingleRef()
 			if err != nil {
@@ -1036,11 +1035,13 @@ func TestSourceWithCargohome(t *testing.T) {
 func TestSourceContext(t *testing.T) {
 	t.Parallel()
 
+	pg := dalec.ProgressGroup("test-dalec-context-source")
+
 	contextSt := llb.Scratch().
-		File(llb.Mkfile("/base", 0o644, nil)).
-		File(llb.Mkdir("/foo/bar", 0o755, llb.WithParents(true))).
-		File(llb.Mkfile("/foo/file", 0o644, nil)).
-		File(llb.Mkfile("/foo/bar/another", 0o644, nil))
+		File(llb.Mkfile("/base", 0o644, nil), pg).
+		File(llb.Mkdir("/foo/bar", 0o755, llb.WithParents(true)), pg).
+		File(llb.Mkfile("/foo/file", 0o644, nil), pg).
+		File(llb.Mkfile("/foo/bar/another", 0o644, nil), pg)
 
 	spec := &dalec.Spec{
 		Name: "test-dalec-context-source",

@@ -160,7 +160,7 @@ func (d *Config) InstallBuildDeps(ctx context.Context, sOpt dalec.SourceOpts, sp
 			dalec.WithConstraints(opts...),
 			customRepos,
 			InstallLocalPkg(pkg, false, opts...),
-			dalec.WithMountedAptCache(d.AptCachePrefix),
+			dalec.WithMountedAptCache(d.AptCachePrefix, opts...),
 			deps.GetSourceLocation(in),
 		).Root()
 	}
@@ -183,7 +183,7 @@ func (d *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec *
 			dalec.WithConstraints(opts...),
 			AptInstall(dalec.SortMapKeys(deps), opts...),
 			withRepos,
-			dalec.WithMountedAptCache(d.AptCachePrefix),
+			dalec.WithMountedAptCache(d.AptCachePrefix, opts...),
 			deps.GetSourceLocation(in),
 		).Root()
 	}
@@ -231,7 +231,7 @@ done
 		llb.AddMount(scriptPath, scriptFile, llb.SourcePath("download.sh"), llb.Readonly),
 		llb.AddMount("/var/lib/dpkg", llb.Scratch(), llb.Tmpfs()),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
-		dalec.WithMountedAptCache(d.AptCachePrefix),
+		dalec.WithMountedAptCache(d.AptCachePrefix, opts...),
 		dalec.WithConstraints(opts...),
 	).AddMount("/output", llb.Scratch())
 }

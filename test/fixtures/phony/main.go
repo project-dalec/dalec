@@ -10,6 +10,7 @@ import (
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
+	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
@@ -39,7 +40,9 @@ func main() {
 }
 
 func phonyBuild(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	def, err := llb.Scratch().File(llb.Mkfile("hello", 0o644, []byte("phony hello"))).Marshal(ctx)
+	pg := dalec.ProgressGroup("phonyBuild")
+
+	def, err := llb.Scratch().File(llb.Mkfile("hello", 0o644, []byte("phony hello")), pg).Marshal(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +53,9 @@ func phonyBuild(ctx context.Context, client gwclient.Client) (*gwclient.Result, 
 }
 
 func phonyResolve(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	def, err := llb.Scratch().File(llb.Mkfile("resolve", 0o644, []byte("phony resolve"))).Marshal(ctx)
+	pg := dalec.ProgressGroup("phonyResolve")
+
+	def, err := llb.Scratch().File(llb.Mkfile("resolve", 0o644, []byte("phony resolve")), pg).Marshal(ctx)
 	if err != nil {
 		return nil, err
 	}

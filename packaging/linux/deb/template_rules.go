@@ -21,7 +21,7 @@ var (
 	rulesTmpl = template.Must(template.New("rules").Parse(string(rulesTmplContent)))
 )
 
-func Rules(spec *dalec.Spec, in llb.State, dir, target string) (llb.State, error) {
+func Rules(spec *dalec.Spec, in llb.State, dir, target string, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	buf := bytes.NewBuffer(nil)
 
 	if dir == "" {
@@ -33,8 +33,8 @@ func Rules(spec *dalec.Spec, in llb.State, dir, target string) (llb.State, error
 	}
 
 	return in.
-			File(llb.Mkdir(dir, 0o755, llb.WithParents(true))).
-			File(llb.Mkfile(filepath.Join(dir, "rules"), 0o700, buf.Bytes())),
+			File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...).
+			File(llb.Mkfile(filepath.Join(dir, "rules"), 0o700, buf.Bytes()), opts...),
 		nil
 }
 

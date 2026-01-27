@@ -77,9 +77,9 @@ func IncludeDocs(v bool) DnfInstallOpt {
 	}
 }
 
-func dnfInstallWithConstraints(opts []llb.ConstraintsOpt) DnfInstallOpt {
+func DnfInstallWithConstraints(opts []llb.ConstraintsOpt) DnfInstallOpt {
 	return func(cfg *dnfInstallConfig) {
-		cfg.constraints = opts
+		cfg.constraints = append(cfg.constraints, opts...)
 	}
 }
 
@@ -181,7 +181,7 @@ $cmd $dnf_sub_cmd $install_flags "${@}"
 	if len(cfg.keys) > 0 {
 		importScript := importGPGScript(cfg.keys)
 		runOpts = append(runOpts, llb.AddMount(importKeysPath,
-			llb.Scratch().File(llb.Mkfile("/import-keys.sh", 0755, []byte(importScript))),
+			llb.Scratch().File(llb.Mkfile("/import-keys.sh", 0755, []byte(importScript)), cfg.constraints...),
 			llb.Readonly,
 			llb.SourcePath("/import-keys.sh")))
 	}
@@ -209,6 +209,7 @@ func (cfg *Config) InstallBuildDeps(spec *dalec.Spec, sOpt dalec.SourceOpts, tar
 	if len(deps) == 0 {
 		return dalec.NoopStateOption
 	}
+
 	repos := spec.GetBuildRepos(targetKey)
 	return cfg.WithDeps(sOpt, targetKey, spec.Name, deps, repos, opts...)
 }
@@ -218,6 +219,8 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 		if len(deps) == 0 {
 			return in
 		}
+
+		opts = append(opts, dalec.ProgressGroup(fmt.Sprintf("Installing dependencies for %s", pkgName)))
 
 		spec := &dalec.Spec{
 			Name:        fmt.Sprintf("%s-dependencies", pkgName),
@@ -244,6 +247,7 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 			DnfWithMounts(llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS"), llb.Readonly)),
 			DnfWithMounts(repoMounts),
 			DnfImportKeys(keyPaths),
+			DnfInstallWithConstraints(opts),
 		}
 
 		install := cfg.Install([]string{filepath.Join(rpmMountDir, "*/*.rpm")}, installOpts...)
@@ -264,9 +268,13 @@ func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetK
 
 	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
+	installOpts := []DnfInstallOpt{
+		DnfInstallWithConstraints(opts),
+	}
+
 	worker = worker.Run(
 		dalec.WithConstraints(opts...),
-		cfg.Install([]string{"dnf-utils"}),
+		cfg.Install([]string{"dnf-utils"}, installOpts...),
 	).Root()
 
 	args := []string{"--downloaddir", "/output", "download"}
@@ -283,11 +291,10 @@ func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetK
 	installTimeRepos := spec.GetInstallRepos(targetKey)
 	repoMounts, keyPaths := cfg.RepoMounts(installTimeRepos, sOpt, opts...)
 
-	installOpts := []DnfInstallOpt{
+	installOpts = append(installOpts,
 		DnfWithMounts(repoMounts),
 		DnfImportKeys(keyPaths),
-		dnfInstallWithConstraints(opts),
-	}
+	)
 
 	var installCfg dnfInstallConfig
 	dnfInstallOptions(&installCfg, installOpts)

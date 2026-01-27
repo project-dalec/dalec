@@ -82,7 +82,7 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, cred
 		const proxyPath = "/tmp/dalec/gomod-proxy-cache"
 
 		// Pass in git auth if necessary
-		script := g.gitconfigGeneratorScript(gomodDownloadWrapperBasename)
+		script := g.gitconfigGeneratorScript(gomodDownloadWrapperBasename, opts...)
 		scriptPath := filepath.Join(scriptMountpoint, gomodDownloadWrapperBasename)
 
 		for _, path := range paths {
@@ -110,7 +110,7 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, cred
 	}
 }
 
-func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State {
+func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string, opts ...llb.ConstraintsOpt) llb.State {
 	var script bytes.Buffer
 
 	sortedHosts := SortMapKeys(g.Gomod.Auth)
@@ -159,7 +159,7 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 	fmt.Fprintf(&script, "go env -w GOPRIVATE=%s", strings.Join(goPrivate, ","))
 	script.WriteRune('\n')
 	fmt.Fprintln(&script, "[ -f go.mod ]; go mod download")
-	return llb.Scratch().File(llb.Mkfile(scriptPath, 0o755, script.Bytes()))
+	return llb.Scratch().File(llb.Mkfile(scriptPath, 0o755, script.Bytes()), opts...)
 }
 
 func (g *SourceGenerator) withGomodSecretsAndSockets() llb.RunOption {

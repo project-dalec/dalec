@@ -209,24 +209,32 @@ func (ts *TestState) newContainer(rootfs llb.State, extraMounts ...CustomMount) 
 
 	return cont
 }
+
 func (ts *TestState) CustomFile(f File) llb.StateOption {
 	dir := filepath.Dir(f.Location)
+
+	pg := dalec.ProgressGroup("injecting custom file " + f.Location)
 
 	return func(s llb.State) llb.State {
 		return s.File(
 			llb.Mkdir(dir, 0o777, llb.WithParents(true)).
 				Mkfile(f.Location, 0o666, f.Inject(ts.T, &ts.Attr)),
+			pg,
 		)
 	}
 }
+
 func (ts *TestState) customScript(s Script) llb.StateOption {
 	dir := customScriptDir
 	absPath := filepath.Join(dir, s.Basename)
+
+	pg := dalec.ProgressGroup("injecting custom script " + s.Basename)
 
 	return func(worker llb.State) llb.State {
 		return worker.File(
 			llb.Mkdir(dir, 0o755, llb.WithParents(true)).
 				Mkfile(absPath, 0o755, s.Inject(ts.T, &ts.Attr)),
+			pg,
 		)
 	}
 }
@@ -346,10 +354,7 @@ func (ts *TestState) runWaitScript(cont gwclient.Container, env []string, s Scri
 
 // runContainer runs a container in the background and sends errors to the returned channel
 func (ts *TestState) runContainer(cont gwclient.Container, env []string, s Script) <-chan error {
-
-	var (
-		ctx = ts.Ctx
-	)
+	ctx := ts.Ctx
 
 	stdout := bufCloser{bytes.NewBuffer(nil)}
 	stderr := bufCloser{bytes.NewBuffer(nil)}
@@ -361,7 +366,6 @@ func (ts *TestState) runContainer(cont gwclient.Container, env []string, s Scrip
 		Stdout: &stdout,
 		Stderr: &stderr,
 	})
-
 	if err != nil {
 		ts.T.Fatal(errors.Join(errContainerNoStart, err))
 	}
@@ -394,6 +398,7 @@ func (ts *TestState) runScriptOn(worker llb.State, s Script, runopts ...llb.RunO
 	worker = worker.With(ts.customScript(s))
 	o := []llb.RunOption{
 		llb.Args([]string{s.absPath()}),
+		dalec.ProgressGroup("running script " + s.Basename),
 	}
 
 	o = append(o, runopts...)
@@ -460,6 +465,7 @@ func (ts *TestState) UpdatedGitconfig() llb.StateOption {
 		return ts.runScriptOn(st, s).Root()
 	}
 }
+
 func (ts *TestState) stateToRef(st llb.State) gwclient.Reference {
 	t := ts.T
 	ctx := ts.Ctx

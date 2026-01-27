@@ -250,6 +250,8 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 		return nil, err
 	}
 
+	opts = append(opts, ProgressGroup("Generate gomod patch for source: "+sourceName))
+
 	// Create a state with the script file
 	scriptState := llb.Scratch().File(
 		llb.Mkfile("/gomod-patch.sh", 0755, []byte(gomodPatchScript)),
@@ -269,7 +271,6 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 		llb.AddEnv("TMP_GOMODCACHE", proxyPath),
 		llb.AddEnv("GIT_SSH_COMMAND", "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"),
 		WithConstraints(opts...),
-		ProgressGroup("Generate gomod patch for source: " + sourceName),
 	}
 
 	// Add environment variables from the script
