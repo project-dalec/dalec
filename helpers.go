@@ -69,16 +69,14 @@ func (f runOptionFunc) SetRunOption(i *llb.ExecInfo) {
 // WithMountedAptCache gives an [llb.RunOption] that mounts the apt cache directories.
 // It uses the given namePrefix as the prefix for the cache keys.
 // namePrefix should be distinct per distro version.
-func WithMountedAptCache(namePrefix string) llb.RunOption {
+func WithMountedAptCache(namePrefix string, opts ...llb.ConstraintsOpt) llb.RunOption {
 	return runOptionFunc(func(ei *llb.ExecInfo) {
 		// This is in the "official" docker image for ubuntu/debian.
 		// This file prevents us from actually caching anything.
 		// To resolve that we delete the file.
 		ei.State = ei.State.File(
 			llb.Rm("/etc/apt/apt.conf.d/docker-clean", llb.WithAllowNotFound(true)),
-			ConstraintsOptFunc(func(c *llb.Constraints) {
-				*c = ei.Constraints
-			}),
+			opts...,
 		)
 
 		llb.AddMount(
@@ -324,7 +322,7 @@ func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.Constr
 		}
 
 		const name = "tmp.dalec.symlink.sh"
-		script := llb.Scratch().File(llb.Mkfile(name, 0o700, buf.Bytes()))
+		script := llb.Scratch().File(llb.Mkfile(name, 0o700, buf.Bytes()), opts...)
 
 		return worker.Run(
 			ShArgs("/tmp/add_symlink.sh"),

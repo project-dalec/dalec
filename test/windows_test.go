@@ -68,17 +68,23 @@ func TestWindows(t *testing.T) {
 				repoFile := []byte(`
 deb [trusted=yes] copy:` + repoPath + `/ /
 `)
+
+				pg := dalec.ProgressGroup("create custom repo")
+
 				withRepo := in.Run(
 					dalec.ShArgs("apt-get update && apt-get install -y apt-utils gnupg2"),
-					dalec.WithMountedAptCache(ubuntu.JammyAptCachePrefix),
-				).File(llb.Copy(pkg, "/", repoPath, dalec.WithCreateDestPath())).
+					dalec.WithMountedAptCache(ubuntu.JammyAptCachePrefix, pg),
+					pg,
+				).File(llb.Copy(pkg, "/", repoPath, dalec.WithCreateDestPath()), pg).
 					Run(
 						llb.Dir(repoPath),
 						dalec.ShArgs("apt-ftparchive packages . > Packages"),
+						pg,
 					).
 					Run(
 						llb.Dir(repoPath),
 						dalec.ShArgs("apt-ftparchive release . > Release"),
+						pg,
 					).Root()
 
 				for _, opt := range opts {
@@ -86,8 +92,7 @@ deb [trusted=yes] copy:` + repoPath + `/ /
 				}
 
 				return withRepo.
-					File(llb.Mkfile("/etc/apt/sources.list.d/test-dalec-local-repo.list", 0o644, repoFile))
-
+					File(llb.Mkfile("/etc/apt/sources.list.d/test-dalec-local-repo.list", 0o644, repoFile), pg)
 			}
 		},
 	}
@@ -395,7 +400,6 @@ echo "$BAR" > bar.txt
 				if err := validatePathAndPermissions(ctx, ref, "/Windows/System32/src-change", 0o644); err != nil {
 					t.Fatal(err)
 				}
-
 			})
 		})
 
@@ -691,9 +695,11 @@ func prepareWindowsSigningState(ctx context.Context, t *testing.T, gwc gwclient.
 	srOpts := []srOpt{withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"), withWindowsAmd64}
 	srOpts = append(srOpts, extraSrOpts...)
 
+	pg := dalec.ProgressGroup("prepare signing state")
+
 	sr := newSolveRequest(srOpts...)
 	st := reqToState(ctx, gwc, sr, t)
-	st = zipper.Run(llb.Args([]string{"bash", "-c", `for f in ./*.zip; do unzip "$f"; done`}), llb.Dir("/tmp/mnt")).
+	st = zipper.Run(llb.Args([]string{"bash", "-c", `for f in ./*.zip; do unzip "$f"; done`}), llb.Dir("/tmp/mnt"), pg).
 		AddMount("/tmp/mnt", st)
 	return st
 }

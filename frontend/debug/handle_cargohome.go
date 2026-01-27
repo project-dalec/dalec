@@ -25,15 +25,17 @@ func Cargohome(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 			return nil, nil, err
 		}
 
+		pg := dalec.ProgressGroup("cargohome-deps")
+
 		// Allow the client to override the worker image
 		// This is useful for keeping pre-built worker images, especially for CI.
 		worker, ok := inputs[keyCargohomeWorker]
 		if !ok {
-			worker = llb.Image("rust:latest", llb.WithMetaResolver(client)).
-				Run(llb.Shlex("cargo --version")).Root()
+			worker = llb.Image("rust:latest", llb.WithMetaResolver(client), pg).
+				Run(llb.Shlex("cargo --version"), pg).Root()
 		}
 
-		st := spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform))
+		st := spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform), pg)
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

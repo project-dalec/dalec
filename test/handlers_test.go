@@ -55,7 +55,8 @@ func TestHandlerTargetForwarding(t *testing.T) {
 							Image: phonyRef,
 						},
 					},
-				}}
+				},
+			}
 
 			// Make sure phony is in the list of targets since it should be registered in the forwarded frontend.
 			ls = listTargets(ctx, t, gwc, spec)
@@ -75,7 +76,8 @@ func TestHandlerTargetForwarding(t *testing.T) {
 							Image: phonyRef,
 						},
 					},
-				}}
+				},
+			}
 
 			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("phony/check"))
 			res := solveT(ctx, t, gwc, sr)
@@ -158,15 +160,13 @@ func TestHandlerSubrequestResolve(t *testing.T) {
 					cfg.req.FrontendOpt["platform"] = strings.Join(pls, ",")
 				})
 
-				res, err := gwc.Solve(ctx, req)
-				assert.NilError(t, err)
+				res := solveT(ctx, t, gwc, req)
 
 				dt, ok := res.Metadata["result.txt"]
 				assert.Assert(t, ok)
 
 				var ls []dalec.Spec
-				err = yaml.Unmarshal(dt, &ls)
-				assert.NilError(t, err)
+				assert.NilError(t, yaml.Unmarshal(dt, &ls))
 
 				var checkPlatforms []ocispecs.Platform
 

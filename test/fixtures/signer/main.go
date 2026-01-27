@@ -16,6 +16,7 @@ import (
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
@@ -90,10 +91,12 @@ func main() {
 			return nil, errors.Wrap(err, "error marshalling file manifest")
 		}
 
+		pg := dalec.ProgressGroup("Signing Artifacts")
+
 		output := llb.Scratch().
-			File(llb.Mkfile("/target", 0o600, []byte(target))).
-			File(llb.Mkfile("/config.json", 0o600, configBytes)).
-			File(llb.Mkfile("/manifest.json", 0o600, mfst))
+			File(llb.Mkfile("/target", 0o600, []byte(target)), pg).
+			File(llb.Mkfile("/config.json", 0o600, configBytes), pg).
+			File(llb.Mkfile("/manifest.json", 0o600, mfst), pg)
 
 		// For any build-arg seen, write a file to /env/<KEY> with the contents
 		// being the value of the arg.
@@ -104,8 +107,8 @@ func main() {
 				continue
 			}
 			output = output.
-				File(llb.Mkdir("/env", 0o755)).
-				File(llb.Mkfile("/env/"+key, 0o600, []byte(v)))
+				File(llb.Mkdir("/env", 0o755), pg).
+				File(llb.Mkfile("/env/"+key, 0o600, []byte(v)), pg)
 		}
 
 		def, err := output.Marshal(ctx)
