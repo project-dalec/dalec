@@ -241,9 +241,9 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 	}
 
 	const (
-		workDir      = "/work/src"
-		origWorkDir  = "/work/src-orig" // Read-only mount of original state for diffing
-		proxyPath    = "/go/pkg/mod"    // Standard Go module cache path
+		workDir     = "/work/src"
+		origWorkDir = "/work/src-orig" // Read-only mount of original state for diffing
+		proxyPath   = "/go/pkg/mod"    // Standard Go module cache path
 	)
 
 	// Create a temporary directory for patch generation
