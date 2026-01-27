@@ -469,21 +469,26 @@ func resultToState(t *testing.T, res *gwclient.Result) llb.State {
 		return llb.Scratch()
 	}
 
+	if err := ref.Evaluate(context.TODO()); err != nil {
+		t.Fatalf("Unexpected error evaluating ref: %v", err)
+	}
+
 	st, err := ref.ToState()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Unexpected error converting found ref to state: %v", err)
 	}
 
 	dt, ok := res.Metadata[exptypes.ExporterPlatformsKey]
-	if ok {
-		var pls exptypes.Platforms
-		if err := json.Unmarshal(dt, &pls); err != nil {
-			t.Fatal(err)
-		}
-		st = st.Platform(pls.Platforms[0].Platform)
+	if !ok {
+		return st
 	}
 
-	return st
+	var pls exptypes.Platforms
+	if err := json.Unmarshal(dt, &pls); err != nil {
+		t.Fatalf("Unexpected error unmarshaling platform: %v", err)
+	}
+
+	return st.Platform(pls.Platforms[0].Platform)
 }
 
 func readDefaultPlatform(ctx context.Context, t *testing.T, gwc gwclient.Client) ocispecs.Platform {
