@@ -24,7 +24,10 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 		baseImg = bi.ToState(sOpt, opts...)
 	}
 
+	// Those base repos come from distro configuration.
 	repos := dalec.GetExtraRepos(c.ExtraRepos, "install")
+
+	// These are user specified via spec.
 	repos = append(repos, spec.GetInstallRepos(targetKey)...)
 
 	withRepos := c.RepoMounts(repos, sOpt, opts...)
@@ -57,8 +60,6 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 		opts := append(opts, dalec.ProgressGroup("Install base image packages"))
 		baseImg = baseImg.Run(
 			dalec.WithConstraints(opts...),
-			llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
-			dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
 			InstallLocalPkg(basePkg, true, opts...),
 			dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
 		).Root()
@@ -69,7 +70,6 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 	return baseImg.Run(
 		dalec.WithConstraints(opts...),
 		withRepos,
-		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
 		// This file makes dpkg give more verbose output which can be useful when things go awry.
 		llb.AddMount("/etc/dpkg/dpkg.cfg.d/99-dalec-debug", debug, llb.SourcePath("debug"), llb.Readonly),
