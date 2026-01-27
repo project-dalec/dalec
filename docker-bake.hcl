@@ -34,7 +34,7 @@ target "frontend" {
 target "lint" {
     context = "."
     dockerfile-inline = <<EOT
-    FROM golangci/golangci-lint:v2.1.6
+    FROM golangci/golangci-lint:v2.8.0
     WORKDIR /build
     RUN \
         --mount=type=cache,target=/go/pkg/mod \

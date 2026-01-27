@@ -6,8 +6,8 @@ import (
 	"io"
 	"text/template"
 
-	"github.com/project-dalec/dalec"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 var (

@@ -3594,7 +3594,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 						"/some_symlink2": {
 							LinkTarget: "/not-a-real-path2",
 						},
-						// check that a symlink pointing to a non-existant path with NoFollow=false should error (with a CheckFileNotExistsKind)
+						// check that a symlink pointing to a non-existent path with NoFollow=false should error (with a CheckFileNotExistsKind)
 						"/some_symlink3": {},
 						// And then that we can check symlink target with NoFollow=true when the target doesn't exist
 						"/some_symlink4": {NoFollow: true, LinkTarget: "/incorrect-target"},

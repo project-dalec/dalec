@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/project-dalec/dalec"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (

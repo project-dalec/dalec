@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/frontend"
-	"github.com/project-dalec/dalec/targets/linux"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/targets/linux"
 )
 
 var (
@@ -68,7 +68,9 @@ func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec,
 	}
 
 	dt, err := bi.ResolveImageConfig(ctx, sOpt, sourceresolver.Opt{
-		Platform: platform,
+		ImageOpt: &sourceresolver.ResolveImageOpt{
+			Platform: platform,
+		},
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error resolving base image config")

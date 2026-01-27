@@ -281,7 +281,7 @@ func TestTemplate_Artifacts(t *testing.T) {
 						},
 						"test3.service": {
 							Enable: true,
-							Start: true,
+							Start:  true,
 						},
 					},
 				},
@@ -330,7 +330,7 @@ fi
 						},
 						"test3.service": {
 							Enable: true,
-							Start: true,
+							Start:  true,
 						},
 					},
 				},

@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -17,6 +16,7 @@ import (
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
 )

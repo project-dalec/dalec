@@ -9,8 +9,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/project-dalec/dalec"
 	"golang.org/x/exp/maps"
 )
 

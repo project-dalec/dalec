@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/project-dalec/dalec/test/fixtures"
-	"github.com/project-dalec/dalec/test/testenv"
 	"github.com/moby/buildkit/util/tracing/delegated"
 	"github.com/moby/buildkit/util/tracing/detect"
+	"github.com/project-dalec/dalec/test/fixtures"
+	"github.com/project-dalec/dalec/test/testenv"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/trace"

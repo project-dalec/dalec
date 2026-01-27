@@ -11,12 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
 	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/test/internal/bazeltest"
 	"github.com/project-dalec/dalec/test/testenv"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"google.golang.org/grpc"
 	"gotest.tools/v3/assert"
 )

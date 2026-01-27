@@ -3,8 +3,8 @@ package debian
 import (
 	"context"
 
-	"github.com/project-dalec/dalec/frontend"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 var (
@@ -30,7 +30,7 @@ var (
 	}
 
 	targets = map[string]gwclient.BuildFunc{
-		TrixieDefaultTargetKey: TrixieConfig.Handle,
+		TrixieDefaultTargetKey:   TrixieConfig.Handle,
 		BookwormDefaultTargetKey: BookwormConfig.Handle,
 		BullseyeDefaultTargetKey: BullseyeConfig.Handle,
 	}

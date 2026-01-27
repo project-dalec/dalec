@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
 )
 
 func createRepoSuffix() string {
@@ -68,8 +68,8 @@ func testCustomRepo(ctx context.Context, t *testing.T, workerCfg workerConfig, t
 				},
 
 				Test: map[string]dalec.PackageConstraints{
-					dep.Name: {},
-					"bash":   {},
+					dep.Name:    {},
+					"bash":      {},
 					"coreutils": {},
 				},
 

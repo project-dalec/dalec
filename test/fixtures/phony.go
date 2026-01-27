@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
 )
 
 var (
@@ -29,7 +29,7 @@ func PhonyFrontend(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, 
 	}
 
 	p := llb.Platform(dc.BuildPlatforms[0])
-	st := llb.Image("golang:1.24", llb.WithMetaResolver(gwc), p).
+	st := llb.Image("golang:1.25", llb.WithMetaResolver(gwc), p).
 		Run(
 			llb.Args([]string{"go", "build", "-o=/build/out", "./test/fixtures/phony"}),
 			llb.AddEnv("CGO_ENABLED", "0"),

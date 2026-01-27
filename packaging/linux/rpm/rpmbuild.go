@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/project-dalec/dalec"
 )
 
 type CacheInfo struct {

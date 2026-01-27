@@ -64,7 +64,7 @@ func PatchedSources(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 
 		// Preprocess the spec to generate patches for gomod edits and other generators
 		// This must happen before getting sources so that generated patch contexts are available
-		if err := spec.Preprocess(client, sOpt, worker, pc); err != nil {
+		if err := spec.Preprocess(sOpt, worker, pc); err != nil {
 			return nil, nil, err
 		}
 

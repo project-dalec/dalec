@@ -1,8 +1,8 @@
 package targets
 
 import (
-	"github.com/project-dalec/dalec/internal/plugins"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec/internal/plugins"
 )
 
 func RegisterBuildTarget(name string, build gwclient.BuildFunc) {

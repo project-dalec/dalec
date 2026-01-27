@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/pkg/errors"
 )
 
@@ -29,7 +28,7 @@ const (
 //
 // Preprocessing generates LLB states for patches and registers them as context sources
 // that can be retrieved later when sources are fetched.
-func (s *Spec) Preprocess(client gwclient.Client, sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) error {
+func (s *Spec) Preprocess(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) error {
 	if err := s.preprocessGomodEdits(sOpt, worker, opts...); err != nil {
 		return errors.Wrap(err, "failed to preprocess gomod edits")
 	}
@@ -95,7 +94,7 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 			s.Patches[sourceName] = append(s.Patches[sourceName], PatchSpec{
 				Source: patchSourceName,
 				// Path is empty - the entire source is the patch file
-				Strip:  &strip,
+				Strip: &strip,
 			})
 		}
 	}

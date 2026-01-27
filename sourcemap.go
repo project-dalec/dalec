@@ -48,6 +48,13 @@ func (sm *sourceMap) getLocation(st *llb.State) llb.ConstraintsOpt {
 	if sm == nil {
 		return ConstraintsOptFunc(func(*llb.Constraints) {})
 	}
+
+	// If source state is given but it has no defined output, creating a source map from it will generate invalid LLM input,
+	// which then cannot be converted to state if needed, therefore omit adding it.
+	if st != nil && st.Output() == nil {
+		st = nil
+	}
+
 	sourceMap := llb.NewSourceMap(st, sm.filename, sm.language, sm.data)
 	return sourceMap.Location([]*pb.Range{sm.pos})
 }

@@ -48,7 +48,9 @@ func (cfg *Config) HandleWorker(ctx context.Context, client gwclient.Client) (*g
 		}
 
 		_, _, dt, err := client.ResolveImageConfig(ctx, cfg.ImageRef, sourceresolver.Opt{
-			Platform: platform,
+			ImageOpt: &sourceresolver.ResolveImageOpt{
+				Platform: platform,
+			},
 		})
 		if err != nil {
 			return nil, nil, err
