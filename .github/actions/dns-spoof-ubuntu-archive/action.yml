@@ -1,0 +1,54 @@
+name: Setup DNS spoofing to azure.archive.ubuntu.com
+description: 'Redirects DNS requests from archive.ubuntu.com to azure.archive.ubuntu.com'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Add dnsmasq config
+      id: dnsmasq-config
+      shell: bash
+      run: |
+        set -euxo pipefail
+
+        # Address dnsmasq will listen on
+        LISTEN_IP="$(hostname -I | awk '{ print $1 }')"
+        echo "DNSMASQ_IP=${LISTEN_IP}" >> "${GITHUB_OUTPUT}"
+
+        # Lookup a v4 A record for azure's mirror
+        # We'll use this as the reply to archive.ubuntu.com requests
+        AZURE_MIRROR_IP="$(getent ahostsv4 azure.archive.ubuntu.com | awk '{print $1}' | head -1)"
+
+        sudo mkdir -p /etc/dnsmasq.d
+        cat <<EOF | sudo tee /etc/dnsmasq.d/apt-mirror.conf
+        listen-address=${LISTEN_IP}
+        bind-interfaces
+        address=/archive.ubuntu.com/${AZURE_MIRROR_IP}
+        address=/security.ubuntu.com/${AZURE_MIRROR_IP}
+        server=127.0.0.53
+        log-queries
+        EOF
+
+    - name: Install dnsmasq
+      shell: bash
+      run: |
+        set -ex -o pipefail
+        sudo apt update && sudo apt install -y dnsmasq
+    - name: Finalize dnsmasq config
+      shell: bash
+      run: |
+        echo 'conf-dir=/etc/dnsmasq.d/,*.conf' | sudo tee /etc/dnsmasq.conf
+        sudo systemctl restart dnsmasq
+    - name: Configure Docker DNS
+      shell: bash
+      run: |
+        tmp="$(mktemp)"
+        if ! sudo cp /etc/docker/daemon.json "${tmp}" 2>/dev/null; then
+          echo '{}' > "${tmp}"
+        fi
+
+        sudo mkdir -p /etc/docker
+        jq --arg dns "${DNSMASQ_IP}" '.dns = [$dns]' "${tmp}" | sudo tee /etc/docker/daemon.json
+
+        sudo systemctl restart docker
+      env:
+        DNSMASQ_IP: ${{ steps.dnsmasq-config.outputs.DNSMASQ_IP }}
