@@ -1,16 +1,15 @@
 package targets
 
 import (
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec/internal/plugins"
 )
 
-func RegisterBuildTarget(name string, build gwclient.BuildFunc) {
+func RegisterBuildTarget(name string, build plugins.BuildHandler) {
 	plugins.Register(&plugins.Registration{
 		ID:   name,
 		Type: plugins.TypeBuildTarget,
 		InitFn: func(*plugins.InitContext) (interface{}, error) {
-			return plugins.BuildHandlerFunc(build), nil
+			return build, nil
 		},
 	})
 }

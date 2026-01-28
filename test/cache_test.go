@@ -6,13 +6,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/internal/frontendapi"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
 	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/test/internal/bazeltest"
@@ -74,6 +74,7 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 		spec.Build.Steps = append(spec.Build.Steps, dalec.BuildStep{
 			Command: strings.Join(cmds, "\n"),
 		})
+
 		return spec
 	}
 
@@ -130,17 +131,11 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 		solveT(ctx, t, client, sr)
 	}
 
-	// Used to validate that caches with namespaced dirs are not shared between distros and that
-	// caches with no namespace are shared between distros.
 	checkDistro := func(ctx context.Context, t *testing.T, client gwclient.Client) {
-		distro2 := "noble"
-		if distro == distro2 {
-			distro2 = "jammy"
-		}
-
-		t.Log("using distro", distro2)
-		target := path.Join(distro2, "deb")
-
+		// Used to validate that caches with namespaced dirs are not shared between distros and that
+		// caches with no namespace are shared between distros.
+		altDistro := frontendapi.TestingAltTargetKey(distro)
+		altTarget := strings.ReplaceAll(cfg.Package, distro, altDistro)
 		// Note: cache3/hello3 should have the content written by the first test
 		for i, c := range caches {
 			dir := getDir(t, c)
@@ -162,7 +157,7 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 		}
 
 		spec := specWithCommand(cmds...)
-		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target))
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(altTarget))
 		solveT(ctx, t, client, sr)
 	}
 
