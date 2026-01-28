@@ -59,8 +59,7 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 			dalec.WithConstraints(opts...),
 			llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 			dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
-			InstallLocalPkg(basePkg, true, opts...),
-			dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
+			InstallLocalPkg(basePkg, true, opts...), // lack of module isolation.
 		).Root()
 	}
 
