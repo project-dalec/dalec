@@ -107,9 +107,16 @@ EOF
     if [ "$vendor_existed" = "true" ]; then
       # If go.work exists, use 'go work vendor' instead of 'go mod vendor'
       # because 'go mod vendor' cannot be run in workspace mode
+      # Note: 'go work vendor' requires Go 1.22+
       if [ -f "$gowork_path" ]; then
-        echo "  Running go work vendor to sync workspace vendor directory"
-        go work vendor
+        # Check if 'go work vendor' is available (Go 1.22+)
+        if go work vendor -h >/dev/null 2>&1; then
+          echo "  Running go work vendor to sync workspace vendor directory"
+          go work vendor
+        else
+          echo "  Warning: go work vendor not available (requires Go 1.22+), using GOWORK=off go mod vendor"
+          GOWORK=off go mod vendor
+        fi
       else
         echo "  Running go mod vendor to sync existing vendor directory"
         go mod vendor
