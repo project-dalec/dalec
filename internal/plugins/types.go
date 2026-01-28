@@ -13,11 +13,11 @@ const (
 )
 
 type BuildHandler interface {
-	HandleBuild(ctx context.Context, client client.Client) (*client.Result, error)
+	Handle(ctx context.Context, client client.Client) (*client.Result, error)
 }
 
 type BuildHandlerFunc func(ctx context.Context, client client.Client) (*client.Result, error)
 
-func (f BuildHandlerFunc) HandleBuild(ctx context.Context, client client.Client) (*client.Result, error) {
+func (f BuildHandlerFunc) Handle(ctx context.Context, client client.Client) (*client.Result, error) {
 	return f(ctx, client)
 }
