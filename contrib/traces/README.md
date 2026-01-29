@@ -24,7 +24,7 @@ To customize the port that Jaeger UI listens on, you can set `JAEGER_UI_PORT`
 
 ## Files
 
-- `docker-compose.yaml` - Orchestrates Jaeger and OTEL Collector
-- `otel-collector-config.yaml` - Collector config for reading JSON files and exporting to Jaeger
-- `jaeger-config.yaml` - Jaeger v2 configuration with memory storage
-- `jaeger-ui-config.json` - Jaeger UI configuration
+- [docker-compose.yaml](./docker-compose.yaml) - Orchestrates Jaeger and OTEL Collector
+- [otel-collector-config.yaml](./otel-collector-config.yaml) - Collector config for reading JSON files and exporting to Jaeger
+- [jaeger-config.yaml](./jaeger-config.yaml) - Jaeger v2 configuration with memory storage
+- [jaeger-ui-config.json](./jaeger-ui-config.json) - Jaeger UI configuration
