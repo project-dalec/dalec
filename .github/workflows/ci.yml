@@ -131,26 +131,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup jaeger
+      - name: Setup otel-collector
         run: |
           set -e
-          docker run -d --net=host --restart=always --name jaeger -e COLLECTOR_OTLP_ENABLED=true jaegertracing/all-in-one:1.62.0
-          docker0_ip="$(ip -f inet addr show docker0 | grep -Po 'inet \K[\d.]+')"
-          echo "OTEL_EXPORTER_OTLP_ENDPOINT=ghcr.io/project-dalec/dalec/mirror/dockerhub/jaegertracing/all-in-one:1.62.0" >> "${GITHUB_ENV}"
+          mkdir -p /tmp/otel-traces
+          chmod 777 /tmp/otel-traces
+
+          if ! docker run -d --net=host --restart=always --name otel-collector \
+            -v ${{ github.workspace }}/.github/otel-collector-ci.yaml:/etc/otelcol-contrib/config.yaml:ro \
+            -v /tmp/otel-traces:/data:rw \
+            otel/opentelemetry-collector-contrib:0.144.0; then
+            echo "::warning::Failed to start otel-collector for tracing, skipping trace configuration"
+            exit 0
+          fi
+
+          echo "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" >> "${GITHUB_ENV}"
           echo "OTEL_SERVICE_NAME=dalec-integration-test" >> "${GITHUB_ENV}"
 
           tmp="$(mktemp)"
           echo "[Service]" > "${tmp}"
-          echo "Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=http://${docker0_ip}:4318\"" >> "${tmp}"
+          echo "Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318\"" >> "${tmp}"
 
           sudo mkdir -p /etc/systemd/system/docker.service.d
           sudo mkdir -p /etc/systemd/system/containerd.service.d
           sudo cp "${tmp}" /etc/systemd/system/docker.service.d/otlp.conf
           sudo cp "${tmp}" /etc/systemd/system/containerd.service.d/otlp.conf
 
-          sudo systemctl daemon-reload
-          sudo systemctl restart containerd
-          sudo systemctl restart docker
+          if ! sudo systemctl daemon-reload; then
+            echo "::warning::Failed to reload systemd daemon for tracing configuration"
+          fi
+          if ! sudo systemctl restart containerd; then
+            echo "::warning::Failed to restart containerd with tracing configuration"
+          fi
+          if ! sudo systemctl restart docker; then
+            echo "::warning::Failed to restart docker with tracing configuration"
+          fi
 
       - name: download deps
         run: go mod download
@@ -278,9 +293,11 @@ jobs:
         run: |
           set -ex
           mkdir -p /tmp/reports
-          curl -sSLf localhost:16686/api/traces?service=${OTEL_SERVICE_NAME} > /tmp/reports/jaeger-tests.json
-          curl -sSLf localhost:16686/api/traces?service=containerd > /tmp/reports/jaeger-containerd.json
-          curl -sSLf localhost:16686/api/traces?service=docker > /tmp/reports/jaeger-docker.json
+          if [ -f /tmp/otel-traces/traces.jsonl ]; then
+            cp /tmp/otel-traces/traces.jsonl /tmp/reports/traces.jsonl
+          else
+            echo "::warning::No traces file found"
+          fi
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
