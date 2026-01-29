@@ -43,6 +43,7 @@ func TestMariner2(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
+			Key:       azlinux.Mariner2TargetKey,
 			Package:   "mariner2/rpm",
 			Container: "mariner2/container",
 			Worker:    "mariner2/worker",

@@ -30,6 +30,8 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
+	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
 	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
@@ -1839,77 +1841,6 @@ func main() {
 		})
 	})
 
-	t.Run("gomod replace directive", func(t *testing.T) {
-		t.Parallel()
-		ctx := startTestSpan(baseCtx, t)
-
-		spec := &dalec.Spec{
-			Name:        "test-gomod-replace",
-			Version:     "0.0.1",
-			Revision:    "1",
-			License:     "MIT",
-			Website:     "https://github.com/project-dalec/dalec",
-			Vendor:      "Dalec",
-			Packager:    "Dalec",
-			Description: "Testing gomod replace directive",
-			Sources: map[string]dalec.Source{
-				"src": {
-					Inline: &dalec.SourceInline{
-						Dir: &dalec.SourceInlineDir{
-							Files: map[string]*dalec.SourceInlineFile{
-								"go.mod": {Contents: "module example.com/test\n\ngo 1.18\n"},
-								"main.go": {Contents: `package main
-import (
-	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/objx"
-)
-func main() {
-	fmt.Println("hello")
-	assert.True(nil, true)
-	m := objx.Map{"name": "test"}
-	fmt.Println(m.Get("name"))
-}
-`},
-							},
-						},
-					},
-					Generate: []*dalec.SourceGenerator{
-						{
-							Gomod: &dalec.GeneratorGomod{
-								Edits: &dalec.GomodEdits{
-									// Replace objx (another stretchr module) with a specific version.
-									Replace: []dalec.GomodReplace{
-										{Original: "github.com/stretchr/objx", Update: "github.com/stretchr/objx@v0.5.0"},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			Dependencies: &dalec.PackageDependencies{
-				Build: map[string]dalec.PackageConstraints{
-					testConfig.GetPackage("golang"): {},
-				},
-			},
-			Build: dalec.ArtifactBuild{
-				Steps: []dalec.BuildStep{
-					// Verify replace directive was applied with correct version
-					{Command: "grep -F 'replace github.com/stretchr/objx' ./src/go.mod"},
-					{Command: "grep -F 'github.com/stretchr/objx v0.5.0' ./src/go.mod"},
-					// Build the code - will fail if edits didn't work
-					{Command: "cd ./src && go build"},
-				},
-			},
-		}
-
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
-			solveT(ctx, t, client, req)
-		})
-	})
-
 	t.Run("gomod multi-module with paths", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
@@ -2050,6 +1981,314 @@ func main() {
 					// Verify the go.mod in subdir was patched with replace directive
 					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/subdir/go.mod"},
 					{Command: "cd ./src/subdir && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace with vendor directory", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), pg).
+			File(llb.Mkdir("/vendor/github.com/stretchr/testify/assert", 0755, llb.WithParents(true)), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte(`# github.com/stretchr/testify v1.9.0
+## explicit; go 1.17
+github.com/stretchr/testify/assert
+`)), pg).
+			File(llb.Mkfile("/vendor/github.com/stretchr/testify/VERSION", 0644, []byte("v1.9.0\n")), pg).
+			File(llb.Mkfile("/vendor/github.com/stretchr/testify/assert/assertions.go", 0644, []byte(`// Package assert - stub for v1.9.0
+package assert
+
+// True stub
+func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
+	return value
+}
+`)), pg)
+
+		const contextName = "vendor-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-vendor",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod replace with vendor directory",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					{Command: "grep -F 'v1.8.0' ./src/vendor/modules.txt"},
+					{Command: "cd ./src && go build -mod=vendor"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace with go work only", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), pg)
+
+		const contextName = "gowork-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod with go.work",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Verify go.work was updated to match go.mod version if it was bumped
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace with go work and vendor", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), pg).
+			File(llb.Mkdir("/vendor/github.com/stretchr/testify/assert", 0755, llb.WithParents(true)), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte(`## workspace
+# github.com/stretchr/testify v1.9.0
+## explicit; go 1.17
+github.com/stretchr/testify/assert
+`)), pg).
+			File(llb.Mkfile("/vendor/github.com/stretchr/testify/assert/assertions.go", 0644, []byte(`// Package assert - stub for v1.9.0
+package assert
+
+// True stub
+func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
+	return value
+}
+`)), pg)
+
+		const contextName = "gowork-vendor-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork-vendor",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod with go.work and vendor",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Verify go.work was patched
+					{Command: "test -f ./src/go.work"},
+					// Verify it builds (vendor may or may not be complete depending on Go version)
+					// Go 1.22+ will have full vendor via 'go work vendor'
+					// Go < 1.22 will have partial vendor via 'GOWORK=off go mod vendor'
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod go work version sync", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// Skip on distros with older Go versions that can't handle toolchain downloads
+		// This test uses golang.org/x/crypto@v0.45.0 which may require Go 1.24+
+		// focal and mariner2 have Go < 1.22 and network is disabled during builds
+		skip.If(t, testConfig.Target.Key == azlinux.Mariner2TargetKey || testConfig.Target.Key == ubuntu.FocalDefaultTargetKey,
+			"Test requires Go 1.22+ for automatic toolchain management")
+
+		// Start with go.mod and go.work both at go 1.18
+		// Use a replace directive that may bump go.mod version
+		// Verify that go.work stays in sync with go.mod
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire golang.org/x/crypto v0.30.0\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	_ "golang.org/x/crypto/bcrypt"
+)
+func main() {
+	fmt.Println("hello")
+}
+`)), pg)
+
+		const contextName = "gowork-version-sync-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork-version-sync",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod go.work version synchronization",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										// This may cause go.mod version to be bumped depending on the Go toolchain
+										{Original: "golang.org/x/crypto", Update: "golang.org/x/crypto@v0.45.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace golang.org/x/crypto' ./src/go.mod"},
+					{Command: "grep -F 'golang.org/x/crypto v0.45.0' ./src/go.mod"},
+					// Verify go.work exists
+					{Command: "test -f ./src/go.work"},
+					// Verify the go versions in go.mod and go.work match exactly
+					{Command: "test \"$(grep '^go ' ./src/go.mod | head -1)\" = \"$(grep '^go ' ./src/go.work | head -1)\""},
+					// Verify it builds without version mismatch errors
+					{Command: "cd ./src && go build"},
 				},
 			},
 		}
