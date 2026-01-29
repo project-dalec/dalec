@@ -2,8 +2,6 @@ package gitservices
 
 import (
 	"path/filepath"
-
-	"github.com/moby/buildkit/identity"
 )
 
 // Attributes are the basic pieces of information needed to host two git
@@ -25,8 +23,6 @@ type Attributes struct {
 
 	// PrivateGomoduleHost is the hostname of the git server
 	PrivateGomoduleHost string
-	// GitRemoteAddr is the IPv4 address to which the hostname resolves
-	GitRemoteAddr string
 
 	// HTTPPort is the port on which the http git server runs
 	HTTPPort string
@@ -54,17 +50,6 @@ func (a *Attributes) PrivateGoModuleGitTag() string {
 		panic("PrivateGoModuleGitTag() called with empty tag")
 	}
 	return a.tag
-}
-
-func (a *Attributes) WithNewPrivateGoModuleGitTag() *Attributes {
-	if a == nil {
-		return &Attributes{tag: identity.NewID()}
-	}
-
-	b := *a
-	b.tag = identity.NewID()
-
-	return &b
 }
 
 func (a *Attributes) RepoAbsDir() string {
