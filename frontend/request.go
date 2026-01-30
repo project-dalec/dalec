@@ -1,7 +1,6 @@
 package frontend
 
 import (
-	"bufio"
 	"context"
 	"strconv"
 	"strings"
@@ -320,22 +319,17 @@ func IgnoreCache(client gwclient.Client, refs ...string) llb.ConstraintsOpt {
 		return llb.IgnoreCache
 	}
 
-	rdr := bufio.NewReader(strings.NewReader(v))
 	idx := make(map[string]struct{}, len(refs))
 
 	for _, ref := range refs {
 		idx[ref] = struct{}{}
 	}
 
-	for {
-		ref, err := rdr.ReadString(',')
-		if err != nil {
-			// The only error here should be io.EOF, meaning we got to the end of the string.
-			return dalec.ConstraintsOptFunc(func(c *llb.Constraints) {})
-		}
-
-		if _, ok := idx[ref]; ok {
+	for filter := range strings.SplitSeq(v, ",") {
+		if _, ok := idx[filter]; ok {
 			return llb.IgnoreCache
 		}
 	}
+
+	return dalec.ConstraintsOptFunc(func(c *llb.Constraints) {})
 }
