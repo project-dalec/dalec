@@ -30,6 +30,7 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
 	"github.com/project-dalec/dalec/test/testenv"
@@ -899,6 +900,55 @@ index 0000000..5260cb1
 				assert.Assert(t, json.Unmarshal(dt, &cfg))
 				assert.Check(t, cfg.Created.After(beforeBuild))
 				assert.Check(t, cfg.Created.Before(time.Now()))
+			})
+		})
+
+		t.Run("respects_container_cache_key", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+					withIgnoreCache(targets.IgnoreCacheKeyContainer),
+				)
+
+				res := solveT(ctx, t, gwc, sr)
+
+				ops, err := llbOpsFromState(ctx, resultToState(t, res))
+				if err != nil {
+					t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
+				}
+
+				cacheIgnored := 0
+
+				for _, op := range ops {
+					if op.OpMetadata.IgnoreCache {
+						cacheIgnored++
+					}
+
+					e := op.Op.GetExec()
+					pg := op.OpMetadata.ProgressGroup.Name
+					if e == nil || (pg != "Install spec package" && pg != "Install RPMs") {
+						continue
+					}
+
+					if !op.OpMetadata.IgnoreCache {
+						t.Fatalf("Expected install step to have cache ignore enabled")
+					}
+
+					return
+				}
+
+				t.Errorf("Install spec package exec not found")
+
+				if cacheIgnored > 1 {
+					t.Fatalf("Expected only one operation to have cache ignore enabled, found %d", cacheIgnored)
+				}
 			})
 		})
 	})
