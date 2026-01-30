@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/version"
 	"io"
 	"io/fs"
 	"os"
@@ -31,8 +32,6 @@ import (
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"github.com/project-dalec/dalec/targets"
-	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
-	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
 	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
@@ -98,9 +97,10 @@ type testLinuxConfig struct {
 		Units   string
 		Targets string
 	}
-	Libdir  string
-	Worker  workerConfig
-	Release OSRelease
+	Libdir    string
+	Worker    workerConfig
+	Release   OSRelease
+	GoVersion string
 
 	Platforms         []ocispecs.Platform
 	PackageOutputPath func(spec *dalec.Spec, platform ocispecs.Platform) string
@@ -2274,23 +2274,20 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 
-		// Skip on distros with older Go versions that can't handle toolchain downloads
-		// This test uses golang.org/x/crypto@v0.45.0 which may require Go 1.24+
-		// focal and mariner2 have Go < 1.22 and network is disabled during builds
-		skip.If(t, testConfig.Target.Key == azlinux.Mariner2TargetKey || testConfig.Target.Key == ubuntu.FocalDefaultTargetKey,
-			"Test requires Go 1.22+ for automatic toolchain management")
+		// Skip on distros with Go versions below 1.21 that can't handle automatic toolchain management
+		skip.If(t, testConfig.GoVersion == "" || version.Compare("go"+testConfig.GoVersion, "go1.21") < 0,
+			"Test requires Go 1.21+ for automatic toolchain management")
 
 		// Start with go.mod and go.work both at go 1.18
-		// Use a replace directive that may bump go.mod version
 		// Verify that go.work stays in sync with go.mod
 		pg := dalec.ProgressGroup("Setup test context")
 		contextSt := llb.Scratch().
-			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire golang.org/x/crypto v0.30.0\n")), pg).
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire go.etcd.io/etcd/client/v3 v3.5.0\n")), pg).
 			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\n")), pg).
 			File(llb.Mkfile("/main.go", 0644, []byte(`package main
 import (
 	"fmt"
-	_ "golang.org/x/crypto/bcrypt"
+	_ "go.etcd.io/etcd/client/v3"
 )
 func main() {
 	fmt.Println("hello")
@@ -2315,8 +2312,8 @@ func main() {
 							Gomod: &dalec.GeneratorGomod{
 								Edits: &dalec.GomodEdits{
 									Replace: []dalec.GomodReplace{
-										// This may cause go.mod version to be bumped depending on the Go toolchain
-										{Original: "golang.org/x/crypto", Update: "golang.org/x/crypto@v0.45.0"},
+										// v3.5.14 requires go 1.21, which will bump go.mod from 1.18 to 1.21
+										{Original: "go.etcd.io/etcd/client/v3", Update: "go.etcd.io/etcd/client/v3@v3.5.14"},
 									},
 								},
 							},
@@ -2331,8 +2328,8 @@ func main() {
 			},
 			Build: dalec.ArtifactBuild{
 				Steps: []dalec.BuildStep{
-					{Command: "grep -F 'replace golang.org/x/crypto' ./src/go.mod"},
-					{Command: "grep -F 'golang.org/x/crypto v0.45.0' ./src/go.mod"},
+					{Command: "grep -F 'replace go.etcd.io/etcd/client/v3' ./src/go.mod"},
+					{Command: "grep -F 'go.etcd.io/etcd/client/v3 v3.5.14' ./src/go.mod"},
 					// Verify go.work exists
 					{Command: "test -f ./src/go.work"},
 					// Verify the go versions in go.mod and go.work match exactly
