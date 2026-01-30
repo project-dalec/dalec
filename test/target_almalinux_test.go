@@ -45,6 +45,7 @@ func TestAlmalinux9(t *testing.T) {
 			ID:        "almalinux",
 			VersionID: "9",
 		},
+		GoVersion: "1.25",
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},
@@ -90,6 +91,7 @@ func TestAlmalinux8(t *testing.T) {
 			ID:        "almalinux",
 			VersionID: "8",
 		},
+		GoVersion: "1.25",
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},

@@ -70,6 +70,7 @@ func TestMariner2(t *testing.T) {
 			ID:        "mariner",
 			VersionID: "2.0",
 		},
+		GoVersion: "1.22",
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},
@@ -113,6 +114,7 @@ func TestAzlinux3(t *testing.T) {
 			ID:        "azurelinux",
 			VersionID: "3.0",
 		},
+		GoVersion: "1.25",
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},

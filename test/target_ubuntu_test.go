@@ -23,6 +23,12 @@ func withPackageOverride(oldPkg, newPkg string) func(cfg *testLinuxConfig) {
 	}
 }
 
+func withGoVersion(version string) func(cfg *testLinuxConfig) {
+	return func(cfg *testLinuxConfig) {
+		cfg.GoVersion = version
+	}
+}
+
 func debLinuxTestConfigFor(targetKey string, cfg *distro.Config, opts ...func(*testLinuxConfig)) testLinuxConfig {
 	var sysextTarget string
 	if cfg.SysextSupported {
@@ -154,6 +160,7 @@ func TestJammy(t *testing.T) {
 
 	ctx := startTestSpan(baseCtx, t)
 	testConf := debLinuxTestConfigFor(ubuntu.JammyDefaultTargetKey, ubuntu.JammyConfig,
+		withGoVersion("1.18"),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", noPackageAvailable),
 		withPackageOverride("python", "python3 python3-pip"),
@@ -168,6 +175,7 @@ func TestNoble(t *testing.T) {
 
 	ctx := startTestSpan(baseCtx, t)
 	testConf := debLinuxTestConfigFor(ubuntu.NobleDefaultTargetKey, ubuntu.NobleConfig,
+		withGoVersion("1.22"),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", "bazel-bootstrap"),
 	)
@@ -180,6 +188,7 @@ func TestFocal(t *testing.T) {
 
 	ctx := startTestSpan(baseCtx, t)
 	testConf := debLinuxTestConfigFor(ubuntu.FocalDefaultTargetKey, ubuntu.FocalConfig,
+		withGoVersion("1.22"),
 		withPackageOverride("golang", "golang-1.22"),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", noPackageAvailable),
@@ -194,6 +203,7 @@ func TestBionic(t *testing.T) {
 
 	ctx := startTestSpan(baseCtx, t)
 	testConf := debLinuxTestConfigFor(ubuntu.BionicDefaultTargetKey, ubuntu.BionicConfig,
+		withGoVersion("1.18"),
 		withPackageOverride("golang", "golang-1.18"),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", noPackageAvailable),
