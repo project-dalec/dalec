@@ -45,7 +45,7 @@ func TestRockylinux9(t *testing.T) {
 			ID:        "rocky",
 			VersionID: "9",
 		},
-		GoVersion: "1.25",
+		SupportsGomodVersionUpdate: true,
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},
@@ -91,7 +91,7 @@ func TestRockylinux8(t *testing.T) {
 			ID:        "rocky",
 			VersionID: "8",
 		},
-		GoVersion: "1.25",
+		SupportsGomodVersionUpdate: true,
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},

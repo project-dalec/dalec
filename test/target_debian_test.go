@@ -16,7 +16,7 @@ func TestTrixie(t *testing.T) {
 	testConf := debLinuxTestConfigFor(
 		debian.TrixieDefaultTargetKey,
 		debian.TrixieConfig,
-		withGoVersion("1.24"),
+		withSupportGomodVersionUpdate(),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", "bazel-bootstrap"),
 	)
@@ -32,7 +32,6 @@ func TestBookworm(t *testing.T) {
 	testConf := debLinuxTestConfigFor(
 		debian.BookwormDefaultTargetKey,
 		debian.BookwormConfig,
-		withGoVersion("1.19"),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", "bazel-bootstrap"),
 	)
@@ -48,7 +47,6 @@ func TestBullseye(t *testing.T) {
 	testConf := debLinuxTestConfigFor(
 		debian.BullseyeDefaultTargetKey,
 		debian.BullseyeConfig,
-		withGoVersion("1.19"),
 		withPackageOverride("golang", "golang-1.19"),
 		withPackageOverride("rust", "cargo-web"),
 		withPackageOverride("bazel", noPackageAvailable),
