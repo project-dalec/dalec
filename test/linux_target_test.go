@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/version"
 	"io"
 	"io/fs"
 	"os"
@@ -97,10 +96,11 @@ type testLinuxConfig struct {
 		Units   string
 		Targets string
 	}
-	Libdir    string
-	Worker    workerConfig
-	Release   OSRelease
-	GoVersion string
+	Libdir  string
+	Worker  workerConfig
+	Release OSRelease
+
+	SupportsGomodVersionUpdate bool
 
 	Platforms         []ocispecs.Platform
 	PackageOutputPath func(spec *dalec.Spec, platform ocispecs.Platform) string
@@ -2274,8 +2274,7 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 
-		// Skip on distros with Go versions below 1.21 that can't handle automatic toolchain management
-		skip.If(t, testConfig.GoVersion == "" || version.Compare("go"+testConfig.GoVersion, "go1.21") < 0,
+		skip.If(t, !testConfig.SupportsGomodVersionUpdate,
 			"Test requires Go 1.21+ for automatic toolchain management")
 
 		// Start with go.mod and go.work both at go 1.18
