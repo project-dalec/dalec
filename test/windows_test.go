@@ -26,7 +26,7 @@ import (
 
 var windowsAmd64 = ocispecs.Platform{OS: "windows", Architecture: "amd64"}
 
-func TestWindows(t *testing.T) {
+func TestDalecTargetWindowscross(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)

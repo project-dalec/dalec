@@ -9,7 +9,7 @@ import (
 	"github.com/project-dalec/dalec/targets/linux/deb/debian"
 )
 
-func TestTrixie(t *testing.T) {
+func TestDalecTargetTrixie(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -24,7 +24,7 @@ func TestTrixie(t *testing.T) {
 	testDebianBaseDependencies(t, testConf.Target)
 }
 
-func TestBookworm(t *testing.T) {
+func TestDalecTargetBookworm(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -39,7 +39,7 @@ func TestBookworm(t *testing.T) {
 	testDebianBaseDependencies(t, testConf.Target)
 }
 
-func TestBullseye(t *testing.T) {
+func TestDalecTargetBullseye(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
