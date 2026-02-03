@@ -42,6 +42,7 @@ jobs:
       packages: write
       id-token: write  # Required for cosign OIDC signing
       attestations: write  # Required for GitHub attestations
+      artifact-metadata: write # Required for certain parts of GitHub attestations (actions/attest complains if not set)
     needs: load-matrix
     runs-on: ubuntu-22.04
     strategy:

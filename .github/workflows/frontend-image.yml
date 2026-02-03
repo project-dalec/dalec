@@ -28,6 +28,7 @@ jobs:
       packages: write
       id-token: write  # Required for cosign OIDC signing
       attestations: write  # Required for GitHub attestations
+      artifact-metadata: write # Required for certain parts of GitHub attestations (actions/attest complains if not set)
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@e3f713f2d8f53843e71c69a996d56f51aa9adfb9 # v2.14.1
