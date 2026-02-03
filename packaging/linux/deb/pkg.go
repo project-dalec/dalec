@@ -65,7 +65,10 @@ func createPatches(spec *dalec.Spec, sources map[string]llb.State, worker llb.St
 				dalec.WithConstraints(opts...),
 			).
 			Run(
-				dalec.ShArgs("set -e; git init .; git add .; git commit -m 'Initial commit'; \"${DEBIAN_DIR}/dalec/patch.sh\"; git add .; git commit -m 'With patch'; git diff HEAD~1 >> /work/out/dalec-changes.patch; echo 'dalec-changes.patch' > /work/out/series"),
+				// Remove any .git directories to prevent git from treating them as submodules.
+				// Use -prune to avoid descending into .git directories, which is more efficient
+				// and avoids errors when nested .git directories (e.g., submodules) exist.
+				dalec.ShArgs("set -e; find . -name .git -type d -prune -exec rm -rf {} +; git init .; git add .; git commit -m 'Initial commit'; \"${DEBIAN_DIR}/dalec/patch.sh\"; git add .; git commit -m 'With patch'; git diff HEAD~1 >> /work/out/dalec-changes.patch; echo 'dalec-changes.patch' > /work/out/series"),
 				llb.Dir("/work/sources"),
 				mountSources(sources, "/work/sources", nil),
 				// DEBIAN_DIR is used by the patch script to find the debian directory where we actually have the patches
