@@ -2345,6 +2345,78 @@ func main() {
 		})
 	})
 
+	t.Run("git source with keep git dir and gomod replace", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// Verifies that sources with a .git directory work with gomod replace.
+		opts := dalec.ProgressGroup("keepgitdir-gomod-replace")
+
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), opts).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), opts).
+			File(llb.Mkdir("/.git", 0755), opts).
+			File(llb.Mkfile("/.git/config", 0644, []byte("[core]\nrepositoryformatversion = 0\n")), opts).
+			File(llb.Mkfile("/.git/HEAD", 0644, []byte("ref: refs/heads/main\n")), opts)
+
+		const contextName = "keepgitdir-context"
+		spec := &dalec.Spec{
+			Name:        "test-keepgitdir-gomod-replace",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing keepGitDir with gomod replace directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify go.mod was patched with replace directive
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Use -buildvcs=false since we have a fake .git directory
+					{Command: "cd ./src && go build -buildvcs=false"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req.Evaluate = true
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("cargo home", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
