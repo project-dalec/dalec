@@ -27,6 +27,7 @@ var (
 	// base image.
 	basePackages = []string{
 		"ca-certificates",
+		"passwd",
 	}
 
 	targets = map[string]gwclient.BuildFunc{

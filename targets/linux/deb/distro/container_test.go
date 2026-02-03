@@ -24,6 +24,7 @@ func Test_Building_container(t *testing.T) {
 		t.Parallel()
 
 		c := &Config{
+			ImageRef:           "foo",
 			DefaultOutputImage: "foo",
 		}
 
@@ -49,24 +50,37 @@ func Test_Building_container(t *testing.T) {
 
 		ctx := t.Context()
 
-		state := c.BuildContainer(ctx, client, dalec.SourceOpts{}, spec, "target", llb.State{})
+		sopt := dalec.SourceOpts{
+			GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+				return nil, nil
+			},
+		}
+
+		state := c.BuildContainer(ctx, client, sopt, spec, "target", llb.State{})
 
 		ops, err := test.LLBOpsFromState(ctx, state)
 		if err != nil {
 			t.Fatalf("failed to get llb ops from state: %v", err)
 		}
 
-		if len(ops) == 0 {
-			t.Fatalf("expected at least one llb op, got none")
+		specPackageImageSourceFound := false
+
+		for _, op := range ops {
+			s := op.Op.GetSource()
+
+			if s == nil || op.OpMetadata.ProgressGroup.Name != "Build Container Image" {
+				continue
+			}
+
+			specPackageImageSourceFound = true
+
+			if !strings.Contains(s.Identifier, expectedRef) {
+				t.Fatalf("expected source identifier to contain %q, got %q", expectedRef, s.Identifier)
+			}
 		}
 
-		s := ops[0].Op.GetSource()
-		if s == nil {
-			t.Fatalf("expected source op, got nil")
-		}
-
-		if !strings.Contains(s.Identifier, expectedRef) {
-			t.Fatalf("expected source identifier to contain %q, got %q", expectedRef, s.Identifier)
+		if !specPackageImageSourceFound {
+			t.Fatalf("Expected to find spec package source in llb ops")
 		}
 	})
 
@@ -78,6 +92,7 @@ func Test_Building_container(t *testing.T) {
 		expectedRef := "foo"
 
 		c := &Config{
+			ImageRef:           "foo",
 			DefaultOutputImage: expectedRef,
 		}
 
@@ -89,7 +104,13 @@ func Test_Building_container(t *testing.T) {
 
 		ctx := t.Context()
 
-		state := c.BuildContainer(ctx, client, dalec.SourceOpts{}, spec, "target", llb.State{})
+		sopt := dalec.SourceOpts{
+			GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+				return nil, nil
+			},
+		}
+
+		state := c.BuildContainer(ctx, client, sopt, spec, "target", llb.State{})
 
 		ops, err := test.LLBOpsFromState(ctx, state)
 		if err != nil {
@@ -119,6 +140,7 @@ func Test_Building_container(t *testing.T) {
 			extraInstallRepo := "extra-install-repo"
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				ExtraRepos: []dalec.PackageRepositoryConfig{
 					{
@@ -150,7 +172,12 @@ func Test_Building_container(t *testing.T) {
 
 			ctx := t.Context()
 
-			ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, dalec.SourceOpts{}, &dalec.Spec{}, "target", llb.State{}))
+			sopt := dalec.SourceOpts{
+				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+					return nil, nil
+				},
+			}
+			ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.State{}))
 			if err != nil {
 				t.Fatalf("failed to get llb ops from state: %v", err)
 			}
@@ -190,6 +217,7 @@ func Test_Building_container(t *testing.T) {
 			aptCachePrefix := "apt-cache-prefix"
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				VersionID:          "bar",
 				ContextRef:         "distro-context-ref",
@@ -200,9 +228,7 @@ func Test_Building_container(t *testing.T) {
 
 			sopt := dalec.SourceOpts{
 				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
-					s := llb.Scratch()
-
-					return &s, nil
+					return nil, nil
 				},
 			}
 
@@ -255,6 +281,7 @@ func Test_Building_container(t *testing.T) {
 			t.Parallel()
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				BasePackages:       []string{"base-package-1"},
 				VersionID:          "bar",
@@ -265,9 +292,7 @@ func Test_Building_container(t *testing.T) {
 
 			sopt := dalec.SourceOpts{
 				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
-					s := llb.Scratch()
-
-					return &s, nil
+					return nil, nil
 				},
 			}
 
@@ -278,11 +303,15 @@ func Test_Building_container(t *testing.T) {
 				t.Fatalf("failed to get llb ops from state: %v", err)
 			}
 
+			execOpFound := false
+
 			for _, op := range ops {
 				e := op.Op.GetExec()
 				if e == nil || op.OpMetadata.ProgressGroup.Name != "Install base image packages" {
 					continue
 				}
+
+				execOpFound = true
 
 				for _, v := range e.Meta.Env {
 					s := strings.Split(v, "=")
@@ -304,6 +333,10 @@ func Test_Building_container(t *testing.T) {
 				}
 			}
 
+			if !execOpFound {
+				t.Fatalf("Exec op for installing base packages not found")
+			}
+
 			t.Fatalf("Expected DALEC_UPGRADE to be set when installing base packages")
 		})
 
@@ -311,6 +344,7 @@ func Test_Building_container(t *testing.T) {
 			t.Parallel()
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				BasePackages:       []string{"base-package-1"},
 				VersionID:          "bar",
@@ -321,9 +355,7 @@ func Test_Building_container(t *testing.T) {
 
 			sopt := dalec.SourceOpts{
 				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
-					s := llb.Scratch()
-
-					return &s, nil
+					return nil, nil
 				},
 			}
 
@@ -385,6 +417,7 @@ func Test_Building_container(t *testing.T) {
 			aptCachePrefix := "apt-cache-prefix"
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				BasePackages:       []string{"base-package-1"},
 				VersionID:          "bar",
@@ -396,9 +429,7 @@ func Test_Building_container(t *testing.T) {
 
 			sopt := dalec.SourceOpts{
 				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
-					s := llb.Scratch()
-
-					return &s, nil
+					return nil, nil
 				},
 			}
 
@@ -411,11 +442,15 @@ func Test_Building_container(t *testing.T) {
 
 			aptCacheFound := false
 
+			execOpFound := false
+
 			for _, op := range ops {
 				e := op.Op.GetExec()
 				if e == nil || op.OpMetadata.ProgressGroup.Name != "Install base image packages" {
 					continue
 				}
+
+				execOpFound = true
 
 				for _, mount := range e.Mounts {
 					if mount.Dest == "/var/cache/apt" {
@@ -436,6 +471,10 @@ func Test_Building_container(t *testing.T) {
 						break
 					}
 				}
+			}
+
+			if !execOpFound {
+				t.Fatalf("Exec op for installing base packages not found")
 			}
 
 			if !aptCacheFound {
