@@ -14,8 +14,9 @@
 
 ## Reviewers
 
-| Reviewer      | Organization | GitHub Username                              |
-|---------------|--------------|----------------------------------------------|
-| Danny Brito   | Microsoft    | [@DannyBrito](https://github.com/DannyBrito) |
-| Brian Chuo    | Microsoft    | [@bchuo](https://github.com/bchuo)           |
-| Jeremy Morris | Microsoft    | [@MorrisLaw](https://github.com/MorrisLaw)   |
+| Reviewer       | Organization | GitHub Username                                |
+|----------------|--------------|------------------------------------------------|
+| Danny Brito    | Microsoft    | [@DannyBrito](https://github.com/DannyBrito)   |
+| Brian Chuo     | Microsoft    | [@bchuo](https://github.com/bchuo)             |
+| Mateusz Gozdek | Microsoft    | [@invidian](https://github.com/invidian)       |
+| Jeremy Morris  | Microsoft    | [@MorrisLaw](https://github.com/MorrisLaw)     |
