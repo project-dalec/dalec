@@ -37,7 +37,7 @@ metadata_expire=0
 	}
 }
 
-func TestMariner2(t *testing.T) {
+func TestDalecTargetMariner2(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -82,7 +82,7 @@ func TestMariner2(t *testing.T) {
 	testAzlinuxExtra(ctx, t, cfg)
 }
 
-func TestAzlinux3(t *testing.T) {
+func TestDalecTargetAzlinux3(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
