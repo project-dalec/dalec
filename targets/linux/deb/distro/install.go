@@ -260,6 +260,9 @@ apt autoclean -y
 
 # Remove any previously failed attempts to get repo data
 rm -rf /var/lib/apt/lists/partial/*
+
+cat /etc/apt/sources.list /etc/apt/sources.list.d/* || true
+ls -la /opt/repo/ /tmp/rootfs/opt/repo/ || true
 apt update
 
 if [ "${DALEC_UPGRADE}" = "true" ]; then
