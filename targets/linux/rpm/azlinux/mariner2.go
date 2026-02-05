@@ -17,8 +17,10 @@ var Mariner2Config = &distro.Config{
 	ImageRef:   "mcr.microsoft.com/cbl-mariner/base/core:2.0",
 	ContextRef: Mariner2WorkerContextName,
 
-	CacheName: tdnfCacheNameMariner2,
-	CacheDir:  "/var/cache/tdnf",
+	CacheName:        tdnfCacheNameMariner2,
+	CacheDir:         "/var/cache/tdnf",
+	CacheAddPlatform: true,
+	ExtraCacheDirs:   []string{"/var/cache/dnf"},
 
 	ReleaseVer:         "2.0",
 	BuilderPackages:    builderPackages,
