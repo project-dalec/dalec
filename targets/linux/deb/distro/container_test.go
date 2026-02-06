@@ -24,6 +24,7 @@ func Test_Building_container(t *testing.T) {
 		t.Parallel()
 
 		c := &Config{
+			ImageRef:           "foo",
 			DefaultOutputImage: "foo",
 		}
 
@@ -49,24 +50,37 @@ func Test_Building_container(t *testing.T) {
 
 		ctx := t.Context()
 
-		state := c.BuildContainer(ctx, client, dalec.SourceOpts{}, spec, "target", llb.State{})
+		sopt := dalec.SourceOpts{
+			GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+				return nil, nil
+			},
+		}
+
+		state := c.BuildContainer(ctx, client, sopt, spec, "target", llb.State{})
 
 		ops, err := test.LLBOpsFromState(ctx, state)
 		if err != nil {
 			t.Fatalf("failed to get llb ops from state: %v", err)
 		}
 
-		if len(ops) == 0 {
-			t.Fatalf("expected at least one llb op, got none")
+		specPackageImageSourceFound := false
+
+		for _, op := range ops {
+			s := op.Op.GetSource()
+
+			if s == nil || op.OpMetadata.ProgressGroup.Name != "Build Container Image" {
+				continue
+			}
+
+			specPackageImageSourceFound = true
+
+			if !strings.Contains(s.Identifier, expectedRef) {
+				t.Fatalf("expected source identifier to contain %q, got %q", expectedRef, s.Identifier)
+			}
 		}
 
-		s := ops[0].Op.GetSource()
-		if s == nil {
-			t.Fatalf("expected source op, got nil")
-		}
-
-		if !strings.Contains(s.Identifier, expectedRef) {
-			t.Fatalf("expected source identifier to contain %q, got %q", expectedRef, s.Identifier)
+		if !specPackageImageSourceFound {
+			t.Fatalf("Expected to find spec package source in llb ops")
 		}
 	})
 
@@ -78,6 +92,7 @@ func Test_Building_container(t *testing.T) {
 		expectedRef := "foo"
 
 		c := &Config{
+			ImageRef:           "foo",
 			DefaultOutputImage: expectedRef,
 		}
 
@@ -89,7 +104,13 @@ func Test_Building_container(t *testing.T) {
 
 		ctx := t.Context()
 
-		state := c.BuildContainer(ctx, client, dalec.SourceOpts{}, spec, "target", llb.State{})
+		sopt := dalec.SourceOpts{
+			GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+				return nil, nil
+			},
+		}
+
+		state := c.BuildContainer(ctx, client, sopt, spec, "target", llb.State{})
 
 		ops, err := test.LLBOpsFromState(ctx, state)
 		if err != nil {
@@ -110,6 +131,189 @@ func Test_Building_container(t *testing.T) {
 		}
 	})
 
+	t.Run("when_bootstrapping_an_image", func(t *testing.T) {
+		t.Parallel()
+
+		// Bootstrap path is taken when DefaultOutputImage is not set.
+		// This is not user-configurable, hence it cannot be tested via integration tests.
+		t.Run("creates_base_directory_structure", func(t *testing.T) {
+			t.Parallel()
+
+			c := &Config{
+				ImageRef: "foo",
+				// DefaultOutputImage is intentionally empty to trigger bootstrap path.
+			}
+
+			ctx := t.Context()
+
+			sopt := dalec.SourceOpts{
+				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+					return nil, nil
+				},
+			}
+
+			ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
+			if err != nil {
+				t.Fatalf("failed to get llb ops from state: %v", err)
+			}
+
+			for _, op := range ops {
+				if op.OpMetadata.ProgressGroup != nil && op.OpMetadata.ProgressGroup.Name == "Bootstrap Base Image" {
+					return
+				}
+			}
+
+			t.Fatalf("Expected bootstrap directory structure when DefaultOutputImage is not set")
+		})
+
+		t.Run("downloads_dependencies", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("with_extra_distro_config_repos_mounted", func(t *testing.T) {
+				t.Parallel()
+
+				extraInstallRepo := "extra-install-repo"
+
+				c := &Config{
+					ImageRef: "foo",
+					ExtraRepos: []dalec.PackageRepositoryConfig{
+						{
+							Envs: []string{"install"},
+							Config: map[string]dalec.Source{
+								extraInstallRepo: {
+									Inline: &dalec.SourceInline{
+										File: &dalec.SourceInlineFile{
+											Contents: extraInstallRepo,
+										},
+									},
+								},
+							},
+						},
+						{
+							Envs: []string{"build"},
+							Config: map[string]dalec.Source{
+								extraInstallRepo: {
+									Inline: &dalec.SourceInline{
+										File: &dalec.SourceInlineFile{
+											Contents: "unexpected-repo",
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+
+				ctx := t.Context()
+
+				sopt := dalec.SourceOpts{
+					GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+						return nil, nil
+					},
+				}
+
+				ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
+				if err != nil {
+					t.Fatalf("failed to get llb ops from state: %v", err)
+				}
+
+				expectedMountPath := "/etc/apt/sources.list.d/" + extraInstallRepo + ".list"
+
+				for _, op := range ops {
+					e := op.Op.GetExec()
+					if e == nil {
+						continue
+					}
+
+					// Find the bootstrap download exec by its unique install script mount.
+					isBootstrapExec := false
+					for _, mount := range e.Mounts {
+						if mount.Dest == "/tmp/install.sh" {
+							isBootstrapExec = true
+							break
+						}
+					}
+
+					if !isBootstrapExec {
+						continue
+					}
+
+					for _, mount := range e.Mounts {
+						if mount.Dest == expectedMountPath {
+							return
+						}
+					}
+
+					t.Fatalf("Bootstrap download exec does not have extra repo mount at %q", expectedMountPath)
+				}
+
+				t.Fatalf("No bootstrap download exec found")
+			})
+
+			t.Run("with_mounted_apt_cache", func(t *testing.T) {
+				t.Parallel()
+
+				aptCachePrefix := "apt-cache-prefix"
+
+				c := &Config{
+					ImageRef:       "foo",
+					AptCachePrefix: aptCachePrefix,
+				}
+
+				ctx := t.Context()
+
+				sopt := dalec.SourceOpts{
+					GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+						return nil, nil
+					},
+				}
+
+				ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
+				if err != nil {
+					t.Fatalf("failed to get llb ops from state: %v", err)
+				}
+
+				for _, op := range ops {
+					e := op.Op.GetExec()
+					if e == nil {
+						continue
+					}
+
+					// Find the bootstrap download exec by its unique install script mount.
+					isBootstrapExec := false
+					for _, mount := range e.Mounts {
+						if mount.Dest == "/tmp/install.sh" {
+							isBootstrapExec = true
+							break
+						}
+					}
+
+					if !isBootstrapExec {
+						continue
+					}
+
+					for _, mount := range e.Mounts {
+						if mount.Dest == "/var/cache/apt" {
+							if mount.CacheOpt == nil {
+								t.Fatalf("Expected cache mount to have cache options, got none")
+							}
+
+							if !strings.HasPrefix(mount.CacheOpt.ID, aptCachePrefix) {
+								t.Fatalf("Expected cache mount ID to have prefix %q, got %q", aptCachePrefix, mount.CacheOpt.ID)
+							}
+
+							return
+						}
+					}
+
+					t.Fatalf("Apt cache mount not found on bootstrap download exec")
+				}
+
+				t.Fatalf("No bootstrap download exec found")
+			})
+		})
+	})
+
 	t.Run("installs_spec_package", func(t *testing.T) {
 		t.Parallel()
 
@@ -119,6 +323,7 @@ func Test_Building_container(t *testing.T) {
 			extraInstallRepo := "extra-install-repo"
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				ExtraRepos: []dalec.PackageRepositoryConfig{
 					{
@@ -150,7 +355,12 @@ func Test_Building_container(t *testing.T) {
 
 			ctx := t.Context()
 
-			ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, dalec.SourceOpts{}, &dalec.Spec{}, "target", llb.State{}))
+			sopt := dalec.SourceOpts{
+				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
+					return nil, nil
+				},
+			}
+			ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.State{}))
 			if err != nil {
 				t.Fatalf("failed to get llb ops from state: %v", err)
 			}
@@ -190,6 +400,7 @@ func Test_Building_container(t *testing.T) {
 			aptCachePrefix := "apt-cache-prefix"
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				VersionID:          "bar",
 				ContextRef:         "distro-context-ref",
@@ -200,9 +411,7 @@ func Test_Building_container(t *testing.T) {
 
 			sopt := dalec.SourceOpts{
 				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
-					s := llb.Scratch()
-
-					return &s, nil
+					return nil, nil
 				},
 			}
 
@@ -311,6 +520,7 @@ func Test_Building_container(t *testing.T) {
 			t.Parallel()
 
 			c := &Config{
+				ImageRef:           "foo",
 				DefaultOutputImage: "foo",
 				BasePackages:       []string{"base-package-1"},
 				VersionID:          "bar",
@@ -321,9 +531,7 @@ func Test_Building_container(t *testing.T) {
 
 			sopt := dalec.SourceOpts{
 				GetContext: func(string, ...llb.LocalOption) (*llb.State, error) {
-					s := llb.Scratch()
-
-					return &s, nil
+					return nil, nil
 				},
 			}
 

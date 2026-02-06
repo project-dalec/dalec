@@ -37,11 +37,12 @@ func debLinuxTestConfigFor(targetKey string, cfg *distro.Config, opts ...func(*t
 
 	tlc := testLinuxConfig{
 		Target: targetConfig{
-			Key:       targetKey,
-			Container: targetKey + "/testing/container",
-			Package:   targetKey + "/deb",
-			Worker:    targetKey + "/worker",
-			Sysext:    sysextTarget,
+			Key:              targetKey,
+			Container:        targetKey + "/testing/container",
+			MinimalContainer: targetKey + "/container",
+			Package:          targetKey + "/deb",
+			Worker:           targetKey + "/worker",
+			Sysext:           sysextTarget,
 			FormatDepEqual: func(ver, rev string) string {
 				return ver + "-" + cfg.VersionID + "u" + rev
 			},
