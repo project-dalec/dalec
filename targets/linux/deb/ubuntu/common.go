@@ -28,6 +28,7 @@ var (
 	basePackages = []string{
 		"ca-certificates",
 		"passwd",
+		"apt",
 	}
 
 	targets = map[string]gwclient.BuildFunc{
