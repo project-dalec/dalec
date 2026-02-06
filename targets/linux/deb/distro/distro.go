@@ -14,13 +14,11 @@ import (
 	"github.com/project-dalec/dalec/targets/linux"
 )
 
-var (
-	defaultRepoConfig = &dalec.RepoPlatformConfig{
-		ConfigRoot: "/etc/apt/sources.list.d",
-		GPGKeyRoot: "/usr/share/keyrings",
-		ConfigExt:  ".list",
-	}
-)
+var defaultRepoConfig = &dalec.RepoPlatformConfig{
+	ConfigRoot: "/etc/apt/sources.list.d",
+	GPGKeyRoot: "/usr/share/keyrings",
+	ConfigExt:  ".list",
+}
 
 type Config struct {
 	ImageRef       string
@@ -103,6 +101,11 @@ func (cfg *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, er
 	_, specDefined := spec.Targets[prefix]
 	specDefined = specDefined && len(spec.Targets) > 0
 
+	// containerCfg is a copy of cfg used for the minimal "container" target,
+	// which builds a container image without a default output image set.
+	containerCfg := *cfg
+	containerCfg.DefaultOutputImage = ""
+
 	routes := []frontend.Route{
 		{
 			FullPath: prefix,
@@ -135,6 +138,17 @@ func (cfg *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, er
 				Target: bktargets.Target{
 					Name:        prefix + "/testing/container",
 					Description: "Builds a container image for testing purposes only.",
+				},
+				SpecDefined: specDefined,
+			},
+		},
+		{
+			FullPath: prefix + "/container",
+			Handler:  linux.HandleContainer(&containerCfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/container",
+					Description: "Builds a container image.",
 				},
 				SpecDefined: specDefined,
 			},

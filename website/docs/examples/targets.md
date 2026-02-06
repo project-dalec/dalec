@@ -29,14 +29,17 @@ azlinux4/rpm/debug/sources       Outputs all the sources specified in the spec f
 azlinux4/rpm/debug/spec          Outputs the generated RPM spec file
 azlinux4/testing/sysext          Builds a systemd system extension image.
 azlinux4/worker                  Builds the base worker image responsible for building the rpm
+bionic/container                 Builds a container image.
 bionic/deb (default)             Builds a deb package.
 bionic/dsc                       Builds a Debian source package.
 bionic/testing/container         Builds a container image for testing purposes only.
 bionic/worker                    Builds the worker image.
+bookworm/container               Builds a container image.
 bookworm/deb (default)           Builds a deb package.
 bookworm/dsc                     Builds a Debian source package.
 bookworm/testing/container       Builds a container image for testing purposes only.
 bookworm/worker                  Builds the worker image.
+bullseye/container               Builds a container image.
 bullseye/deb (default)           Builds a deb package.
 bullseye/dsc                     Builds a Debian source package.
 bullseye/testing/container       Builds a container image for testing purposes only.
@@ -49,14 +52,17 @@ debug/resolve                    Outputs the resolved dalec spec file with build
 debug/sources                    Outputs all sources from a dalec spec file.
 flatcar/testing/sysext (default) Build a Flatcar-compatible systemd sysext (.raw)
 flatcar/worker                   Builds the worker image used to assemble Flatcar sysext images.
+focal/container                  Builds a container image.
 focal/deb (default)              Builds a deb package.
 focal/dsc                        Builds a Debian source package.
 focal/testing/container          Builds a container image for testing purposes only.
 focal/worker                     Builds the worker image.
+jammy/container                  Builds a container image.
 jammy/deb (default)              Builds a deb package.
 jammy/dsc                        Builds a Debian source package.
 jammy/testing/container          Builds a container image for testing purposes only.
 jammy/worker                     Builds the worker image.
+noble/container                  Builds a container image.
 noble/deb (default)              Builds a deb package.
 noble/dsc                        Builds a Debian source package.
 noble/testing/container          Builds a container image for testing purposes only.
@@ -76,6 +82,7 @@ rockylinux9/rpm/debug/buildroot  Outputs an rpm buildroot suitable for passing t
 rockylinux9/rpm/debug/sources    Outputs all the sources specified in the spec file in the format given to rpmbuild.
 rockylinux9/rpm/debug/spec       Outputs the generated RPM spec file
 rockylinux9/worker               Builds the base worker image responsible for building the rpm
+trixie/container                 Builds a container image.
 trixie/deb (default)             Builds a deb package.
 trixie/dsc                       Builds a Debian source package.
 trixie/testing/container         Builds a container image for testing purposes only.
