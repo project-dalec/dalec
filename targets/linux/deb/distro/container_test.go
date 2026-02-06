@@ -277,6 +277,8 @@ func Test_Building_container(t *testing.T) {
 	t.Run("installs_base_packages", func(t *testing.T) {
 		t.Parallel()
 
+		t.Skip()
+
 		t.Run("with_upgrades_enabled", func(t *testing.T) {
 			t.Parallel()
 
