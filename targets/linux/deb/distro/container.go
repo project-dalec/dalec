@@ -84,14 +84,12 @@ cp /spec-packages/*.deb /var/cache/apt/archives/
 apt-get update
 
 # Download essential packages and all dependencies for our local packages
-# Get full recursive dependency tree (including already-installed packages)
-# Extract dependencies directly from local .deb files (they aren't in apt repo)
-local_deps=$(for f in /var/cache/apt/archives/*.deb; do dpkg-deb -f "$f" Depends 2>/dev/null; done | tr ',' '\n' | sed 's/([^)]*)//g' | tr -d ' ' | grep -v '^$' | sort -u)
-all_deps=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances \
-    $(dpkg-query -Wf '${Package} ${Essential}\n' | awk '$2 == "yes" {print $1}') \
-    $local_deps \
-    | grep "^\w" | sort -u)
-apt-get --yes --download-only --reinstall install $all_deps
+# Point apt at the empty target dpkg status so it thinks nothing is installed,
+# which makes it download the full dependency tree and resolve conflicts properly.
+essential=$(dpkg-query -Wf '${Package} ${Essential}\n' | awk '$2 == "yes" {print $1}')
+local_deps=$(for f in /var/cache/apt/archives/*.deb; do dpkg-deb -f "$f" Depends 2>/dev/null; done | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g' | grep -v '^$' | sort -u)
+apt-get -o Dir::State::status=/tmp/rootfs/var/lib/dpkg/status \
+    --yes --download-only install $essential $local_deps
 
 # Extract all packages into the target rootfs
 for f in /var/cache/apt/archives/*.deb; do
@@ -132,7 +130,7 @@ cp /var/cache/apt/archives/*.deb /tmp/rootfs/var/cache/apt/archives/
 		dalec.WithConstraints(opts...),
 		debugOpt,
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
-		llb.Args([]string{"/usr/bin/sh", "-c", "dpkg --install --force-depends /var/cache/apt/archives/*.deb && rm -rf /var/cache/apt/archives/*.deb"}),
+		llb.Args([]string{"/bin/sh", "-c", "dpkg --install --force-depends /var/cache/apt/archives/*.deb && rm -rf /var/cache/apt/archives/*.deb"}),
 		frontend.IgnoreCache(input.Client, targets.IgnoreCacheKeyContainer),
 	).Root()
 
