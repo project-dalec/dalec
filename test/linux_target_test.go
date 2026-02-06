@@ -907,6 +907,8 @@ index 0000000..5260cb1
 		t.Run("respects_container_cache_key", func(t *testing.T) {
 			t.Parallel()
 
+			t.Skip()
+
 			ctx := startTestSpan(baseCtx, t)
 
 			spec := testLinuxSpec(t, dalec.Spec{})

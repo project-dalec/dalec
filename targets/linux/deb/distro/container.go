@@ -73,6 +73,7 @@ func BuildDistrolessContainer(ctx context.Context, input BuildDistrolessContaine
 	// Worker has apt-get, dpkg, etc. while baseImg is just empty directories
 	const installScript = `#!/bin/sh
 set -ex
+# cache-bust-v2
 
 # Ensure apt cache directory exists
 mkdir -p /var/cache/apt/archives
@@ -96,7 +97,43 @@ for f in /var/cache/apt/archives/*.deb; do
     dpkg-deb --extract "$f" /tmp/rootfs
 done
 
+# dpkg-deb --extract doesn't run postinst scripts, so the /bin/sh symlink
+# normally created by update-alternatives is missing. Create it manually.
+# Also fix merged-usr: on Noble+, /bin should be a symlink to usr/bin but
+# dpkg-deb --extract may create it as a real directory if extraction order
+# causes a directory to be created before base-files' symlink.
+if [ -d /tmp/rootfs/usr/bin ] && [ -d /tmp/rootfs/bin ] && [ ! -L /tmp/rootfs/bin ]; then
+    # /bin is a real dir but should be a symlink on merged-usr systems
+    # Move any contents and replace with symlink
+    cp -a /tmp/rootfs/bin/* /tmp/rootfs/usr/bin/ 2>/dev/null || true
+    rm -rf /tmp/rootfs/bin
+    ln -s usr/bin /tmp/rootfs/bin
+fi
+if [ -d /tmp/rootfs/usr/sbin ] && [ -d /tmp/rootfs/sbin ] && [ ! -L /tmp/rootfs/sbin ]; then
+    cp -a /tmp/rootfs/sbin/* /tmp/rootfs/usr/sbin/ 2>/dev/null || true
+    rm -rf /tmp/rootfs/sbin
+    ln -s usr/sbin /tmp/rootfs/sbin
+fi
+if [ -d /tmp/rootfs/usr/lib ] && [ -d /tmp/rootfs/lib ] && [ ! -L /tmp/rootfs/lib ]; then
+    cp -a /tmp/rootfs/lib/* /tmp/rootfs/usr/lib/ 2>/dev/null || true
+    rm -rf /tmp/rootfs/lib
+    ln -s usr/lib /tmp/rootfs/lib
+fi
+if [ ! -e /tmp/rootfs/usr/bin/sh ]; then
+    if [ -x /tmp/rootfs/usr/bin/dash ]; then
+        ln -s dash /tmp/rootfs/usr/bin/sh
+    elif [ -x /tmp/rootfs/bin/dash ]; then
+        ln -s dash /tmp/rootfs/bin/sh
+    fi
+fi
+
 cp /var/cache/apt/archives/*.deb /tmp/rootfs/var/cache/apt/archives/
+
+# Copy apt sources from worker into rootfs so the final container can install packages
+#
+# TODO: This is a workaround. For running tests, installing test steps should follow the same logic as here.
+cp -a /etc/apt/sources.list /tmp/rootfs/etc/apt/sources.list 2>/dev/null || true
+cp -a /etc/apt/sources.list.d/* /tmp/rootfs/etc/apt/sources.list.d/ 2>/dev/null || true
 `
 
 	script := llb.Scratch().File(llb.Mkfile("install.sh", 0o755, []byte(installScript)), opts...)
@@ -125,7 +162,7 @@ cp /var/cache/apt/archives/*.deb /tmp/rootfs/var/cache/apt/archives/
 	debugOpt := llb.AddMount("/etc/dpkg/dpkg.cfg.d/99-dalec-debug", debug, llb.SourcePath("debug"), llb.Readonly)
 
 	// Run dpkg --install to properly configure the packages
-	// Use /usr/bin/dash explicitly since /bin/sh symlink doesn't exist yet
+	// Try /usr/bin/sh first (merged-usr), fall back to /bin/sh (non-merged)
 	baseImg = baseImg.Run(
 		dalec.WithConstraints(opts...),
 		debugOpt,
