@@ -88,9 +88,14 @@ apt-get update
 # Point apt at the empty target dpkg status so it thinks nothing is installed,
 # which makes it download the full dependency tree and resolve conflicts properly.
 essential=$(dpkg-query -Wf '${Package} ${Essential}\n' | awk '$2 == "yes" {print $1}')
+# Get names of local packages so we can exclude them from apt-get install
+local_pkgs=$(for f in /var/cache/apt/archives/*.deb; do dpkg-deb -f "$f" Package 2>/dev/null; done | sort -u)
 local_deps=$(for f in /var/cache/apt/archives/*.deb; do dpkg-deb -f "$f" Depends 2>/dev/null; done | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g' | grep -v '^$' | sort -u)
+# Filter out deps that are satisfied by local packages (they aren't in apt repos)
+echo "$local_pkgs" > /tmp/local_pkg_names
+filtered_deps=$(echo "$local_deps" | grep -vxFf /tmp/local_pkg_names || true)
 apt-get -o Dir::State::status=/tmp/rootfs/var/lib/dpkg/status \
-    --yes --download-only install $essential $local_deps
+    --yes --download-only install $essential $filtered_deps
 
 # Extract all packages into the target rootfs
 for f in /var/cache/apt/archives/*.deb; do
@@ -126,6 +131,19 @@ if [ ! -e /tmp/rootfs/usr/bin/sh ]; then
         ln -s dash /tmp/rootfs/bin/sh
     fi
 fi
+
+# Remove usrmerge package - our merged-usr fixup above already handles this,
+# and usrmerge's postinst fails on overlayfs (which BuildKit uses).
+# Create a fake dpkg status entry so dpkg thinks it's installed.
+for f in /var/cache/apt/archives/usrmerge_*.deb /var/cache/apt/archives/usr-is-merged_*.deb; do
+    if [ -f "$f" ]; then
+        pkg=$(dpkg-deb -f "$f" Package)
+        ver=$(dpkg-deb -f "$f" Version)
+        arch=$(dpkg-deb -f "$f" Architecture)
+        printf 'Package: %s\nStatus: install ok installed\nVersion: %s\nArchitecture: %s\nDescription: faked by dalec\n\n' "$pkg" "$ver" "$arch" >> /tmp/rootfs/var/lib/dpkg/status
+        rm "$f"
+    fi
+done
 
 cp /var/cache/apt/archives/*.deb /tmp/rootfs/var/cache/apt/archives/
 
