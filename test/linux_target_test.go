@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,8 @@ type targetConfig struct {
 	Package string
 	// Container is the target for creating a container
 	Container string
+	// MinimalContainer is the target for creating a minimal container.
+	MinimalContainer string
 	// Worker is the target for creating the worker image.
 	Worker string
 	// Sysext is the target for creating a systemd system extension.
@@ -717,536 +720,13 @@ index 0000000..5260cb1
 
 	t.Run("container", func(t *testing.T) {
 		t.Parallel()
-
-		t.Run("creates_post_install_symlinks", func(t *testing.T) {
-			t.Parallel()
-
-			ctx := startTestSpan(baseCtx, t)
-
-			spec := testLinuxSpec(t, dalec.Spec{
-				Sources: map[string]dalec.Source{
-					"src1": {
-						Inline: &dalec.SourceInline{
-							File: &dalec.SourceInlineFile{
-								Contents:    "#!/usr/bin/env bash\necho hello world",
-								Permissions: 0o700,
-							},
-						},
-					},
-					"src3": {
-						Inline: &dalec.SourceInline{
-							File: &dalec.SourceInlineFile{
-								Contents:    "#!/usr/bin/env bash\necho goodbye",
-								Permissions: 0o700,
-							},
-						},
-					},
-				},
-				Artifacts: dalec.Artifacts{
-					Binaries: map[string]dalec.ArtifactConfig{
-						"src1": {},
-						"src3": {},
-					},
-					Users: []dalec.AddUserConfig{
-						{
-							Name: "need",
-						},
-					},
-					Groups: []dalec.AddGroupConfig{
-						{
-							Name: "coffee",
-						},
-					},
-				},
-				Image: &dalec.ImageConfig{
-					Post: &dalec.PostInstall{
-						Symlinks: map[string]dalec.SymlinkTarget{
-							"/usr/bin/src1": {
-								Path: "/src1",
-								User: "need",
-							},
-							"/usr/bin/src3": {
-								Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
-								User:  "need",
-								Group: "coffee",
-							},
-						},
-					},
-				},
-				Tests: []*dalec.TestSpec{
-					{
-						Name: "Post-install symlinks should be created and have correct ownership",
-						Files: map[string]dalec.FileCheckOutput{
-							"/src1":                  {},
-							"/non/existing/dir/src3": {},
-						},
-						Steps: []dalec.TestStep{
-							{Command: "/bin/bash -exc 'test -L /src1'"},
-							{Command: "/bin/bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
-							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-							{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-
-							{Command: "/bin/bash -exc 'test -L /non/existing/dir/src3'"},
-							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
-							{Command: "/bin/bash -exc 'test -L /non/existing/dir2/src3'"},
-							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
-							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-							{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-							{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-						},
-					},
-				},
-			})
-
-			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-				sr := newSolveRequest(
-					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
-				)
-				solveT(ctx, t, gwc, sr)
-			})
-		})
-
-		t.Run("contains_etc_os_release_file", func(t *testing.T) {
-			t.Parallel()
-
-			ctx := startTestSpan(baseCtx, t)
-
-			spec := testLinuxSpec(t, dalec.Spec{
-				Tests: []*dalec.TestSpec{
-					{
-						Name: "Check /etc/os-release",
-						Files: map[string]dalec.FileCheckOutput{
-							"/etc/os-release": {
-								CheckOutput: dalec.CheckOutput{
-									Matches: []string{
-										// Some distros have quotes around the values
-										// Regex is to match the values with or without quotes
-										// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rather than the full document.
-										//
-										// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
-										`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
-										`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
-									},
-								},
-							},
-						},
-					},
-				},
-			})
-
-			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-				sr := newSolveRequest(
-					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
-				)
-				solveT(ctx, t, gwc, sr)
-			})
-		})
-
-		t.Run("runs_tests", func(t *testing.T) {
-			t.Parallel()
-
-			ctx := startTestSpan(baseCtx, t)
-
-			// Make sure the test framework was actually executed by the build target.
-			// This appends a test case so that is expected to fail and as such cause the build to fail.
-			spec := testLinuxSpec(t, dalec.Spec{
-				Tests: []*dalec.TestSpec{
-					{
-						Name: "Test framework should be executed",
-						Steps: []dalec.TestStep{
-							{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
-						},
-					},
-				},
-			})
-
-			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-				sr := newSolveRequest(
-					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
-				)
-				sr.Evaluate = true
-
-				_, err := gwc.Solve(ctx, sr)
-				if err == nil {
-					t.Fatal("Expected test spec to run with error but got none")
-				}
-			})
-		})
-
-		t.Run("has_image_config_available_with_build_time", func(t *testing.T) {
-			t.Parallel()
-
-			ctx := startTestSpan(baseCtx, t)
-
-			spec := testLinuxSpec(t, dalec.Spec{})
-
-			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-				sr := newSolveRequest(
-					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
-				)
-				sr.Evaluate = true
-
-				beforeBuild := time.Now()
-				res := solveT(ctx, t, gwc, sr)
-
-				dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-				assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
-
-				var cfg dalec.DockerImageSpec
-				assert.Assert(t, json.Unmarshal(dt, &cfg))
-				assert.Check(t, cfg.Created.After(beforeBuild))
-				assert.Check(t, cfg.Created.Before(time.Now()))
-			})
-		})
-
-		t.Run("respects_container_cache_key", func(t *testing.T) {
-			t.Parallel()
-
-			ctx := startTestSpan(baseCtx, t)
-
-			spec := testLinuxSpec(t, dalec.Spec{})
-
-			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-				sr := newSolveRequest(
-					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
-					withIgnoreCache(targets.IgnoreCacheKeyContainer),
-				)
-
-				res := solveT(ctx, t, gwc, sr)
-
-				ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
-				if err != nil {
-					t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
-				}
-
-				cacheIgnored := []test.LLBOp{}
-				execFound := false
-
-				for _, op := range ops {
-					if op.OpMetadata.IgnoreCache {
-						cacheIgnored = append(cacheIgnored, op)
-					}
-
-					e := op.Op.GetExec()
-					pg := op.OpMetadata.ProgressGroup.Name
-					if e == nil || (pg != "Install spec package" && pg != "Install RPMs") {
-						continue
-					}
-
-					execFound = true
-
-					if !op.OpMetadata.IgnoreCache {
-						t.Errorf("Expected install step to have cache ignore enabled")
-					}
-				}
-
-				if !execFound {
-					t.Errorf("No exec ops found in the build")
-				}
-
-				if len(cacheIgnored) > 1 {
-					ops, err := test.LLBOpsToJSON(cacheIgnored)
-					if err != nil {
-						t.Errorf("Error converting ops to JSON: %v", err)
-					}
-
-					t.Errorf("Expected only one operation to have cache ignore enabled, found %d: \n%s", len(cacheIgnored), ops)
-				}
-			})
-		})
-
-		t.Run("respects_ignoring_all_caches", func(t *testing.T) {
-			t.Parallel()
-
-			ctx := startTestSpan(baseCtx, t)
-
-			spec := testLinuxSpec(t, dalec.Spec{})
-
-			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-				sr := newSolveRequest(
-					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
-					withIgnoreCache(),
-				)
-
-				res := solveT(ctx, t, gwc, sr)
-
-				ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
-				if err != nil {
-					t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
-				}
-
-				badOps := []test.LLBOp{}
-
-				for _, op := range ops {
-					if op.OpMetadata.IgnoreCache {
-						continue
-					}
-
-					badOps = append(badOps, op)
-				}
-
-				if len(badOps) != 0 {
-					opsJSON, err := test.LLBOpsToJSON(badOps)
-					if err != nil {
-						t.Fatalf("Unexpected error converting bad ops to JSON: %v", err)
-					}
-
-					t.Fatalf("Unexpected %d operations without cache ignore:\n%s", len(badOps), opsJSON)
-				}
-			})
-		})
-
-		t.Run("when_installing_spec_package", func(t *testing.T) {
-			t.Parallel()
-
-			t.Run("makes_extra_repos_from_spec_available", func(t *testing.T) {
-				t.Parallel()
-
-				ctx := startTestSpan(baseCtx, t)
-
-				// Create repository configurations for different phases
-				// This test verifies that repos configured for "install" are properly processed during container build
-				// and that repos configured for other phases (like "build") don't interfere
-				installRepoConfig := llb.Scratch().File(
-					llb.Mkfile("install-repo.list", 0o644, []byte("# Install phase repository config\n")),
-					dalec.ProgressGroup("Create install repo config"),
-				)
-
-				buildRepoConfig := llb.Scratch().File(
-					llb.Mkfile("build-repo.list", 0o644, []byte("# Unexpected repo\n")),
-					dalec.ProgressGroup("Create build repo config"),
-				)
-
-				spec := testLinuxSpec(t, dalec.Spec{
-					Dependencies: &dalec.PackageDependencies{
-						ExtraRepos: []dalec.PackageRepositoryConfig{
-							{
-								Config: map[string]dalec.Source{
-									"install-repo.list": {
-										Context: &dalec.SourceContext{
-											Name: "install-repo-config",
-										},
-										Path: "install-repo.list",
-									},
-								},
-								Envs: []string{"install"},
-							},
-							{
-								Config: map[string]dalec.Source{
-									"build-repo.list": {
-										Context: &dalec.SourceContext{
-											Name: "build-repo-config",
-										},
-										Path: "build-repo.list",
-									},
-								},
-								Envs: []string{"build"},
-							},
-						},
-					},
-					Build: dalec.ArtifactBuild{
-						Steps: []dalec.BuildStep{
-							{
-								Command: `
-# This is not a debian build, skip this.
-[ ! -d debian ] && exit 0;
-
-# Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
-[ -x debian/postinst ] || chmod +x debian/postinst
-cat >> debian/postinst << 'EOF'
-cat /etc/apt/sources.list.d/*
-grep 'Unexpected repo' /etc/apt/sources.list.d/* && exit 1 || exit 0
-EOF
-`,
-							},
-						},
-					},
-				})
-
-				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-					sr := newSolveRequest(
-						withSpec(ctx, t, &spec),
-						withBuildTarget(testConfig.Target.Container),
-						withBuildContext(ctx, t, "install-repo-config", installRepoConfig),
-						withBuildContext(ctx, t, "build-repo-config", buildRepoConfig),
-					)
-					solveT(ctx, t, gwc, sr)
-				})
-			})
-
-			t.Run("enables_dpkg_debug", func(t *testing.T) {
-				t.Parallel()
-
-				ctx := startTestSpan(baseCtx, t)
-
-				spec := testLinuxSpec(t, dalec.Spec{
-					Build: dalec.ArtifactBuild{
-						Steps: []dalec.BuildStep{
-							{
-								Command: `
-# This is not a debian build, skip this.
-[ ! -d debian ] && exit 0;
-
-# Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
-[ -x debian/postinst ] || chmod +x debian/postinst
-cat >> debian/postinst << 'EOF'
-grep debug=2 /etc/dpkg/dpkg.cfg.d/99-dalec-debug
-EOF
-`,
-							},
-						},
-					},
-				})
-
-				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-					sr := newSolveRequest(
-						withSpec(ctx, t, &spec),
-						withBuildTarget(testConfig.Target.Container),
-					)
-
-					solveT(ctx, t, gwc, sr)
-				})
-			})
-
-			t.Run("allows_upgrades", func(t *testing.T) {
-				t.Parallel()
-
-				ctx := startTestSpan(baseCtx, t)
-
-				spec := testLinuxSpec(t, dalec.Spec{
-					Build: dalec.ArtifactBuild{
-						Steps: []dalec.BuildStep{
-							{
-								Command: `
-# This is not a debian build, skip this.
-[ ! -d debian ] && exit 0;
-
-# Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
-[ -x debian/postinst ] || chmod +x debian/postinst
-cat >> debian/postinst << 'EOF'
-if [ "${DALEC_UPGRADE}" != "true" ]; then echo "Expected DALEC_UPGRADE to be \"true\", got \"${DALEC_UPGRADE}\""; exit 1; fi
-EOF
-	`,
-							},
-						},
-					},
-				})
-
-				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-					sr := newSolveRequest(
-						withSpec(ctx, t, &spec),
-						withBuildTarget(testConfig.Target.Container),
-					)
-
-					solveT(ctx, t, gwc, sr)
-				})
-			})
-
-			t.Run("handles_ubuntu_dpkg_excludes_config", func(t *testing.T) {
-				t.Parallel()
-
-				t.Run("by_masking_when_target_has_docs", func(t *testing.T) {
-					t.Parallel()
-
-					ctx := startTestSpan(baseCtx, t)
-
-					spec := testLinuxSpec(t, dalec.Spec{
-						Sources: map[string]dalec.Source{
-							"foo": {
-								Inline: &dalec.SourceInline{
-									File: &dalec.SourceInlineFile{
-										Contents: "hello world!",
-									},
-								},
-							},
-						},
-						Artifacts: dalec.Artifacts{
-							Docs: map[string]dalec.ArtifactConfig{
-								"foo": {},
-							},
-						},
-						Build: dalec.ArtifactBuild{
-							Steps: []dalec.BuildStep{
-								{
-									Command: `
-# This is not a debian build, skip this.
-[ ! -d debian ] && exit 0;
-
-# Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
-[ -x debian/postinst ] || chmod +x debian/postinst
-cat >> debian/postinst << 'EOF'
-[ -s /etc/dpkg/dpkg.cfg.d/excludes ] && exit 1
-exit 0
-EOF
-	`,
-								},
-							},
-						},
-					})
-
-					testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-						sr := newSolveRequest(
-							withSpec(ctx, t, &spec),
-							withBuildTarget(testConfig.Target.Container),
-						)
-
-						solveT(ctx, t, gwc, sr)
-					})
-				})
-
-				t.Run("by_not_masking_when_target_has_no_docs", func(t *testing.T) {
-					t.Parallel()
-
-					ctx := startTestSpan(baseCtx, t)
-
-					spec := testLinuxSpec(t, dalec.Spec{
-						Build: dalec.ArtifactBuild{
-							Steps: []dalec.BuildStep{
-								{
-									Command: `
-# This is not a debian build, skip this.
-[ ! -d debian ] && exit 0;
-
-# Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
-[ -x debian/postinst ] || chmod +x debian/postinst
-cat >> debian/postinst << 'EOF'
-set -x
-
-# If file does not exist, all good.
-[ ! -f /etc/dpkg/dpkg.cfg.d/excludes ] && exit 0
-
-# if file exists, ensure it is not masked.
-if [ ! -s /etc/dpkg/dpkg.cfg.d/excludes ]; then echo "Unexpected masking found"; exit 1; fi
-EOF
-	`,
-								},
-							},
-						},
-					})
-
-					testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-						sr := newSolveRequest(
-							withSpec(ctx, t, &spec),
-							withBuildTarget(testConfig.Target.Container),
-						)
-
-						solveT(ctx, t, gwc, sr)
-					})
-				})
-			})
-		})
+		testContainerTarget(ctx, t, testConfig, testConfig.Target.Container)
+	})
+
+	t.Run("minimal_container", func(t *testing.T) {
+		skip.If(t, testConfig.Target.MinimalContainer == "", "skipping test as it is not supported for this config")
+		t.Parallel()
+		testContainerTarget(ctx, t, testConfig, testConfig.Target.MinimalContainer)
 	})
 
 	t.Run("sysext", func(t *testing.T) {
@@ -3454,6 +2934,7 @@ func main() {
 				t.Fatal(err)
 			}
 
+			// We could assert package deps probably instead, but asserting a file is distro agnostic.
 			_, err = ref.StatFile(ctx, gwclient.StatRequest{
 				Path: "/usr/bin/curl",
 			})
@@ -3490,11 +2971,6 @@ func main() {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 		testLinuxSymlinkArtifacts(ctx, t, testConfig)
-	})
-	t.Run("test image configs", func(t *testing.T) {
-		t.Parallel()
-		ctx := startTestSpan(baseCtx, t)
-		testImageConfig(ctx, t, testConfig.Target.Container)
 	})
 
 	t.Run("test package tests cause build to fail", func(t *testing.T) {
@@ -4464,7 +3940,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			_, err := res.SingleRef()
 			assert.NilError(t, err)
 
-			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res = solveT(ctx, t, client, sr)
 			_, err = res.SingleRef()
 			assert.NilError(t, err)
@@ -4503,7 +3979,7 @@ func testUserAndGroupCreation(ctx context.Context, t *testing.T, testCfg targetC
 	}
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testCfg.Container))
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testCfg.Package))
 		res := solveT(ctx, t, client, sr)
 		_, err := res.SingleRef()
 		assert.NilError(t, err)
@@ -4536,7 +4012,7 @@ func testDalecTargetArg(ctx context.Context, t *testing.T, testCfg targetConfig)
 
 func testMixGlobalTargetDependencies(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 	t.Run("global target dependencies", func(t *testing.T) {
-		distro := strings.Split(cfg.Target.Container, "/")[0]
+		distro := strings.Split(cfg.Target.Package, "/")[0]
 		spec := newSimpleSpec()
 		spec.Dependencies = &dalec.PackageDependencies{
 			Runtime: map[string]dalec.PackageConstraints{
@@ -4639,7 +4115,7 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 				},
 			})
 
-			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -4661,7 +4137,7 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 				},
 			})
 
-			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -4719,7 +4195,7 @@ func testTargetPlatform(ctx context.Context, t *testing.T, cfg testLinuxConfig) 
 		})
 		assert.NilError(t, err)
 
-		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withPlatform(tp))
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withPlatform(tp))
 		res = solveT(ctx, t, client, sr)
 		dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
 		assert.Assert(t, ok, "missing image config in result metadata")
@@ -5393,13 +4869,532 @@ echo "This is a third test binary"
 	}
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+		req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 		res := solveT(ctx, t, client, req)
 
 		_, err := res.SingleRef()
 		if err != nil {
 			t.Fatal(err)
 		}
+	})
+}
+
+func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinuxConfig, target string) {
+	t.Helper()
+
+	t.Run("image_configs", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		testImageConfig(ctx, t, target)
+	})
+
+	t.Run("creates_post_install_symlinks", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"src1": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents:    "#!/usr/bin/env bash\necho hello world",
+							Permissions: 0o700,
+						},
+					},
+				},
+				"src3": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents:    "#!/usr/bin/env bash\necho goodbye",
+							Permissions: 0o700,
+						},
+					},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"src1": {},
+					"src3": {},
+				},
+				Users: []dalec.AddUserConfig{
+					{
+						Name: "need",
+					},
+				},
+				Groups: []dalec.AddGroupConfig{
+					{
+						Name: "coffee",
+					},
+				},
+			},
+			Image: &dalec.ImageConfig{
+				Post: &dalec.PostInstall{
+					Symlinks: map[string]dalec.SymlinkTarget{
+						"/usr/bin/src1": {
+							Path: "/src1",
+							User: "need",
+						},
+						"/usr/bin/src3": {
+							Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
+							User:  "need",
+							Group: "coffee",
+						},
+					},
+				},
+			},
+			Tests: []*dalec.TestSpec{
+				{
+					Name: "Post-install symlinks should be created and have correct ownership",
+					Files: map[string]dalec.FileCheckOutput{
+						"/src1":                  {},
+						"/non/existing/dir/src3": {},
+					},
+					Steps: []dalec.TestStep{
+						{Command: "/bin/bash -exc 'test -L /src1'"},
+						{Command: "/bin/bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
+						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+
+						{Command: "/bin/bash -exc 'test -L /non/existing/dir/src3'"},
+						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
+						{Command: "/bin/bash -exc 'test -L /non/existing/dir2/src3'"},
+						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
+						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+						{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+					},
+				},
+			},
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+			)
+			solveT(ctx, t, gwc, sr)
+		})
+	})
+
+	t.Run("contains_etc_os_release_file", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{
+			Tests: []*dalec.TestSpec{
+				{
+					Name: "Check /etc/os-release",
+					Files: map[string]dalec.FileCheckOutput{
+						"/etc/os-release": {
+							CheckOutput: dalec.CheckOutput{
+								Matches: []string{
+									// Some distros have quotes around the values
+									// Regex is to match the values with or without quotes
+									// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rather than the full document.
+									//
+									// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
+									`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
+									`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+			)
+			solveT(ctx, t, gwc, sr)
+		})
+	})
+
+	t.Run("runs_tests", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(ctx, t)
+
+		// Make sure the test framework was actually executed by the build target.
+		// This appends a test case so that is expected to fail and as such cause the build to fail.
+		spec := testLinuxSpec(t, dalec.Spec{
+			Tests: []*dalec.TestSpec{
+				{
+					Name: "Test framework should be executed",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+					},
+				},
+			},
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+			)
+			sr.Evaluate = true
+
+			_, err := gwc.Solve(ctx, sr)
+			if err == nil {
+				t.Fatal("Expected test spec to run with error but got none")
+			}
+		})
+	})
+
+	t.Run("has_image_config_available_with_build_time", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+			)
+			sr.Evaluate = true
+
+			beforeBuild := time.Now()
+			res := solveT(ctx, t, gwc, sr)
+
+			dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+			assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+
+			var cfg dalec.DockerImageSpec
+			assert.Assert(t, json.Unmarshal(dt, &cfg))
+			assert.Check(t, cfg.Created.After(beforeBuild))
+			assert.Check(t, cfg.Created.Before(time.Now()))
+		})
+	})
+
+	t.Run("respects_container_cache_key", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+				withIgnoreCache(targets.IgnoreCacheKeyContainer),
+			)
+
+			res := solveT(ctx, t, gwc, sr)
+
+			ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
+			if err != nil {
+				t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
+			}
+
+			cacheIgnored := 0
+			execFound := false
+
+			pgNames := []string{}
+
+			expectedNames := []string{
+				"Fetch DEB Packages",
+				"Install DEB Packages",
+				"Install RPMs",
+			}
+
+			for _, op := range ops {
+				if op.OpMetadata.IgnoreCache {
+					cacheIgnored++
+				}
+
+				e := op.Op.GetExec()
+				pg := op.OpMetadata.ProgressGroup.Name
+				if e == nil {
+					continue
+				}
+
+				if !slices.Contains(expectedNames, pg) {
+					pgNames = append(pgNames, pg)
+
+					continue
+				}
+
+				execFound = true
+
+				if !op.OpMetadata.IgnoreCache {
+					s, err := test.LLBOpsToJSON([]test.LLBOp{op})
+					if err != nil {
+						t.Fatalf("Unexpected error converting LLB OP to JSON: %v", err)
+					}
+
+					t.Errorf("Expected install step to have cache ignore enabled:\n%s", s)
+				}
+			}
+
+			if !execFound {
+				t.Errorf("No exec ops found in the build with progress group names: %v, got: %v", expectedNames, pgNames)
+			}
+
+			if cacheIgnored != 2 && cacheIgnored != 1 {
+				t.Fatalf("Expected only one or two operations to have cache ignore enabled, found %d", cacheIgnored)
+			}
+		})
+	})
+
+	t.Run("respects_ignoring_all_caches", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+				withIgnoreCache(),
+			)
+
+			res := solveT(ctx, t, gwc, sr)
+
+			ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
+			if err != nil {
+				t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
+			}
+
+			badOps := []test.LLBOp{}
+
+			for _, op := range ops {
+				if op.OpMetadata.IgnoreCache {
+					continue
+				}
+
+				badOps = append(badOps, op)
+			}
+
+			if len(badOps) != 0 {
+				opsJSON, err := test.LLBOpsToJSON(badOps)
+				if err != nil {
+					t.Fatalf("Unexpected error converting bad ops to JSON: %v", err)
+				}
+
+				t.Fatalf("Unexpected %d operations without cache ignore:\n%s", len(badOps), opsJSON)
+			}
+		})
+	})
+
+	t.Run("when_installing_spec_package", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("makes_extra_repos_from_spec_available", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(ctx, t)
+
+			// Create repository configurations for different phases
+			// This test verifies that repos configured for "install" are properly processed during container build
+			// and that repos configured for other phases (like "build") don't interfere
+			installRepoConfig := llb.Scratch().File(
+				llb.Mkfile("install-repo.list", 0o644, []byte("# Install phase repository config\n")),
+				dalec.ProgressGroup("Create install repo config"),
+			)
+
+			buildRepoConfig := llb.Scratch().File(
+				llb.Mkfile("build-repo.list", 0o644, []byte("# Unexpected repo\n")),
+				dalec.ProgressGroup("Create build repo config"),
+			)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Dependencies: &dalec.PackageDependencies{
+					ExtraRepos: []dalec.PackageRepositoryConfig{
+						{
+							Config: map[string]dalec.Source{
+								"install-repo.list": {
+									Context: &dalec.SourceContext{
+										Name: "install-repo-config",
+									},
+									Path: "install-repo.list",
+								},
+							},
+							Envs: []string{"install"},
+						},
+						{
+							Config: map[string]dalec.Source{
+								"build-repo.list": {
+									Context: &dalec.SourceContext{
+										Name: "build-repo-config",
+									},
+									Path: "build-repo.list",
+								},
+							},
+							Envs: []string{"build"},
+						},
+					},
+				},
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+cat /etc/apt/sources.list.d/*
+grep 'Unexpected repo' /etc/apt/sources.list.d/* && exit 1 || exit 0
+EOF
+`,
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(target),
+					withBuildContext(ctx, t, "install-repo-config", installRepoConfig),
+					withBuildContext(ctx, t, "build-repo-config", buildRepoConfig),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("enables_dpkg_debug", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(ctx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+grep debug=2 /etc/dpkg/dpkg.cfg.d/99-dalec-debug
+EOF
+`,
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(target),
+				)
+
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("handles_ubuntu_dpkg_excludes_config", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("by_masking_when_target_has_docs", func(t *testing.T) {
+				t.Parallel()
+
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Sources: map[string]dalec.Source{
+						"foo": {
+							Inline: &dalec.SourceInline{
+								File: &dalec.SourceInlineFile{
+									Contents: "hello world!",
+								},
+							},
+						},
+					},
+					Artifacts: dalec.Artifacts{
+						Docs: map[string]dalec.ArtifactConfig{
+							"foo": {},
+						},
+					},
+					Build: dalec.ArtifactBuild{
+						Steps: []dalec.BuildStep{
+							{
+								Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+[ -s /etc/dpkg/dpkg.cfg.d/excludes ] && exit 1
+exit 0
+EOF
+	`,
+							},
+						},
+					},
+				})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(
+						withSpec(ctx, t, &spec),
+						withBuildTarget(target),
+					)
+
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+
+			t.Run("by_not_masking_when_target_has_no_docs", func(t *testing.T) {
+				t.Parallel()
+
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Build: dalec.ArtifactBuild{
+						Steps: []dalec.BuildStep{
+							{
+								Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+set -x
+
+# If file does not exist, all good.
+[ ! -f /etc/dpkg/dpkg.cfg.d/excludes ] && exit 0
+
+# if file exists, ensure it is not masked.
+if [ ! -s /etc/dpkg/dpkg.cfg.d/excludes ]; then echo "Unexpected masking found"; exit 1; fi
+EOF
+	`,
+							},
+						},
+					},
+				})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(
+						withSpec(ctx, t, &spec),
+						withBuildTarget(target),
+					)
+
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+		})
 	})
 }
 
