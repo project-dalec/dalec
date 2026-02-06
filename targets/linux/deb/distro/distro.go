@@ -15,13 +15,11 @@ import (
 	"github.com/project-dalec/dalec/targets/linux"
 )
 
-var (
-	defaultRepoConfig = &dalec.RepoPlatformConfig{
-		ConfigRoot: "/etc/apt/sources.list.d",
-		GPGKeyRoot: "/usr/share/keyrings",
-		ConfigExt:  ".list",
-	}
-)
+var defaultRepoConfig = &dalec.RepoPlatformConfig{
+	ConfigRoot: "/etc/apt/sources.list.d",
+	GPGKeyRoot: "/usr/share/keyrings",
+	ConfigExt:  ".list",
+}
 
 type Config struct {
 	ImageRef       string
@@ -110,6 +108,16 @@ func (cfg *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclien
 	mux.Add("testing/container", linux.HandleContainer(cfg), &targets.Target{
 		Name:        "testing/container",
 		Description: "Builds a container image for testing purposes only.",
+	})
+
+	mux.Add("container", func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		cfg := *cfg
+		cfg.DefaultOutputImage = ""
+
+		return linux.HandleContainer(&cfg)(ctx, client)
+	}, &targets.Target{
+		Name:        "container",
+		Description: "Builds a container image.",
 	})
 
 	mux.Add("dsc", cfg.HandleSourcePkg, &targets.Target{
