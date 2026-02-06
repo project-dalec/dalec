@@ -360,6 +360,7 @@ func (d *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec *
 
 		withRepos := d.RepoMounts(repos, sOpt, opts...)
 
+		// TODO: Download packages using worker, then install in the image to be bootstrap-compatible.
 		opts = append(opts, dalec.ProgressGroup("Install test dependencies"))
 		return in.Run(
 			dalec.WithConstraints(opts...),
