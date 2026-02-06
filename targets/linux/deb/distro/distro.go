@@ -15,13 +15,11 @@ import (
 	"github.com/project-dalec/dalec/targets/linux"
 )
 
-var (
-	defaultRepoConfig = &dalec.RepoPlatformConfig{
-		ConfigRoot: "/etc/apt/sources.list.d",
-		GPGKeyRoot: "/usr/share/keyrings",
-		ConfigExt:  ".list",
-	}
-)
+var defaultRepoConfig = &dalec.RepoPlatformConfig{
+	ConfigRoot: "/etc/apt/sources.list.d",
+	GPGKeyRoot: "/usr/share/keyrings",
+	ConfigExt:  ".list",
+}
 
 type Config struct {
 	ImageRef       string
@@ -112,6 +110,51 @@ func (cfg *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclien
 		Description: "Builds a container image for testing purposes only.",
 	})
 
+	mux.Add("testing/container/distroless", func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
+			sOpt, err := frontend.SourceOptFromClient(ctx, client, platform)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			var opts []llb.ConstraintsOpt
+			opts = append(opts, dalec.ProgressGroup(spec.Name))
+			opts = append(opts, dalec.Platform(platform))
+
+			worker := cfg.Worker(sOpt, opts...)
+
+			// TODO: Add back support for prebuilt packages.
+			pkgSt := cfg.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
+
+			img, err := cfg.BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			input := BuildDistrolessContainerInput{
+				Config: cfg,
+				Client: client,
+				Worker: worker,
+				SOpt:   sOpt,
+				Spec:   spec,
+				Target: targetKey,
+				DebSt:  pkgSt,
+				Opts:   opts,
+			}
+
+			ctr := BuildDistrolessContainer(ctx, input)
+
+			tests := cfg.RunTests(ctx, client, spec, sOpt, ctr, targetKey, opts...)
+
+			ref, err := getRef(ctx, client, ctr.With(tests))
+
+			return ref, img, err
+		})
+	}, &targets.Target{
+		Name:        "testing/container/distroless",
+		Description: "Builds a distroless container image for testing purposes only.",
+	})
+
 	mux.Add("dsc", cfg.HandleSourcePkg, &targets.Target{
 		Name:        "dsc",
 		Description: "Builds a Debian source package.",
@@ -130,4 +173,20 @@ func (cfg *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclien
 	}
 
 	return mux.Handle(ctx, client)
+}
+
+func getRef(ctx context.Context, client gwclient.Client, st llb.State) (gwclient.Reference, error) {
+	def, err := st.Marshal(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := client.Solve(ctx, gwclient.SolveRequest{
+		Definition: def.ToPB(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return res.SingleRef()
 }

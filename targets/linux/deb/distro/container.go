@@ -10,7 +10,202 @@ import (
 	"github.com/project-dalec/dalec/targets"
 )
 
+type BuildDistrolessContainerInput struct {
+	Config *Config
+	Client gwclient.Client // Replace with interface.
+	Worker llb.State
+	SOpt   dalec.SourceOpts
+	Spec   *dalec.Spec
+	Target string
+	DebSt  llb.State // Why is this DebSt?
+	Opts   []llb.ConstraintsOpt
+}
+
+func BuildDistrolessContainer(ctx context.Context, input BuildDistrolessContainerInput) llb.State {
+	opts := append(input.Opts, frontend.IgnoreCache(input.Client), dalec.ProgressGroup("Build Container Image"))
+
+	// Those base repos come from distro configuration.
+	repos := dalec.GetExtraRepos(input.Config.ExtraRepos, "install")
+
+	// These are user specified via spec.
+	repos = append(repos, input.Spec.GetInstallRepos(input.Target)...)
+
+	withRepos := input.Config.RepoMounts(repos, input.SOpt, opts...)
+
+	// Step 1: Bootstrap base image structure from scratch
+	baseImg := llb.Scratch().
+		File(llb.Mkdir("/etc", 0o755), opts...).
+		File(llb.Mkdir("/etc/apt", 0o755), opts...).
+		File(llb.Mkdir("/etc/apt/apt.conf.d", 0o755), opts...).
+		File(llb.Mkdir("/etc/apt/preferences.d", 0o755), opts...).
+		File(llb.Mkdir("/etc/apt/sources.list.d", 0o755), opts...).
+		File(llb.Mkdir("/var", 0o755), opts...).
+		File(llb.Mkdir("/var/cache", 0o755), opts...).
+		File(llb.Mkdir("/var/cache/apt", 0o755), opts...).
+		File(llb.Mkdir("/var/cache/apt/archives", 0o755), opts...).
+		File(llb.Mkdir("/var/lib", 0o755), opts...).
+		File(llb.Mkdir("/var/lib/dpkg", 0o755), opts...).
+		File(llb.Mkfile("/var/lib/dpkg/status", 0o644, []byte{}), opts...)
+
+	// Step 2: Build base packages if configured
+	var basePkg llb.State
+	if len(input.Config.BasePackages) > 0 {
+		runtimePkgs := make(dalec.PackageDependencyList, len(input.Config.BasePackages))
+		for _, pkgName := range input.Config.BasePackages {
+			runtimePkgs[pkgName] = dalec.PackageConstraints{}
+		}
+		basePkgSpec := &dalec.Spec{
+			Name:        "dalec-deb-base-packages",
+			Packager:    "dalec",
+			Description: "Base Packages for Debian-based Distros",
+			Version:     "0.1",
+			Revision:    "1",
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: runtimePkgs,
+			},
+		}
+		basePkg = input.Config.BuildPkg(ctx, input.Client, input.SOpt, basePkgSpec, input.Target, opts...)
+	} else {
+		basePkg = llb.Scratch()
+	}
+
+	// Step 3: Use worker to download all packages + deps and install into baseImg
+	// Worker has apt-get, dpkg, etc. while baseImg is just empty directories
+	const installScript = `#!/bin/sh
+set -ex
+# cache-bust-v2
+
+# Ensure apt cache directory exists
+mkdir -p /var/cache/apt/archives
+
+# Copy local packages (base + spec) to apt cache
+cp /base-packages/*.deb /var/cache/apt/archives/
+cp /spec-packages/*.deb /var/cache/apt/archives/
+
+apt-get update
+
+# Download essential packages and all dependencies for our local packages
+# Point apt at the empty target dpkg status so it thinks nothing is installed,
+# which makes it download the full dependency tree and resolve conflicts properly.
+essential=$(dpkg-query -Wf '${Package} ${Essential}\n' | awk '$2 == "yes" {print $1}')
+# Get names of local packages so we can exclude them from apt-get install
+local_pkgs=$(for f in /var/cache/apt/archives/*.deb; do dpkg-deb -f "$f" Package 2>/dev/null; done | sort -u)
+local_deps=$(for f in /var/cache/apt/archives/*.deb; do dpkg-deb -f "$f" Depends 2>/dev/null; done | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g' | grep -v '^$' | sort -u)
+# Filter out deps that are satisfied by local packages (they aren't in apt repos)
+echo "$local_pkgs" > /tmp/local_pkg_names
+filtered_deps=$(echo "$local_deps" | grep -vxFf /tmp/local_pkg_names || true)
+apt-get -o Dir::State::status=/tmp/rootfs/var/lib/dpkg/status \
+    --yes --download-only install $essential $filtered_deps
+
+# Extract all packages into the target rootfs
+for f in /var/cache/apt/archives/*.deb; do
+    dpkg-deb --extract "$f" /tmp/rootfs
+done
+
+# dpkg-deb --extract doesn't run postinst scripts, so the /bin/sh symlink
+# normally created by update-alternatives is missing. Create it manually.
+# Also fix merged-usr: on Noble+, /bin should be a symlink to usr/bin but
+# dpkg-deb --extract may create it as a real directory if extraction order
+# causes a directory to be created before base-files' symlink.
+if [ -d /tmp/rootfs/usr/bin ] && [ -d /tmp/rootfs/bin ] && [ ! -L /tmp/rootfs/bin ]; then
+    # /bin is a real dir but should be a symlink on merged-usr systems
+    # Move any contents and replace with symlink
+    cp -a /tmp/rootfs/bin/* /tmp/rootfs/usr/bin/ 2>/dev/null || true
+    rm -rf /tmp/rootfs/bin
+    ln -s usr/bin /tmp/rootfs/bin
+fi
+if [ -d /tmp/rootfs/usr/sbin ] && [ -d /tmp/rootfs/sbin ] && [ ! -L /tmp/rootfs/sbin ]; then
+    cp -a /tmp/rootfs/sbin/* /tmp/rootfs/usr/sbin/ 2>/dev/null || true
+    rm -rf /tmp/rootfs/sbin
+    ln -s usr/sbin /tmp/rootfs/sbin
+fi
+if [ -d /tmp/rootfs/usr/lib ] && [ -d /tmp/rootfs/lib ] && [ ! -L /tmp/rootfs/lib ]; then
+    cp -a /tmp/rootfs/lib/* /tmp/rootfs/usr/lib/ 2>/dev/null || true
+    rm -rf /tmp/rootfs/lib
+    ln -s usr/lib /tmp/rootfs/lib
+fi
+if [ ! -e /tmp/rootfs/usr/bin/sh ]; then
+    if [ -x /tmp/rootfs/usr/bin/dash ]; then
+        ln -s dash /tmp/rootfs/usr/bin/sh
+    elif [ -x /tmp/rootfs/bin/dash ]; then
+        ln -s dash /tmp/rootfs/bin/sh
+    fi
+fi
+
+# Remove usrmerge package - our merged-usr fixup above already handles this,
+# and usrmerge's postinst fails on overlayfs (which BuildKit uses).
+# Create a fake dpkg status entry so dpkg thinks it's installed.
+for f in /var/cache/apt/archives/usrmerge_*.deb /var/cache/apt/archives/usr-is-merged_*.deb; do
+    if [ -f "$f" ]; then
+        pkg=$(dpkg-deb -f "$f" Package)
+        ver=$(dpkg-deb -f "$f" Version)
+        arch=$(dpkg-deb -f "$f" Architecture)
+        printf 'Package: %s\nStatus: install ok installed\nVersion: %s\nArchitecture: %s\nDescription: faked by dalec\n\n' "$pkg" "$ver" "$arch" >> /tmp/rootfs/var/lib/dpkg/status
+        rm "$f"
+    fi
+done
+
+cp /var/cache/apt/archives/*.deb /tmp/rootfs/var/cache/apt/archives/
+
+# Copy apt sources from worker into rootfs so the final container can install packages
+#
+# TODO: This is a workaround. For running tests, installing test steps should follow the same logic as here.
+cp -a /etc/apt/sources.list /tmp/rootfs/etc/apt/sources.list 2>/dev/null || true
+cp -a /etc/apt/sources.list.d/* /tmp/rootfs/etc/apt/sources.list.d/ 2>/dev/null || true
+`
+
+	script := llb.Scratch().File(llb.Mkfile("install.sh", 0o755, []byte(installScript)), opts...)
+
+	baseImg = input.Worker.Run(
+		dalec.WithConstraints(opts...),
+		llb.AddMount("/tmp/install.sh", script, llb.SourcePath("install.sh")),
+		llb.AddMount("/base-packages", basePkg, llb.Readonly),
+		llb.AddMount("/spec-packages", input.DebSt, llb.Readonly),
+		withRepos,
+		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
+		dalec.ShArgs("/tmp/install.sh"),
+		frontend.IgnoreCache(input.Client, targets.IgnoreCacheKeyContainer),
+	).AddMount("/tmp/rootfs", baseImg)
+
+	// Allow spec to override the base image entirely
+	bi, err := input.Spec.GetSingleBase(input.Target)
+	if err != nil {
+		return dalec.ErrorState(llb.Scratch(), err)
+	}
+	if bi != nil {
+		baseImg = bi.ToState(input.SOpt, opts...)
+	}
+
+	debug := llb.Scratch().File(llb.Mkfile("debug", 0o644, []byte(`debug=2`)), opts...)
+	debugOpt := llb.AddMount("/etc/dpkg/dpkg.cfg.d/99-dalec-debug", debug, llb.SourcePath("debug"), llb.Readonly)
+
+	// Run dpkg --install to properly configure the packages
+	// Try /usr/bin/sh first (merged-usr), fall back to /bin/sh (non-merged)
+	baseImg = baseImg.Run(
+		dalec.WithConstraints(opts...),
+		debugOpt,
+		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
+		llb.Args([]string{"/bin/sh", "-c", "dpkg --install --force-depends /var/cache/apt/archives/*.deb && rm -rf /var/cache/apt/archives/*.deb"}),
+		frontend.IgnoreCache(input.Client, targets.IgnoreCacheKeyContainer),
+	).Root()
+
+	return baseImg.With(dalec.InstallPostSymlinks(input.Spec.GetImagePost(input.Target), input.Worker, opts...))
+}
+
 func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, debSt llb.State, opts ...llb.ConstraintsOpt) llb.State {
+	if true {
+		return BuildDistrolessContainer(ctx, BuildDistrolessContainerInput{
+			Config: c,
+			Client: client,
+			Worker: c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...)),
+			SOpt:   sOpt,
+			Spec:   spec,
+			Target: targetKey,
+			DebSt:  debSt,
+			Opts:   opts,
+		})
+	}
+
 	opts = append(opts, frontend.IgnoreCache(client), dalec.ProgressGroup("Build Container Image"))
 
 	baseImg := llb.Image(c.DefaultOutputImage, llb.WithMetaResolver(sOpt.Resolver), dalec.WithConstraints(opts...))
