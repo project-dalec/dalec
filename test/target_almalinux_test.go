@@ -7,7 +7,7 @@ import (
 	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 )
 
-func TestAlmalinux9(t *testing.T) {
+func TestDalecTargetAlmalinux9(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -54,7 +54,7 @@ func TestAlmalinux9(t *testing.T) {
 	})
 }
 
-func TestAlmalinux8(t *testing.T) {
+func TestDalecTargetAlmalinux8(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
