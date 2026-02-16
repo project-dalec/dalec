@@ -30,9 +30,9 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 
 	baseImg := baseImageFromSpec(llb.Image(c.DefaultOutputImage, llb.WithMetaResolver(sOpt.Resolver), dalec.WithConstraints(opts...)), input)
 
-	if len(c.BasePackages) > 0 {
-		opts = append(opts, dalec.ProgressGroup("Install DEB Packages"))
+	opts = append(opts, dalec.ProgressGroup("Install spec package"))
 
+	if len(c.BasePackages) > 0 {
 		// Update the base image to include the base packages.
 		// This may include things that are necessary to even install the debSt package.
 		// So this must be done separately from the debSt package.
@@ -40,14 +40,10 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 			dalec.WithConstraints(opts...),
 			InstallLocalPkg(basePackages(ctx, input), true, opts...),
 			dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
-			frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 		).Root()
 	}
 
-	return installPackagesInContainer(baseImg, input, []llb.RunOption{
-		dalec.WithMountedAptCache(input.Config.AptCachePrefix, opts...),
-		InstallLocalPkg(debSt, true, opts...),
-	})
+	return installPackagesInContainer(baseImg, input, []llb.RunOption{InstallLocalPkg(debSt, true, opts...)})
 }
 
 func baseImageFromSpec(baseImg llb.State, input buildContainerInput) llb.State {
@@ -111,14 +107,13 @@ func extraRepos(input buildContainerInput) llb.RunOption {
 }
 
 func installPackagesInContainer(baseImg llb.State, input buildContainerInput, ro []llb.RunOption) llb.State {
-	opts := append(input.Opts, dalec.ProgressGroup("Install DEB Packages"))
-
-	debug := llb.Scratch().File(llb.Mkfile("debug", 0o644, []byte(`debug=2`)), opts...)
+	debug := llb.Scratch().File(llb.Mkfile("debug", 0o644, []byte(`debug=2`)), input.Opts...)
 
 	return baseImg.Run(
 		append(ro,
-			dalec.WithConstraints(opts...),
+			dalec.WithConstraints(input.Opts...),
 			extraRepos(input),
+			dalec.WithMountedAptCache(input.Config.AptCachePrefix, input.Opts...),
 			// This file makes dpkg give more verbose output which can be useful when things go awry.
 			llb.AddMount("/etc/dpkg/dpkg.cfg.d/99-dalec-debug", debug, llb.SourcePath("debug"), llb.Readonly),
 			dalec.RunOptFunc(func(cfg *llb.ExecInfo) {
@@ -131,13 +126,13 @@ func installPackagesInContainer(baseImg llb.State, input buildContainerInput, ro
 					return
 				}
 
-				tmp := llb.Scratch().File(llb.Mkfile("tmp", 0o644, nil), opts...)
+				tmp := llb.Scratch().File(llb.Mkfile("tmp", 0o644, nil), input.Opts...)
 				llb.AddMount("/etc/dpkg/dpkg.cfg.d/excludes", tmp, llb.SourcePath("tmp")).SetRunOption(cfg)
 			}),
 			frontend.IgnoreCache(input.Client, targets.IgnoreCacheKeyContainer),
 		)...,
 	).Root().
-		With(dalec.InstallPostSymlinks(input.Spec.GetImagePost(input.Target), input.Worker, opts...))
+		With(dalec.InstallPostSymlinks(input.Spec.GetImagePost(input.Target), input.Worker, input.Opts...))
 }
 
 func buildContainer(ctx context.Context, input buildContainerInput) llb.State {

@@ -12,7 +12,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -5098,13 +5097,6 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 			cacheIgnored := 0
 			execFound := false
 
-			pgNames := []string{}
-
-			expectedNames := []string{
-				"Install DEB Packages",
-				"Install RPMs",
-			}
-
 			for _, op := range ops {
 				if op.OpMetadata.IgnoreCache {
 					cacheIgnored++
@@ -5112,13 +5104,7 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 
 				e := op.Op.GetExec()
 				pg := op.OpMetadata.ProgressGroup.Name
-				if e == nil {
-					continue
-				}
-
-				if !slices.Contains(expectedNames, pg) {
-					pgNames = append(pgNames, pg)
-
+				if e == nil || (pg != "Install DEB Packages" && pg != "Install RPMs") {
 					continue
 				}
 
@@ -5135,7 +5121,7 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 			}
 
 			if !execFound {
-				t.Errorf("No exec ops found in the build with progress group names: %v, got: %v", expectedNames, pgNames)
+				t.Errorf("No exec ops found in the build")
 			}
 
 			if cacheIgnored != 2 && cacheIgnored != 1 {
