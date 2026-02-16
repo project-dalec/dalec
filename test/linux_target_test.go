@@ -925,12 +925,12 @@ index 0000000..5260cb1
 					t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
 				}
 
-				cacheIgnored := 0
+				cacheIgnored := []test.LLBOp{}
 				execFound := false
 
 				for _, op := range ops {
 					if op.OpMetadata.IgnoreCache {
-						cacheIgnored++
+						cacheIgnored = append(cacheIgnored, op)
 					}
 
 					e := op.Op.GetExec()
@@ -950,8 +950,13 @@ index 0000000..5260cb1
 					t.Errorf("No exec ops found in the build")
 				}
 
-				if cacheIgnored > 1 {
-					t.Fatalf("Expected only one operation to have cache ignore enabled, found %d", cacheIgnored)
+				if len(cacheIgnored) > 1 {
+					ops, err := test.LLBOpsToJSON(cacheIgnored)
+					if err != nil {
+						t.Errorf("Error converting ops to JSON: %v", err)
+					}
+
+					t.Errorf("Expected only one operation to have cache ignore enabled, found %d: \n%s", len(cacheIgnored), ops)
 				}
 			})
 		})
