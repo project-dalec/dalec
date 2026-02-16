@@ -31,7 +31,7 @@ func testEmptyArtifacts(ctx context.Context, t *testing.T, targetCfg targetConfi
 	t.Run("primary", func(t *testing.T) {
 		t.Parallel()
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Container))
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Package))
 			solveT(ctx, t, gwc, sr)
 		})
 	})
@@ -39,7 +39,7 @@ func testEmptyArtifacts(ctx context.Context, t *testing.T, targetCfg targetConfi
 
 // testArtifactsAtSpecLevel tests that artifacts defined in spec.artifacts are built and tested.
 func testArtifactsAtSpecLevel(ctx context.Context, t *testing.T, targetCfg targetConfig) {
-	vals := strings.Split(targetCfg.Container, "/")
+	vals := strings.Split(targetCfg.Package, "/")
 	primaryTarget := vals[0]
 
 	spec := &dalec.Spec{
@@ -86,7 +86,7 @@ func testArtifactsAtSpecLevel(ctx context.Context, t *testing.T, targetCfg targe
 // testMultipleArtifacts tests that a package with multiple artifacts defined in spec.target takes precedent over spec.artifacts
 func testTargetArtifactsTakePrecedence(ctx context.Context, t *testing.T, targetCfg targetConfig) {
 	// get the target we want to test for
-	vals := strings.Split(targetCfg.Container, "/")
+	vals := strings.Split(targetCfg.Package, "/")
 	primaryTarget := vals[0]
 	// prevent primaryTarget from being the same as secondaryTarget or tertiaryTarget
 	secondaryTarget := "mariner2"

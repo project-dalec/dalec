@@ -154,8 +154,7 @@ func testCustomRepo(ctx context.Context, t *testing.T, workerCfg workerConfig, t
 			sr = newSolveRequest(
 				withSpec(ctx, t, getSpec(depSpec, nil, repoPath, "public.key")),
 				withBuildContext(ctx, t, "test-repo", repoState),
-				withBuildTarget(targetCfg.Container),
-				withPlatformPtr(workerCfg.Platform),
+				withBuildTarget(targetCfg.Package),
 			)
 
 			_, err := gwc.Solve(ctx, sr)
@@ -204,8 +203,7 @@ func testCustomRepo(ctx context.Context, t *testing.T, workerCfg workerConfig, t
 				withSpec(ctx, t, spec),
 				withBuildContext(ctx, t, "test-repo", repoState),
 				withBuildContext(ctx, t, "repo-public-key", gpgKey),
-				withBuildTarget(targetCfg.Container),
-				withPlatformPtr(workerCfg.Platform),
+				withBuildTarget(targetCfg.Package),
 			)
 
 			res := solveT(ctx, t, gwc, sr)
