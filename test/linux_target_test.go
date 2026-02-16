@@ -167,7 +167,7 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(testConfig.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(testConfig.Target.Package))
 			sr.Evaluate = true
 			_, err := gwc.Solve(ctx, sr)
 			var xErr *moby_buildkit_v1_frontend.ExitError
@@ -252,7 +252,7 @@ echo "$BAR" > bar.txt
 			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 				sr := newSolveRequest(
 					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
+					withBuildTarget(testConfig.Target.Package),
 				)
 				solveT(ctx, t, gwc, sr)
 			})
@@ -489,7 +489,7 @@ index 0000000..5260cb1
 			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 				sr := newSolveRequest(
 					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
+					withBuildTarget(testConfig.Target.Package),
 					withBuildContext(ctx, t, patchContextName, patchContext),
 				)
 				sr.Evaluate = true
@@ -538,7 +538,7 @@ index 0000000..5260cb1
 			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 				sr := newSolveRequest(
 					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
+					withBuildTarget(testConfig.Target.Package),
 				)
 				solveT(ctx, t, gwc, sr)
 			})
@@ -616,7 +616,7 @@ index 0000000..5260cb1
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 			sr := newSolveRequest(
 				withSpec(ctx, t, &spec),
-				withBuildTarget(testConfig.Target.Container),
+				withBuildTarget(testConfig.Target.Package),
 			)
 			solveT(ctx, t, gwc, sr)
 		})
@@ -708,7 +708,7 @@ index 0000000..5260cb1
 			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 				sr := newSolveRequest(
 					withSpec(ctx, t, &spec),
-					withBuildTarget(testConfig.Target.Container),
+					withBuildTarget(testConfig.Target.Package),
 				)
 				solveT(ctx, t, gwc, sr)
 			})
@@ -1828,7 +1828,7 @@ WantedBy=multi-user.target
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 
@@ -1854,7 +1854,7 @@ WantedBy=multi-user.target
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 
@@ -1883,7 +1883,7 @@ WantedBy=multi-user.target
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -1999,7 +1999,7 @@ Environment="FOO_ARGS=--some-foo-args"
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2056,7 +2056,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2110,7 +2110,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2177,7 +2177,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2259,7 +2259,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2327,7 +2327,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2406,7 +2406,7 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2472,7 +2472,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2556,7 +2556,7 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2631,7 +2631,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2702,7 +2702,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
 			req.Evaluate = true
 			solveT(ctx, t, client, req)
 		})
@@ -2757,7 +2757,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2810,7 +2810,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -3289,7 +3289,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			sr := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			sr := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			sr.Evaluate = true
 			solveT(ctx, t, client, sr)
 		})
@@ -3416,7 +3416,7 @@ func main() {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			sr := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			sr := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			sr.Evaluate = true
 			solveT(ctx, t, client, sr)
 		})
@@ -3632,7 +3632,7 @@ func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetCon
 	}
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		reqOpts := append([]srOpt{withBuildTarget(targetCfg.Container), withSpec(ctx, t, spec)}, opts...)
+		reqOpts := append([]srOpt{withBuildTarget(targetCfg.Package), withSpec(ctx, t, spec)}, opts...)
 		req := newSolveRequest(reqOpts...)
 		solveT(ctx, t, client, req)
 	})
@@ -3679,7 +3679,7 @@ func testCustomLinuxWorker(ctx context.Context, t *testing.T, targetCfg targetCo
 		}
 
 		// Make sure the built-in worker can't build this package
-		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Container))
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Package))
 		_, err := gwc.Solve(ctx, sr)
 		if err == nil {
 			t.Fatal("expected solve to fail")
@@ -3708,7 +3708,7 @@ func testCustomLinuxWorker(ctx context.Context, t *testing.T, targetCfg targetCo
 
 		// Now build again with our custom worker
 		// Note, we are solving the main spec, not depSpec here.
-		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, workerCfg.ContextName, worker), withBuildTarget(targetCfg.Container))
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, workerCfg.ContextName, worker), withBuildTarget(targetCfg.Package))
 		solveT(ctx, t, gwc, sr)
 
 		// TODO: we should have a test to make sure this also works with source policies.
@@ -3905,7 +3905,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
 			assert.NilError(t, err)
@@ -3960,7 +3960,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
 			assert.NilError(t, err)
@@ -4027,7 +4027,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
 			assert.NilError(t, err)
@@ -4071,7 +4071,7 @@ func testLinuxSymlinkArtifacts(ctx context.Context, t *testing.T, cfg testLinuxC
 	}
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 		res := solveT(ctx, t, client, sr)
 		_, err := res.SingleRef()
 		assert.NilError(t, err)
@@ -4323,7 +4323,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 		}
 
 		t.Run("package", testForTarget(cfg.Target.Package))
-		t.Run("container", testForTarget(cfg.Target.Container))
+		t.Run("container", testForTarget(cfg.Target.Package))
 	})
 
 	t.Run("positive test", func(t *testing.T) {
