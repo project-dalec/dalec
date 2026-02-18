@@ -82,7 +82,7 @@ jobs:
           fi
 
   integration:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04-20260201.24.1
     strategy:
       fail-fast: false
       matrix:
