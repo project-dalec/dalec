@@ -82,7 +82,7 @@ jobs:
           fi
 
   integration:
-    runs-on: ubuntu-22.04-20260201.24.1
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -323,18 +323,18 @@ jobs:
           set -e
 
           dir="$(mktemp -d)"
-          f="${dir}/dockerd.log"
-          echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
-          sudo journalctl -u docker > "${f}"
+          echo "LOG_DIR=${dir}" >> $GITHUB_OUTPUT
 
-          echo "================ dmesg (last 200 lines) ================"
-          sudo dmesg --time-format iso | tail -200
-      - name: Upload buildkit logs
+          sudo journalctl -u docker > "${dir}/dockerd.log"
+          sudo journalctl -u containerd > "${dir}/containerd.log"
+          sudo journalctl --no-pager -k > "${dir}/kernel.log"
+          sudo dmesg --time-format iso > "${dir}/dmesg.log"
+      - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: e2e-dockerd-logs-${{ matrix.suite }}
-          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+          name: failure-logs-${{ matrix.suite }}
+          path: ${{ steps.dump-logs.outputs.LOG_DIR }}/*
           retention-days: 1
 
   unit:
