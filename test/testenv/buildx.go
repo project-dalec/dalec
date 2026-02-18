@@ -385,14 +385,29 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	}
 
 	_, err = c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, error) {
-		gwc = &clientForceDalecWithInput{gwc}
+		baseGwc := &clientForceDalecWithInput{gwc}
 
+		// Build all refs eagerly against the base (unwrapped) client so that
+		// building one ref does not needlessly trigger the build of another.
+		// The results are then injected into every subsequent Solve request.
 		b.mu.Lock()
+		refs := make(map[string]gwclient.BuildFunc, len(b.refs))
 		for id, f := range b.refs {
-			gwc = wrapWithInput(gwc, id, f)
+			refs[id] = f
 		}
 		b.mu.Unlock()
-		f(ctx, gwc)
+
+		cachedInputs := make(map[string]*gwclient.Result, len(refs))
+		for id, bf := range refs {
+			res, err := bf(ctx, baseGwc)
+			if err != nil {
+				return nil, fmt.Errorf("building ref %s: %w", id, err)
+			}
+			cachedInputs[id] = res
+		}
+
+		wrappedGwc := &clientWithCachedInputs{Client: baseGwc, inputs: cachedInputs}
+		f(ctx, wrappedGwc)
 		return gwclient.NewResult(), nil
 	}, ch)
 
@@ -461,41 +476,22 @@ func (c *clientForceDalecWithInput) Solve(ctx context.Context, req gwclient.Solv
 	return c.Client.Solve(ctx, req)
 }
 
-// gwClientInputInject is a gwclient.Client that injects the result of a build func into the solve request as an input named by the id.
-// This is used to inject a custom frontend into the solve request.
-// This does not change what frontend is used, but it does add the custom frontend as an input to the solve request.
-// This is so we don't need to have an actual external image from a registry or docker image store.
-type gwClientInputInject struct {
+// clientWithCachedInputs is a gwclient.Client that injects pre-built results
+// into every Solve request as named frontend inputs.
+// All refs are built eagerly against the base client, so building one ref
+// never triggers the build of another — avoiding the deeply nested gRPC calls
+// that caused resource starvation deadlocks in BuildKit.
+type clientWithCachedInputs struct {
 	gwclient.Client
 
-	id string
-	f  gwclient.BuildFunc
-
-	// Cache the result of the build func so it's only built once per gateway session.
-	// This prevents deeply nested gRPC calls on every Solve, which can cause
-	// resource starvation deadlocks in BuildKit when many tests run in parallel.
-	once   sync.Once
-	cached *gwclient.Result
-	err    error
+	inputs map[string]*gwclient.Result
 }
 
-func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) *gwClientInputInject {
-	return &gwClientInputInject{
-		Client: c,
-		id:     id,
-		f:      f,
-	}
-}
-
-func (c *gwClientInputInject) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
-	c.once.Do(func() {
-		c.cached, c.err = c.f(ctx, c.Client)
-	})
-	if c.err != nil {
-		return nil, c.err
-	}
-	if err := injectInput(ctx, c.cached, c.id, &req); err != nil {
-		return nil, err
+func (c *clientWithCachedInputs) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
+	for id, res := range c.inputs {
+		if err := injectInput(ctx, res, id, &req); err != nil {
+			return nil, err
+		}
 	}
 	return c.Client.Solve(ctx, req)
 }
