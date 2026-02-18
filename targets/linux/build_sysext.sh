@@ -18,6 +18,7 @@ case ${ARCH} in
 		exit 1 ;;
 esac
 
+IMAGE_BASENAME="${NAME}-${VERSION}-${ARCH}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf -- "${TMPDIR}"' EXIT
 mkdir -p "${TMPDIR}"/usr/lib/extension-release.d
@@ -27,6 +28,13 @@ ID=_any
 ARCHITECTURE=${ARCH}
 EXTENSION_RELOAD_MANAGER=1
 EOF
+
+
+# systemd-sysext expects extension-release.<IMAGE> where <IMAGE> matches the image basename.
+# Dalec outputs NAME-VERSION-ARCH.raw by default, so provide a matching entry too.
+# Keep extension-release.${NAME} for workflows that deploy/rename as NAME.raw.
+ln -sf "extension-release.${NAME}" "${TMPDIR}/usr/lib/extension-release.d/extension-release.${IMAGE_BASENAME}"
+
 
 cd /input
 shopt -s extglob nullglob
@@ -63,4 +71,4 @@ tar \
 	mkfs.erofs \
 		--tar=f \
 		-zlz4hc \
-		"/output/${NAME}-${VERSION}-${ARCH}.raw"
+		"/output/${IMAGE_BASENAME}.raw"
