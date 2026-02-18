@@ -6,6 +6,20 @@ NAME=$1
 VERSION=$2
 ARCH=$3
 
+# Default basename is Dalec’s historical output: NAME-VERSION-ARCH
+IMAGE_BASENAME="${NAME}-${VERSION}-${ARCH}"
+
+# Allow overriding the output basename (e.g. Flatcar expects /etc/extensions/<name>.raw).
+# If user passes "foo.raw", normalize to "foo".
+IMAGE_NAME="${DALEC_SYSEXT_IMAGE_NAME:-${IMAGE_BASENAME}}"
+IMAGE_NAME="${IMAGE_NAME%.raw}"
+
+# Matching knobs (Flatcar commonly wants ID=flatcar + VERSION_ID or SYSEXT_LEVEL).
+# Defaults preserve current behavior.
+OS_ID="${DALEC_SYSEXT_OS_ID:-_any}"
+OS_VERSION_ID="${DALEC_SYSEXT_OS_VERSION_ID:-}"
+SYSEXT_LEVEL="${DALEC_SYSEXT_SYSEXT_LEVEL:-}"
+
 # Map Docker/Go arch to systemd arch.
 case ${ARCH} in
 	arm|arm64|mips64|ppc64|s390x|sparc64|riscv64) : ;;
@@ -18,22 +32,30 @@ case ${ARCH} in
 		exit 1 ;;
 esac
 
-IMAGE_BASENAME="${NAME}-${VERSION}-${ARCH}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf -- "${TMPDIR}"' EXIT
-mkdir -p "${TMPDIR}"/usr/lib/extension-release.d
+REL_DIR="${TMPDIR}/usr/lib/extension-release.d"
+mkdir -p "${REL_DIR}"
 
-cat > "${TMPDIR}/usr/lib/extension-release.d/extension-release.${NAME}" <<-EOF
-ID=_any
+BASE_REL="extension-release.${NAME}"
+BASE_PATH="${REL_DIR}/${BASE_REL}"
+
+cat > "${BASE_PATH}" <<-EOF
+ID=${OS_ID}
 ARCHITECTURE=${ARCH}
 EXTENSION_RELOAD_MANAGER=1
 EOF
 
+[[ -n "${OS_VERSION_ID}" ]] && echo "VERSION_ID=${OS_VERSION_ID}" >> "${BASE_PATH}"
+[[ -n "${SYSEXT_LEVEL}" ]] && echo "SYSEXT_LEVEL=${SYSEXT_LEVEL}" >> "${BASE_PATH}"
+
+
 
 # systemd-sysext expects extension-release.<IMAGE> where <IMAGE> matches the image basename.
-# Dalec outputs NAME-VERSION-ARCH.raw by default, so provide a matching entry too.
-# Keep extension-release.${NAME} for workflows that deploy/rename as NAME.raw.
-ln -sf "extension-release.${NAME}" "${TMPDIR}/usr/lib/extension-release.d/extension-release.${IMAGE_BASENAME}"
+# Provide a matching entry for the produced image name.
+if [ "${IMAGE_NAME}" != "${NAME}" ]; then
+        ln -sf "${BASE_REL}" "${REL_DIR}/extension-release.${IMAGE_NAME}"
+fi
 
 
 cd /input
@@ -71,4 +93,4 @@ tar \
 	mkfs.erofs \
 		--tar=f \
 		-zlz4hc \
-		"/output/${IMAGE_BASENAME}.raw"
+		"/output/${IMAGE_NAME}.raw"
