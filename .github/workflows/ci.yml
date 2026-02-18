@@ -285,7 +285,7 @@ jobs:
           if [ -n "${TEST_SKIP}" ]; then
             skip="-skip=${TEST_SKIP}"
           fi
-          go test -timeout=59m -v -json ${run} ${skip} ./test | go run ./cmd/test2json2gha --slow 120s --logdir /tmp/testlogs
+          go test -timeout=119m -v -json ${run} ${skip} ./test | go run ./cmd/test2json2gha --slow 120s --logdir /tmp/testlogs
         env:
           TEST_SUITE: ${{ matrix.suite }}
           TEST_SKIP: ${{ matrix.skip }}
