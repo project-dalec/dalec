@@ -470,6 +470,13 @@ type gwClientInputInject struct {
 
 	id string
 	f  gwclient.BuildFunc
+
+	// Cache the result of the build func so it's only built once per gateway session.
+	// This prevents deeply nested gRPC calls on every Solve, which can cause
+	// resource starvation deadlocks in BuildKit when many tests run in parallel.
+	once   sync.Once
+	cached *gwclient.Result
+	err    error
 }
 
 func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) *gwClientInputInject {
@@ -481,11 +488,13 @@ func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) *gwClient
 }
 
 func (c *gwClientInputInject) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
-	res, err := c.f(ctx, c.Client)
-	if err != nil {
-		return nil, err
+	c.once.Do(func() {
+		c.cached, c.err = c.f(ctx, c.Client)
+	})
+	if c.err != nil {
+		return nil, c.err
 	}
-	if err := injectInput(ctx, res, c.id, &req); err != nil {
+	if err := injectInput(ctx, c.cached, c.id, &req); err != nil {
 		return nil, err
 	}
 	return c.Client.Solve(ctx, req)
