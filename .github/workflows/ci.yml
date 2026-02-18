@@ -262,7 +262,7 @@ jobs:
         run: |
           set -eu
 
-          docker buildx bake frontend
+          docker buildx bake --progress=plain frontend
           if [ "${TEST_SUITE}" = "other" ]; then
             exit 0
           fi
@@ -273,9 +273,12 @@ jobs:
             worker="windowscross"
           fi
           export WORKER_TARGET=${worker}/worker
-          docker buildx bake worker
+          docker buildx bake --progress=plain worker
         env:
           TEST_SUITE: ${{ matrix.suite }}
+      - name: Dump dmesg on failure
+        if: failure()
+        run: sudo dmesg --time-format iso | tail -100
       - name: Run integration tests
         run: |
           set -ex
@@ -323,6 +326,9 @@ jobs:
           f="${dir}/dockerd.log"
           echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
           sudo journalctl -u docker > "${f}"
+
+          echo "================ dmesg (last 200 lines) ================"
+          sudo dmesg --time-format iso | tail -200
       - name: Upload buildkit logs
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
