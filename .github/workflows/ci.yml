@@ -5,6 +5,12 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
+    inputs:
+      source_policy:
+        description: 'Enable BuildKit source policy'
+        type: boolean
+        default: false
   pull_request:
     branches:
       - main
@@ -172,6 +178,7 @@ jobs:
       - name: Setup QEMU
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
       - name: Setup source policy
+        if: inputs.source_policy
         uses: ./.github/actions/setup-source-policy
       - name: Aggressive cleanup
         run: |
@@ -375,6 +382,7 @@ jobs:
       - name: Expose GitHub tokens for caching
         uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3.1.0
       - name: Setup source policy
+        if: inputs.source_policy
         uses: ./.github/actions/setup-source-policy
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         name: Login to GHCR
