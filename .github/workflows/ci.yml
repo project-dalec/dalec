@@ -171,8 +171,8 @@ jobs:
         run: go mod download
       - name: Setup QEMU
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
-      - name: Setup source policy
-        uses: ./.github/actions/setup-source-policy
+      #- name: Setup source policy
+      #  uses: ./.github/actions/setup-source-policy
       - name: Aggressive cleanup
         run: |
           echo "================ INITIAL DISK USAGE ================"
@@ -262,7 +262,7 @@ jobs:
         run: |
           set -eu
 
-          docker buildx bake frontend
+          docker buildx bake --progress=plain frontend
           if [ "${TEST_SUITE}" = "other" ]; then
             exit 0
           fi
@@ -273,9 +273,12 @@ jobs:
             worker="windowscross"
           fi
           export WORKER_TARGET=${worker}/worker
-          docker buildx bake worker
+          docker buildx bake --progress=plain worker
         env:
           TEST_SUITE: ${{ matrix.suite }}
+      - name: Dump dmesg on failure
+        if: failure()
+        run: sudo dmesg --time-format iso | tail -100
       - name: Run integration tests
         run: |
           set -ex
@@ -320,15 +323,18 @@ jobs:
           set -e
 
           dir="$(mktemp -d)"
-          f="${dir}/dockerd.log"
-          echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
-          sudo journalctl -u docker > "${f}"
-      - name: Upload buildkit logs
+          echo "LOG_DIR=${dir}" >> $GITHUB_OUTPUT
+
+          sudo journalctl -u docker > "${dir}/dockerd.log"
+          sudo journalctl -u containerd > "${dir}/containerd.log"
+          sudo journalctl --no-pager -k > "${dir}/kernel.log"
+          sudo dmesg --time-format iso > "${dir}/dmesg.log"
+      - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: e2e-dockerd-logs-${{ matrix.suite }}
-          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+          name: failure-logs-${{ matrix.suite }}
+          path: ${{ steps.dump-logs.outputs.LOG_DIR }}/*
           retention-days: 1
 
   unit:
@@ -374,8 +380,8 @@ jobs:
 
       - name: Expose GitHub tokens for caching
         uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3.1.0
-      - name: Setup source policy
-        uses: ./.github/actions/setup-source-policy
+      #- name: Setup source policy
+      #  uses: ./.github/actions/setup-source-policy
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         name: Login to GHCR
         with:
