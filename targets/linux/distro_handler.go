@@ -5,10 +5,13 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
+	"github.com/moby/buildkit/frontend/dockerui"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
@@ -168,13 +171,32 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				rev = "1"
 			}
 
-			erofs := c.SysextWorker(sOpt, opts...).Run(
-				llb.Args([]string{scriptPath, spec.Name, fmt.Sprintf("v%s-%s-%s", spec.Version, rev, targetKey), platform.Architecture}),
-				llb.AddMount(scriptPath, scriptFile, llb.SourcePath("build_sysext.sh"), llb.Readonly),
-				llb.AddMount("/input", extracted, llb.Readonly),
-				dalec.WithConstraints(opts...),
-			).AddMount("/output", llb.Scratch())
+                        runOpts := []llb.RunOption{
+                                llb.Args([]string{scriptPath, spec.Name, fmt.Sprintf("v%s-%s-%s", spec.Version, rev, targetKey), platform.Architecture}),
+                                llb.AddMount(scriptPath, scriptFile, llb.SourcePath("build_sysext.sh"), llb.Readonly),
+                                llb.AddMount("/input", extracted, llb.Readonly),
+                                dalec.WithConstraints(opts...),
+                        }
 
+                        // Pass DALEC_SYSEXT_* build-args through as env vars for build_sysext.sh.
+                        dc, err := dockerui.NewClient(client)
+                        if err != nil {
+                                return nil, nil, err
+                        }
+                        env := sysextEnvFromBuildArgs(dc.BuildArgs)
+                        if len(env) > 0 {
+                                keys := make([]string, 0, len(env))
+                               for k := range env {
+                                        keys = append(keys, k)
+                                }
+                                sort.Strings(keys)
+                                for _, k := range keys {
+                                        runOpts = append(runOpts, llb.AddEnv(k, env[k]))
+                                }
+                        }
+
+                        erofs := c.SysextWorker(sOpt, opts...).Run(runOpts...).AddMount("/output", llb.Scratch())
+ 
 			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, pc)
 			tests := c.RunTests(ctx, client, spec, sOpt, erofs, targetKey, pc)
 
@@ -267,4 +289,15 @@ func getRef(ctx context.Context, client gwclient.Client, st llb.State) (gwclient
 	}
 
 	return res.SingleRef()
+}
+
+func sysextEnvFromBuildArgs(buildArgs map[string]string) map[string]string {
+        const pfx = "DALEC_SYSEXT_"
+        out := make(map[string]string)
+       for k, v := range buildArgs {
+                if strings.HasPrefix(k, pfx) && v != "" {
+                        out[k] = v
+                }
+        }
+        return out
 }
