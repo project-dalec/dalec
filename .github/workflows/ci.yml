@@ -55,6 +55,24 @@ permissions:
   packages: read
 
 jobs:
+  load-matrix:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          MATRIX=$(cat .github/workflows/ci/matrix.json)
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
   lint:
     runs-on: ubuntu-22.04
     steps:
@@ -88,29 +106,12 @@ jobs:
           fi
 
   integration:
+    needs: load-matrix
     runs-on: ubuntu-22.04
+    name: integration (${{ matrix.name }})
     strategy:
       fail-fast: false
-      matrix:
-        suite:
-          - Mariner2
-          - Azlinux3
-          - Bookworm
-          - Bullseye
-          - Bionic
-          - Focal
-          - Jammy
-          - Noble
-          - Windows
-          - Almalinux8
-          - Almalinux9
-          - Rockylinux8
-          - Rockylinux9
-          - Trixie
-          - other
-        include:
-          - suite: other
-            skip: Mariner2|Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
+      matrix: ${{ fromJson(needs.load-matrix.outputs.matrix) }}
 
     # TODO: support diff/merge
     # Right now this is handled by the e2e suite, but we can migrate that here.
@@ -270,19 +271,15 @@ jobs:
           set -eu
 
           docker buildx bake frontend
-          if [ "${TEST_SUITE}" = "other" ]; then
+          if [ "${NAME}" = "other" ]; then
             exit 0
           fi
 
-          # downcase the test suite to get the worker target
-          worker="${TEST_SUITE,,}"
-          if [ "${worker}" = "windows" ]; then
-            worker="windowscross"
-          fi
-          export WORKER_TARGET=${worker}/worker
+          # Lowercase the name to get the worker target
+          export WORKER_TARGET="${NAME,,}/worker"
           docker buildx bake worker
         env:
-          TEST_SUITE: ${{ matrix.suite }}
+          NAME: ${{ matrix.name }}
       - name: Run integration tests
         run: |
           set -ex
@@ -310,14 +307,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: integration-test-reports-${{matrix.suite}}
+          name: integration-test-reports-${{ matrix.name }}
           path: /tmp/reports/*
           retention-days: 1
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: integration-test-logs-${{matrix.suite}}
+          name: integration-test-logs-${{ matrix.name }}
           path: /tmp/testlogs/*
           retention-days: 1
       - name: dump logs
@@ -334,7 +331,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: e2e-dockerd-logs-${{ matrix.suite }}
+          name: e2e-dockerd-logs-${{ matrix.name }}
           path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
           retention-days: 1
 
