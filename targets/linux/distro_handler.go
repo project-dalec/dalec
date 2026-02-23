@@ -190,26 +190,12 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			// Merge env:
-			//  1) target defaults (if provided)
-			//  2) build-args (override defaults)
-			env := map[string]string{}
+			defaults := map[string]string{}
 			if p, ok := c.(sysextEnvProvider); ok {
-				for k, v := range p.SysextEnv(spec, targetKey) {
-					if v != "" {
-						env[k] = v
-					}
-				}
+				defaults = p.SysextEnv(spec, targetKey)
 			}
 
-			// If caller pins VERSION_ID but didn't explicitly set SYSEXT_LEVEL, drop
-			// any default SYSEXT_LEVEL so we don't over-constrain Flatcar matching.
-			if dc.BuildArgs["DALEC_SYSEXT_OS_VERSION_ID"] != "" && dc.BuildArgs["DALEC_SYSEXT_SYSEXT_LEVEL"] == "" {
-				delete(env, "DALEC_SYSEXT_SYSEXT_LEVEL")
-			}
-			for k, v := range sysextEnvFromBuildArgs(dc.BuildArgs) {
-				env[k] = v
-			}
+			env := mergeSysextEnv(defaults, dc.BuildArgs)
 
 			if len(env) > 0 {
 				keys := make([]string, 0, len(env))
@@ -316,6 +302,30 @@ func getRef(ctx context.Context, client gwclient.Client, st llb.State) (gwclient
 	}
 
 	return res.SingleRef()
+}
+
+func mergeSysextEnv(defaults map[string]string, buildArgs map[string]string) map[string]string {
+	env := map[string]string{}
+
+	// 1) defaults
+	for k, v := range defaults {
+		if v != "" {
+			env[k] = v
+		}
+	}
+
+	// If caller pins VERSION_ID but didn't explicitly set SYSEXT_LEVEL, drop
+	// any default SYSEXT_LEVEL so we don't over-constrain Flatcar matching.
+	if buildArgs["DALEC_SYSEXT_OS_VERSION_ID"] != "" && buildArgs["DALEC_SYSEXT_SYSEXT_LEVEL"] == "" {
+		delete(env, "DALEC_SYSEXT_SYSEXT_LEVEL")
+	}
+
+	// 2) build-args override defaults
+	for k, v := range sysextEnvFromBuildArgs(buildArgs) {
+		env[k] = v
+	}
+
+	return env
 }
 
 func sysextEnvFromBuildArgs(buildArgs map[string]string) map[string]string {

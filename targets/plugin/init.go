@@ -4,9 +4,9 @@ import (
 	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/targets/linux/deb/debian"
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
+	"github.com/project-dalec/dalec/targets/linux/flatcar"
 	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
-	"github.com/project-dalec/dalec/targets/linux/flatcar"
 	"github.com/project-dalec/dalec/targets/linux/rpm/rockylinux"
 	"github.com/project-dalec/dalec/targets/windows"
 )
