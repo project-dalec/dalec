@@ -283,7 +283,7 @@ func (b *bufCloser) Close() error {
 type containerProcess struct {
 	t       *testing.T
 	decoder *json.Decoder
-	pr      *io.PipeReader
+	stdoutR *io.PipeReader
 	errChan <-chan error
 }
 
@@ -323,13 +323,13 @@ func (ts *TestState) runContainerWithEventsDirect(ctx context.Context, cont gwcl
 		t = ts.T
 	)
 
-	pr, pw := io.Pipe()
+	stdoutR, stdoutW := io.Pipe()
 	stderr := bufCloser{bytes.NewBuffer(nil)}
 
 	t.Log("starting container")
 	cp, err := cont.Start(ctx, gwclient.StartRequest{
 		Args:   args,
-		Stdout: pw,
+		Stdout: stdoutW,
 		Stderr: &stderr,
 	})
 	if err != nil {
@@ -344,16 +344,16 @@ func (ts *TestState) runContainerWithEventsDirect(ctx context.Context, cont gwcl
 		if err != nil {
 			err = errors.Join(errContainerFailed, err, fmt.Errorf("stderr:\n%s", stderr.String()))
 			ec <- err
-			pw.CloseWithError(err)
+			stdoutW.CloseWithError(err)
 		} else {
-			pw.Close()
+			stdoutW.Close()
 		}
 	}()
 
 	return &containerProcess{
 		t:       t,
-		decoder: json.NewDecoder(pr),
-		pr:      pr,
+		decoder: json.NewDecoder(stdoutR),
+		stdoutR: stdoutR,
 		errChan: ec,
 	}
 }
@@ -367,7 +367,7 @@ func (ts *TestState) waitForReady(ctx context.Context, proc *containerProcess, t
 	// Close the pipe on timeout to unblock the decoder
 	go func() {
 		<-ctx.Done()
-		proc.pr.Close()
+		proc.stdoutR.Close()
 	}()
 
 	for event, err := range proc.Events() {
