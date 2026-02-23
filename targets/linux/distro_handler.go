@@ -56,6 +56,12 @@ type DistroConfig interface {
 		targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption
 }
 
+// Optional: distros/targets can provide default env for build_sysext.sh.
+// Any DALEC_SYSEXT_* build-args should override these defaults.
+type sysextEnvProvider interface {
+	SysextEnv(spec *dalec.Spec, targetKey string) map[string]string
+}
+
 func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
 	img, err := resolveConfig(ctx, sOpt, spec, platform, targetKey)
 	if err != nil {
@@ -171,32 +177,53 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				rev = "1"
 			}
 
-                        runOpts := []llb.RunOption{
-                                llb.Args([]string{scriptPath, spec.Name, fmt.Sprintf("v%s-%s-%s", spec.Version, rev, targetKey), platform.Architecture}),
-                                llb.AddMount(scriptPath, scriptFile, llb.SourcePath("build_sysext.sh"), llb.Readonly),
-                                llb.AddMount("/input", extracted, llb.Readonly),
-                                dalec.WithConstraints(opts...),
-                        }
+			runOpts := []llb.RunOption{
+				llb.Args([]string{scriptPath, spec.Name, fmt.Sprintf("v%s-%s-%s", spec.Version, rev, targetKey), platform.Architecture}),
+				llb.AddMount(scriptPath, scriptFile, llb.SourcePath("build_sysext.sh"), llb.Readonly),
+				llb.AddMount("/input", extracted, llb.Readonly),
+				dalec.WithConstraints(opts...),
+			}
 
-                        // Pass DALEC_SYSEXT_* build-args through as env vars for build_sysext.sh.
-                        dc, err := dockerui.NewClient(client)
-                        if err != nil {
-                                return nil, nil, err
-                        }
-                        env := sysextEnvFromBuildArgs(dc.BuildArgs)
-                        if len(env) > 0 {
-                                keys := make([]string, 0, len(env))
-                               for k := range env {
-                                        keys = append(keys, k)
-                                }
-                                sort.Strings(keys)
-                                for _, k := range keys {
-                                        runOpts = append(runOpts, llb.AddEnv(k, env[k]))
-                                }
-                        }
+			// Pass DALEC_SYSEXT_* build-args through as env vars for build_sysext.sh.
+			dc, err := dockerui.NewClient(client)
+			if err != nil {
+				return nil, nil, err
+			}
 
-                        erofs := c.SysextWorker(sOpt, opts...).Run(runOpts...).AddMount("/output", llb.Scratch())
- 
+			// Merge env:
+			//  1) target defaults (if provided)
+			//  2) build-args (override defaults)
+			env := map[string]string{}
+			if p, ok := c.(sysextEnvProvider); ok {
+				for k, v := range p.SysextEnv(spec, targetKey) {
+					if v != "" {
+						env[k] = v
+					}
+				}
+			}
+
+			// If caller pins VERSION_ID but didn't explicitly set SYSEXT_LEVEL, drop
+			// any default SYSEXT_LEVEL so we don't over-constrain Flatcar matching.
+			if dc.BuildArgs["DALEC_SYSEXT_OS_VERSION_ID"] != "" && dc.BuildArgs["DALEC_SYSEXT_SYSEXT_LEVEL"] == "" {
+				delete(env, "DALEC_SYSEXT_SYSEXT_LEVEL")
+			}
+			for k, v := range sysextEnvFromBuildArgs(dc.BuildArgs) {
+				env[k] = v
+			}
+
+			if len(env) > 0 {
+				keys := make([]string, 0, len(env))
+				for k := range env {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					runOpts = append(runOpts, llb.AddEnv(k, env[k]))
+				}
+			}
+
+			erofs := c.SysextWorker(sOpt, opts...).Run(runOpts...).AddMount("/output", llb.Scratch())
+
 			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, pc)
 			tests := c.RunTests(ctx, client, spec, sOpt, erofs, targetKey, pc)
 
@@ -292,12 +319,12 @@ func getRef(ctx context.Context, client gwclient.Client, st llb.State) (gwclient
 }
 
 func sysextEnvFromBuildArgs(buildArgs map[string]string) map[string]string {
-        const pfx = "DALEC_SYSEXT_"
-        out := make(map[string]string)
-       for k, v := range buildArgs {
-                if strings.HasPrefix(k, pfx) && v != "" {
-                        out[k] = v
-                }
-        }
-        return out
+	const pfx = "DALEC_SYSEXT_"
+	out := make(map[string]string)
+	for k, v := range buildArgs {
+		if strings.HasPrefix(k, pfx) && v != "" {
+			out[k] = v
+		}
+	}
+	return out
 }

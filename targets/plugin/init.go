@@ -6,6 +6,7 @@ import (
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
+	"github.com/project-dalec/dalec/targets/linux/flatcar"
 	"github.com/project-dalec/dalec/targets/linux/rpm/rockylinux"
 	"github.com/project-dalec/dalec/targets/windows"
 )
@@ -28,6 +29,8 @@ func init() {
 
 	targets.RegisterBuildTarget(azlinux.Mariner2TargetKey, azlinux.Mariner2Config.Handle)
 	targets.RegisterBuildTarget(azlinux.AzLinux3TargetKey, azlinux.Azlinux3Config.Handle)
+
+	targets.RegisterBuildTarget(flatcar.TargetKey, flatcar.DefaultConfig.Handle)
 
 	targets.RegisterBuildTarget(windows.DefaultTargetKey, windows.Handle)
 }

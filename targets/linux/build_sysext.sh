@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euxo pipefail
+shopt -s extglob nullglob
 
 NAME=$1
 VERSION=$2
@@ -59,7 +60,6 @@ fi
 
 
 cd /input
-shopt -s extglob nullglob
 
 # Sysexts cannot include /etc, so move that data to /usr/share/${NAME}/etc and
 # copy it to /etc at runtime.
@@ -73,8 +73,8 @@ for ITEM in usr/lib/systemd/system/!(*@*).service; do
 	ITEM=${ITEM##*/}
 	mkdir -p "${TMPDIR}"/usr/lib/systemd/system/multi-user.target.d
 	cat > "${TMPDIR}/usr/lib/systemd/system/multi-user.target.d/10-${NAME}-${ITEM%.service}.conf" <<-EOF
-	[Unit]
-	Upholds=${ITEM}
+[Unit]
+Upholds=${ITEM}
 	EOF
 done
 
