@@ -15,6 +15,10 @@ import (
 
 const passwd = "password"
 
+var (
+	eventOut = json.NewEncoder(os.Stdout)
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: git_http_server <command> [args...]")
@@ -33,7 +37,7 @@ func main() {
 	}
 
 	if err != nil {
-		emitError(err.Error())
+		emitError(err)
 		os.Exit(1)
 	}
 }
@@ -122,13 +126,13 @@ func emitReady(ip, port string) {
 		Type:  gitservices.EventTypeReady,
 		Ready: &gitservices.ReadyEvent{IP: ip, Port: port},
 	}
-	json.NewEncoder(os.Stdout).Encode(event) //nolint:errcheck
+	eventOut.Encode(event) //nolint:errcheck
 }
 
-func emitError(msg string) {
+func emitError(err error) {
 	event := gitservices.ServerEvent{
 		Type:  gitservices.EventTypeError,
-		Error: &gitservices.ErrorEvent{Message: msg},
+		Error: &gitservices.ErrorEvent{Message: err.Error()},
 	}
-	json.NewEncoder(os.Stderr).Encode(event) //nolint:errcheck
+	eventOut.Encode(event) //nolint:errcheck
 }
