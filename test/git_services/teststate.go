@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -178,6 +177,10 @@ func (ts *TestState) newContainer(ctx context.Context, rootfs llb.State) gwclien
 		t.Fatalf("could not create container: %s", err)
 	}
 
+	t.Cleanup(func() {
+		cont.Release(context.WithoutCancel(ctx)) //nolint:errcheck
+	})
+
 	return cont
 }
 
@@ -224,6 +227,10 @@ func (ts *TestState) StartSSHServer(ctx context.Context, gitHost llb.State) Serv
             #!/usr/bin/env sh
             set -e
 
+            # Make sure we trap exit signals
+            # This is POSIX shell, not bash, so we can't use the "EXIT" shorthand
+            trap exit INT HUP TERM
+
             IP=$({{ .HTTPServerPath }} getip)
             PORT="{{ .SSHPort }}"
 
@@ -235,7 +242,7 @@ func (ts *TestState) StartSSHServer(ctx context.Context, gitHost llb.State) Serv
             SERVER_PID=$!
 
             # Wait for server to be ready
-            while ! nc -zw5 127.0.0.1 "$PORT" 2>/dev/null; do
+            while ! nc -zw5 "${IP}" "$PORT" 2>/dev/null; do
                 # Check if server is still running
                 if ! kill -0 $SERVER_PID 2>/dev/null; then
                     echo '{"type":"error","error":{"message":"sshd exited unexpectedly"}}'
@@ -367,16 +374,14 @@ func (ts *TestState) waitForReady(ctx context.Context, proc *containerProcess, t
 	// Close the pipe on timeout to unblock the decoder
 	go func() {
 		<-ctx.Done()
-		proc.stdoutR.Close()
+		proc.stdoutR.CloseWithError(ctx.Err())
 	}()
 
 	for event, err := range proc.Events() {
 		if err != nil {
-			if ctx.Err() != nil {
-				t.Fatalf("timeout waiting for server ready event")
-			}
 			t.Fatalf("error reading event: %v", err)
 		}
+
 		switch event.Type {
 		case EventTypeReady:
 			if event.Ready == nil {
