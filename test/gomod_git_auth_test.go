@@ -104,6 +104,7 @@ go {{ .ModFileGoVersion }}
 		ctx := startTestSpan(baseCtx, t)
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			attr := attr
 			testState := gitservices.NewTestState(t, client, &attr)
 
 			worker, _, gitHost := initStates(&testState)
@@ -161,6 +162,7 @@ go {{ .ModFileGoVersion }}
 		agentErrChan := startSSHAgent(t, privkey, sockaddr)
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			attr := attr
 			testState := gitservices.NewTestState(t, client, &attr)
 
 			_, repo, gitHost := initStates(&testState)
