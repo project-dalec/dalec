@@ -565,6 +565,9 @@ func (s Spec) Validate() error {
 		if err := t.validate(); err != nil {
 			errs = append(errs, errors.Wrapf(err, "target %s", k))
 		}
+		if err := validateSubPackageNames(s.Name, k, t.Packages); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	if err := s.Image.validate(); err != nil {
