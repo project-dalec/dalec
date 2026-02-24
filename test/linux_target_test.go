@@ -77,6 +77,8 @@ type targetConfig struct {
 	// Sysext is the target for creating a systemd system extension.
 	Sysext string
 
+	Subpackages *subpackageTestConfig
+
 	// FormatDepEqual, when set, alters the provided dependency version to match
 	// what is necessary for the target distro to set a dependency for an equals
 	// operator.
@@ -3864,6 +3866,14 @@ func Value() string {
 		ctx := startTestSpan(baseCtx, t)
 		testArtifactCapabilities(ctx, t, testConfig)
 	})
+
+	if testConfig.Target.Subpackages != nil {
+		t.Run("subpackages", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(baseCtx, t)
+			testSubpackages(ctx, t, testConfig.Target, testConfig.Target.Subpackages)
+		})
+	}
 }
 
 func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetConfig, opts ...srOpt) {

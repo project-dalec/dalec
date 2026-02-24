@@ -47,7 +47,7 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	baseMountPath := rpmMountDir + "-base"
 	basePkgs := llb.Scratch().File(llb.Mkdir("/RPMS", 0o755), opts...)
 	pkgs := []string{
-		filepath.Join(rpmMountDir, "**/*.rpm"),
+		filepath.Join(rpmMountDir, "*/*.rpm"),
 	}
 
 	if !skipBase && len(cfg.BasePackages) > 0 {
@@ -124,7 +124,11 @@ func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (
 		}
 
 		pkg := cfg.BuildPkg(ctx, client, sOpt, depsSpec, targetKey, pg)
-		ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, pkg, pg)
+		containerSpec := *spec
+		containerSpec.Name = depsSpec.Name
+		containerSpec.Version = depsSpec.Version
+		containerSpec.Revision = depsSpec.Revision
+		ctr := cfg.BuildContainer(ctx, client, sOpt, &containerSpec, targetKey, pkg, pg)
 
 		def, err := ctr.Marshal(ctx, pc)
 		if err != nil {
