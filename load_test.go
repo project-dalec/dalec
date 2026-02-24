@@ -852,6 +852,53 @@ targets:
 
 }
 
+func TestPackageFiles(t *testing.T) {
+	dt := []byte(`
+name: test-package
+description: Test package with custom file listings
+version: 1.0.0
+revision: 1
+license: MIT
+
+artifacts:
+  package_files:
+    rpm: |
+      %{_bindir}/myapp
+      %{_includedir}/myapp.h
+      %{_mandir}/man1/myapp.1*
+    deb: |
+      usr/bin/myapp
+      usr/include/myapp.h
+      usr/share/man/man1/myapp.1*
+`)
+
+	spec, err := LoadSpec(dt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify PackageFiles were loaded correctly
+	assert.Check(t, cmp.Len(spec.Artifacts.PackageFiles, 2))
+	
+	rpmFiles := spec.Artifacts.PackageFiles["rpm"]
+	t.Logf("Loaded RPM files: %q", rpmFiles)
+	
+	debFiles := spec.Artifacts.PackageFiles["deb"]
+	t.Logf("Loaded DEB files: %q", debFiles)
+	
+	// Just check that files contain the expected content
+	assert.Check(t, cmp.Contains(rpmFiles, "%{_bindir}/myapp"))
+	assert.Check(t, cmp.Contains(rpmFiles, "%{_includedir}/myapp.h"))
+	assert.Check(t, cmp.Contains(rpmFiles, "%{_mandir}/man1/myapp.1*"))
+	
+	assert.Check(t, cmp.Contains(debFiles, "usr/bin/myapp"))
+	assert.Check(t, cmp.Contains(debFiles, "usr/include/myapp.h"))
+	assert.Check(t, cmp.Contains(debFiles, "usr/share/man/man1/myapp.1*"))
+
+	// Verify IsEmpty() works correctly with PackageFiles
+	assert.Check(t, !spec.Artifacts.IsEmpty())
+}
+
 func TestBuildArgSubst(t *testing.T) {
 	t.Run("value provided", func(t *testing.T) {
 		dt := []byte(`

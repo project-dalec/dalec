@@ -725,6 +725,83 @@ getent group testgroup >/dev/null || groupadd --system testgroup
 		want = ""
 		assert.Equal(t, want, got)
 	})
+
+	t.Run("custom package files for rpm", func(t *testing.T) {
+		w := &specWrapper{Spec: &dalec.Spec{
+			Name: "test-package",
+			Artifacts: dalec.Artifacts{
+				PackageFiles: map[string]string{
+					"rpm": `%{_bindir}/myapp
+%{_includedir}/myapp.h
+%{_mandir}/man1/myapp.1*`,
+				},
+			},
+		}}
+
+		// Test Files() method uses custom listing
+		got := w.Files().String()
+		want := `%files
+%{_bindir}/myapp
+%{_includedir}/myapp.h
+%{_mandir}/man1/myapp.1*
+
+`
+		assert.Equal(t, want, got)
+
+		// Test Install() method skips individual artifact copying
+		installGot := w.Install().String()
+		installWant := `%install
+
+`
+		assert.Equal(t, installWant, installGot)
+	})
+
+	t.Run("custom package files with symlinks", func(t *testing.T) {
+		w := &specWrapper{Spec: &dalec.Spec{
+			Name: "test-package",
+			Artifacts: dalec.Artifacts{
+				PackageFiles: map[string]string{
+					"rpm": `%{_bindir}/myapp
+%{_includedir}/myapp.h`,
+				},
+				Links: []dalec.ArtifactSymlinkConfig{
+					{
+						Source: "/usr/bin/myapp",
+						Dest:   "/usr/local/bin/myapp-link",
+					},
+				},
+			},
+		}}
+
+		// Test Install() method still handles symlinks
+		installGot := w.Install().String()
+		installWant := `%install
+mkdir -p %{buildroot}/usr/local/bin
+ln -sf /usr/bin/myapp %{buildroot}//usr/local/bin/myapp-link
+
+`
+		assert.Equal(t, installWant, installGot)
+	})
+
+	t.Run("fallback to traditional artifacts when no custom files", func(t *testing.T) {
+		w := &specWrapper{Spec: &dalec.Spec{
+			Name: "test-package",
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"myapp": {},
+				},
+			},
+		}}
+
+		// Test Files() method falls back to traditional behavior
+		got := w.Files().String()
+		assert.Assert(t, strings.Contains(got, "%{_bindir}/myapp"))
+
+		// Test Install() method uses traditional copying
+		installGot := w.Install().String()
+		assert.Assert(t, strings.Contains(installGot, "mkdir -p %{buildroot}/%{_bindir}"))
+		assert.Assert(t, strings.Contains(installGot, "cp -r myapp"))
+	})
 }
 
 func TestTemplate_Requires(t *testing.T) {
