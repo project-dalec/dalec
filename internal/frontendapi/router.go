@@ -7,8 +7,11 @@ import (
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/debug"
 	"github.com/project-dalec/dalec/internal/plugins"
+	debdistro "github.com/project-dalec/dalec/targets/linux/deb/distro"
 	_ "github.com/project-dalec/dalec/targets/plugin"
 )
+
+const altSuffix = "-testing-alt"
 
 func NewBuildRouter(ctx context.Context) (*frontend.BuildMux, error) {
 	var mux frontend.BuildMux
@@ -40,8 +43,27 @@ func loadBuildPlugins(ctx context.Context, mux *frontend.BuildMux) error {
 			return err
 		}
 
-		mux.Add(r.ID, v.(plugins.BuildHandler).HandleBuild, nil)
+		mux.Add(r.ID, v.(plugins.BuildHandler).Handle, nil)
+
+		if includeAltTestingTargets {
+			vv, ok := v.(*debdistro.Config)
+			if ok {
+				// WARNING: This is a nasty hack.
+				// It changes the distro ID used for the alt distro
+				// It does this because the deb implementation that uses cache dir's uses VersionID as a cache key
+				// We need the cache keys to be different for these alt targets.
+				// We should consider what we've done here as we iterate on our interfaces.
+				deb := *vv
+				deb.VersionID += "testingalt"
+				v = &deb
+			}
+			mux.Add(TestingAltTargetKey(r.ID), v.(plugins.BuildHandler).Handle, nil)
+		}
 	}
 
 	return nil
+}
+
+func TestingAltTargetKey(key string) string {
+	return key + altSuffix
 }
