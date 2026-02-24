@@ -2198,6 +2198,74 @@
 			],
 			"description": "Spec is the specification for a package build."
 		},
+		"SubPackage": {
+			"required": [
+				"description"
+			],
+			"properties": {
+				"artifacts": {
+					"$ref": "#/$defs/Artifacts",
+					"description": "Artifacts specifies which build outputs go into this supplemental package.\nThis is self-contained — no artifacts are inherited from the primary package."
+				},
+				"conflicts": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Conflicts is the list of packages that conflict with this supplemental package."
+				},
+				"dependencies": {
+					"$ref": "#/$defs/SubPackageDependencies",
+					"description": "Dependencies specifies runtime dependencies for this supplemental package.\nOnly runtime and recommends dependencies are allowed; build dependencies\nare shared with the primary package."
+				},
+				"description": {
+					"type": [
+						"string"
+					],
+					"description": "Description is the package description. This is required — both RPM and\nDebian require a description/summary for every subpackage."
+				},
+				"name": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Name overrides the default package name.\nBy default, the package name is \"\u003cparent\u003e-\u003ckey\u003e\" where \u003ckey\u003e is the map\nkey under which this SubPackage is defined. Set this to use a fully custom\npackage name instead."
+				},
+				"provides": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Provides is the list of things this supplemental package provides."
+				},
+				"replaces": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Replaces is the list of packages that this supplemental package replaces/obsoletes."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SubPackage defines a supplemental package produced from the same build output as the primary package."
+		},
+		"SubPackageDependencies": {
+			"properties": {
+				"recommends": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Recommends is the list of packages recommended to install with the supplemental package.\nNote: Not all package managers support this (e.g. rpm)"
+				},
+				"runtime": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Runtime is the list of packages required to install/run the supplemental package."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SubPackageDependencies contains only the dependency fields valid for supplemental packages."
+		},
 		"SymlinkTarget": {
 			"required": [
 				"path",
@@ -2374,6 +2442,16 @@
 				"package_config": {
 					"$ref": "#/$defs/PackageConfig",
 					"description": "PackageConfig is the configuration to use for artifact targets, such as\nrpms, debs, or zip files containing Windows binaries"
+				},
+				"packages": {
+					"additionalProperties": {
+						"$ref": "#/$defs/SubPackage"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Packages defines supplemental packages produced from the same build output\nas the primary package. Each entry produces an additional package with its\nown artifact selection, runtime dependencies, and metadata.\nThe map key is used as a suffix for the default package name (\"\u003cspecName\u003e-\u003ckey\u003e\")."
 				},
 				"provides": {
 					"$ref": "#/$defs/PackageDependencyList",
