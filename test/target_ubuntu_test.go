@@ -155,7 +155,7 @@ func debExpectedFiles(ver string) func(*dalec.Spec, ocispecs.Platform) []string 
 	}
 }
 
-func TestJammy(t *testing.T) {
+func TestDalecTargetJammy(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -169,7 +169,7 @@ func TestJammy(t *testing.T) {
 	testUbuntuBaseDependencies(t, testConf.Target)
 }
 
-func TestNoble(t *testing.T) {
+func TestDalecTargetNoble(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -182,7 +182,7 @@ func TestNoble(t *testing.T) {
 	testUbuntuBaseDependencies(t, testConf.Target)
 }
 
-func TestFocal(t *testing.T) {
+func TestDalecTargetFocal(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -197,7 +197,7 @@ func TestFocal(t *testing.T) {
 	testUbuntuBaseDependencies(t, testConf.Target)
 }
 
-func TestBionic(t *testing.T) {
+func TestDalecTargetBionic(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
