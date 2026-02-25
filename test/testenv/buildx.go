@@ -28,6 +28,7 @@ import (
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"gotest.tools/v3/assert"
@@ -92,7 +93,17 @@ func (c *connCloseWrapper) Close() error {
 }
 
 func (b *BuildxEnv) dialStdio(ctx context.Context) error {
-	c, err := client.New(ctx, "", client.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+	// Use gRPC keepalive to detect when the dial-stdio connection goes dead.
+	// Without this, if the Docker daemon restarts, dial-stdio hangs until
+	// something is written to its stdin. The keepalive pings force periodic
+	// writes through the net.Pipe, which causes dial-stdio to notice the
+	// broken upstream connection and exit.
+	keepaliveOpt := client.WithGRPCDialOption(grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:    10 * time.Second,
+		Timeout: 5 * time.Second,
+	}))
+
+	c, err := client.New(ctx, "", keepaliveOpt, client.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		args := []string{"buildx", "dial-stdio", "--progress=plain"}
 		if b.builder != "" {
 			args = append(args, "--builder="+b.builder)
