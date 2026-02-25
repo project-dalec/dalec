@@ -90,25 +90,42 @@ func TestRules_OverrideSystemd(t *testing.T) {
 `
 			assert.Equal(t, out.String(), expect)
 		})
+	})
 
-		t.Run("mixed", func(t *testing.T) {
-			w := newWrapper(map[string]dalec.SystemdUnitConfig{
-				"foo.service": {Enable: false},
-				"foo.socket":  {Enable: true},
-				"bar.service": {Enable: true},
-			})
+	t.Run("subpackage mixed enable routes custom enable to subpackage postinst", func(t *testing.T) {
+		w := &rulesWrapper{
+			Spec: &dalec.Spec{
+				Name: "example",
+				Targets: map[string]dalec.Target{
+					"testdistro": {
+						Packages: map[string]dalec.SubPackage{
+							"svc": {
+								Description: "Service package",
+								Artifacts: &dalec.Artifacts{
+									Systemd: &dalec.SystemdConfiguration{
+										Units: map[string]dalec.SystemdUnitConfig{
+											"foo.service": {Enable: true},
+											"foo.socket":  {Enable: false},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			target: "testdistro",
+		}
 
-			out, err := w.OverrideSystemd()
-			assert.NilError(t, err)
-			expect := `override_dh_installsystemd:
-	dh_installsystemd --name=bar
-	dh_installsystemd --name=foo --no-enable
-	[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
-	[ -x debian/postinst ] || chmod +x debian/postinst
-	cat debian/dalec/custom_systemd_postinst.sh.partial >> debian/postinst
+		out, err := w.OverrideSystemd()
+		assert.NilError(t, err)
+		expect := `override_dh_installsystemd:
+	dh_installsystemd -pexample-svc --name=foo --no-enable
+	[ -f debian/example-svc.postinst ] || (echo '#!/bin/sh' > debian/example-svc.postinst; echo 'set -e' >> debian/example-svc.postinst)
+	[ -x debian/example-svc.postinst ] || chmod +x debian/example-svc.postinst
+	cat debian/dalec/example-svc.custom_systemd_postinst.sh.partial >> debian/example-svc.postinst
 `
-			assert.Equal(t, out.String(), expect)
-		})
+		assert.Equal(t, out.String(), expect)
 	})
 }
 
