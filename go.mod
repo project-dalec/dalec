@@ -26,8 +26,8 @@ require (
 	github.com/sirupsen/logrus v1.9.4
 	github.com/tonistiigi/fsutil v0.0.0-20251211185533-a2aa163d723f
 	github.com/vearutop/dynhist-go v1.2.4
-	go.opentelemetry.io/otel v1.38.0
-	go.opentelemetry.io/otel/sdk v1.38.0
+	go.opentelemetry.io/otel v1.40.0
+	go.opentelemetry.io/otel/sdk v1.40.0
 	golang.org/x/crypto v0.46.0
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621
 	golang.org/x/sync v0.19.0
@@ -46,6 +46,7 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/containerd/api v1.10.0 // indirect
 	github.com/containerd/continuity v0.4.5 // indirect
@@ -90,13 +91,13 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.38.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.38.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.38.0 // indirect
-	go.opentelemetry.io/otel/metric v1.38.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.38.0 // indirect
-	go.opentelemetry.io/otel/trace v1.38.0 // indirect
+	go.opentelemetry.io/otel/metric v1.40.0 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.40.0 // indirect
+	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.7.1 // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251103181224-f26f9409b101 // indirect
