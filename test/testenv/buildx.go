@@ -55,6 +55,20 @@ func (b *BuildxEnv) WithBuilder(builder string) *BuildxEnv {
 	return b
 }
 
+// Close closes the underlying buildkit client connection, which triggers
+// cleanup of the dial-stdio process.
+func (b *BuildxEnv) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.client != nil {
+		err := b.client.Close()
+		b.client = nil
+		return err
+	}
+	return nil
+}
+
 // Load loads the output of the specified [gwclient.BuildFunc] into the buildkit instance.
 func (b *BuildxEnv) Load(ctx context.Context, id string, f gwclient.BuildFunc) error {
 	if b.refs == nil {
@@ -86,10 +100,7 @@ func (c *connCloseWrapper) Close() error {
 	if c.close != nil {
 		c.close()
 	}
-	if err := c.Conn.Close(); err != nil {
-		return err
-	}
-	return nil
+	return c.Conn.Close()
 }
 
 func (b *BuildxEnv) dialStdio(ctx context.Context) error {
@@ -116,9 +127,9 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 		cmd := exec.Command("docker", args...)
 		cmd.Env = os.Environ()
 
-		c1, c2 := net.Pipe()
-		cmd.Stdin = c1
-		cmd.Stdout = c1
+		dialStdioConn, clientConn := net.Pipe()
+		cmd.Stdin = dialStdioConn
+		cmd.Stdout = dialStdioConn
 
 		// Use a pipe to check when the connection is actually complete
 		// Also write all of stderr to an error buffer so we can have more details
@@ -132,12 +143,15 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 			return nil, err
 		}
 
+		// chWait is closed when cmd.Wait() returns, signaling the cleanup
+		// function that the process has exited.
 		chWait := make(chan struct{})
 		go func() {
 			err := cmd.Wait()
-			c1.Close()
+			close(chWait)
+			dialStdioConn.Close()
 			// pkgerrors.Wrap will return nil if err is nil, otherwise it will give
-			// us a wrapped error with the buffered stderr from he command.
+			// us a wrapped error with the buffered stderr from the command.
 			w.CloseWithError(pkgerrors.Wrapf(err, "%s", errBuf))
 		}()
 
@@ -160,28 +174,26 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 		}
 
 		out := &connCloseWrapper{
-			Conn: c2,
+			Conn: clientConn,
 			close: sync.OnceFunc(func() {
-				// Send 2 interrupt signals to the process to ensure it exits gracefully
-				// This is how buildx/docker plugins handle termination
-
-				cmd.Process.Signal(os.Interrupt) //nolint:errcheck // We don't care about this error, we are going to send another one anyway
-				if err := cmd.Process.Signal(os.Interrupt); err != nil {
-					cmd.Process.Kill() //nolint:errcheck //  Force kill if interrupt fails
-				}
+				// Close the stdin/stdout pipe to the process.
+				// This causes stdin EOF in buildx's dial-stdio, which triggers
+				// closeWrite(conn) on the buildkit connection and should start
+				// the chain reaction for docker CLI process to exit.
+				dialStdioConn.Close()
 
 				select {
 				case <-chWait:
 				case <-time.After(10 * time.Second):
-					// If it still doesn't exit, force kill
-					cmd.Process.Kill() //nolint:errcheck // Force kill if it doesn't exit after interrupt
+					// Safety net: force kill if still running.
+					cmd.Process.Kill() //nolint:errcheck
+					<-chWait
 				}
 			}),
 		}
 
 		return out, nil
 	}))
-
 	if err != nil {
 		return err
 	}
@@ -342,9 +354,7 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 		t.Fatalf("%+v", err)
 	}
 
-	var (
-		ch chan *client.SolveStatus
-	)
+	var ch chan *client.SolveStatus
 
 	if cfg.SolveStatusFn != nil {
 		ch = make(chan *client.SolveStatus, 1)

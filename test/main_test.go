@@ -96,6 +96,12 @@ func TestMain(m *testing.M) {
 			cancel()
 		}()
 
+		defer func() {
+			if err := testEnv.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "Error closing test environment:", err)
+			}
+		}()
+
 		if err := testEnv.Load(ctx, phonyRef, fixtures.PhonyFrontend); err != nil {
 			panic(err)
 		}
