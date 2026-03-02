@@ -11,8 +11,10 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -104,6 +106,15 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 		// the buildx dial-stdio process from cleaning up its resources properly.
 		cmd := exec.Command("docker", args...)
 		cmd.Env = os.Environ()
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			// Put the child in its own process group so we can kill the entire
+			// group (docker + docker-buildx plugin) during cleanup.
+			Setpgid: true,
+			// Send SIGTERM to the child process when the parent (test process) dies.
+			// This prevents dial-stdio processes from being orphaned when the test
+			// suite is interrupted or crashes.
+			Pdeathsig: syscall.SIGTERM,
+		}
 
 		c1, c2 := net.Pipe()
 		cmd.Stdin = c1
@@ -117,16 +128,29 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 		ww := io.MultiWriter(w, errBuf)
 		cmd.Stderr = ww
 
-		if err := cmd.Start(); err != nil {
-			return nil, err
-		}
-
-		chWait := make(chan struct{})
+		// processDone is closed when cmd.Wait() returns, signaling the cleanup
+		// function that the process has exited.
+		processDone := make(chan struct{})
 		go func() {
+			// Lock this goroutine to its OS thread for the lifetime of the child process.
+			// Pdeathsig delivers the signal when the *thread* that forked the child exits,
+			// not when the process exits. Without locking, the Go runtime may destroy the
+			// thread that called cmd.Start(), prematurely delivering SIGTERM to the child.
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+
+			if err := cmd.Start(); err != nil {
+				// Propagate the start error through the stderr pipe so the
+				// scanner below will surface it via scanner.Err().
+				w.CloseWithError(err)
+				return
+			}
+
 			err := cmd.Wait()
+			close(processDone)
 			c1.Close()
 			// pkgerrors.Wrap will return nil if err is nil, otherwise it will give
-			// us a wrapped error with the buffered stderr from he command.
+			// us a wrapped error with the buffered stderr from the command.
 			w.CloseWithError(pkgerrors.Wrapf(err, "%s", errBuf))
 		}()
 
@@ -160,7 +184,7 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 				}
 
 				select {
-				case <-chWait:
+				case <-processDone:
 				case <-time.After(10 * time.Second):
 					// If it still doesn't exit, force kill
 					cmd.Process.Kill() //nolint:errcheck // Force kill if it doesn't exit after interrupt
