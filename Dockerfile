@@ -5,11 +5,16 @@ WORKDIR /build
 COPY . .
 ENV CGO_ENABLED=0
 ARG TARGETARCH TARGETOS GOFLAGS=-trimpath
+ARG DALEC_FRONTEND_COVERAGE=0
 ENV GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFLAGS=${GOFLAGS}
 RUN \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -o /frontend ./cmd/frontend
+    if [ "${DALEC_FRONTEND_COVERAGE}" = "1" ]; then \
+	go build -cover -covermode=atomic -coverpkg=./... -o /frontend ./cmd/frontend ; \
+    else \
+        go build -o /frontend ./cmd/frontend ; \
+    fi
 
 FROM scratch AS frontend
 COPY --from=frontend-build /frontend /frontend
