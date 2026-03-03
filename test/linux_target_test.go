@@ -5426,7 +5426,7 @@ func testLinuxSpec(t *testing.T, userSpec dalec.Spec) dalec.Spec {
 	userSpecRaw, err := json.Marshal(userSpec)
 	assert.NilError(t, err, "marshaling user spec to json")
 
-	assert.NilError(t, json.Unmarshal(userSpecRaw, &result), "unmarshaling user spec into result spec")
+	assert.NilError(t, json.Unmarshal(userSpecRaw, &result), "unmarshalling user spec into result spec")
 
 	return result
 }

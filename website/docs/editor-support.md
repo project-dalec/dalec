@@ -24,7 +24,13 @@ docker buildx build --call dalec.schema --build-arg BUILDKIT_SYNTAX=ghcr.io/proj
 
 ## VSCode
 
-For VSCode you'll need to use a YAML plugin that supports JSON schemas, such as [YAML Support by Red Hat](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml).
+### Dalec Extension
+
+The [Dalec VSCode Extension](https://github.com/project-dalec/dalec-vscode-extension) provides support for Dalec spec files with validation, syntax highlighting, and IntelliSense.
+
+### Manual Configuration
+
+You can also use a YAML plugin that supports JSON schemas, such as [YAML Support by Red Hat](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml).
 Follow the plugins instructions to add the schema to your workspace.
 Here are some examples of vscode workspace configs `settings.json` enabling the JSON schema:
 
