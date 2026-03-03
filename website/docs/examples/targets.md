@@ -2,17 +2,23 @@ TARGET                           DESCRIPTION
 almalinux8/container (default)   Builds a container image for AlmaLinux 8
 almalinux8/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux8/rpm                   Builds an rpm and src.rpm.
-almalinux8/rpm/debug             Debug options for rpm builds.
+almalinux8/rpm/debug/buildroot   Outputs an rpm buildroot suitable for passing to rpmbuild.
+almalinux8/rpm/debug/sources     Outputs all the sources specified in the spec file in the format given to rpmbuild.
+almalinux8/rpm/debug/spec        Outputs the generated RPM spec file
 almalinux8/worker                Builds the base worker image responsible for building the rpm
 almalinux9/container (default)   Builds a container image for AlmaLinux 9
 almalinux9/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux9/rpm                   Builds an rpm and src.rpm.
-almalinux9/rpm/debug             Debug options for rpm builds.
+almalinux9/rpm/debug/buildroot   Outputs an rpm buildroot suitable for passing to rpmbuild.
+almalinux9/rpm/debug/sources     Outputs all the sources specified in the spec file in the format given to rpmbuild.
+almalinux9/rpm/debug/spec        Outputs the generated RPM spec file
 almalinux9/worker                Builds the base worker image responsible for building the rpm
 azlinux3/container (default)     Builds a container image for Azure Linux 3
 azlinux3/container/depsonly      Builds a container image with only the runtime dependencies installed.
 azlinux3/rpm                     Builds an rpm and src.rpm.
-azlinux3/rpm/debug               Debug options for rpm builds.
+azlinux3/rpm/debug/buildroot     Outputs an rpm buildroot suitable for passing to rpmbuild.
+azlinux3/rpm/debug/sources       Outputs all the sources specified in the spec file in the format given to rpmbuild.
+azlinux3/rpm/debug/spec          Outputs the generated RPM spec file
 azlinux3/testing/sysext          Builds a systemd system extension image.
 azlinux3/worker                  Builds the base worker image responsible for building the rpm
 bionic/deb (default)             Builds a deb package.
@@ -44,7 +50,9 @@ jammy/worker                     Builds the worker image.
 mariner2/container (default)     Builds a container image for CBL-Mariner 2
 mariner2/container/depsonly      Builds a container image with only the runtime dependencies installed.
 mariner2/rpm                     Builds an rpm and src.rpm.
-mariner2/rpm/debug               Debug options for rpm builds.
+mariner2/rpm/debug/buildroot     Outputs an rpm buildroot suitable for passing to rpmbuild.
+mariner2/rpm/debug/sources       Outputs all the sources specified in the spec file in the format given to rpmbuild.
+mariner2/rpm/debug/spec          Outputs the generated RPM spec file
 mariner2/worker                  Builds the base worker image responsible for building the rpm
 noble/deb (default)              Builds a deb package.
 noble/dsc                        Builds a Debian source package.
@@ -54,12 +62,16 @@ noble/worker                     Builds the worker image.
 rockylinux8/container (default)  Builds a container image for RockyLinux 8
 rockylinux8/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux8/rpm                  Builds an rpm and src.rpm.
-rockylinux8/rpm/debug            Debug options for rpm builds.
+rockylinux8/rpm/debug/buildroot  Outputs an rpm buildroot suitable for passing to rpmbuild.
+rockylinux8/rpm/debug/sources    Outputs all the sources specified in the spec file in the format given to rpmbuild.
+rockylinux8/rpm/debug/spec       Outputs the generated RPM spec file
 rockylinux8/worker               Builds the base worker image responsible for building the rpm
 rockylinux9/container (default)  Builds a container image for RockyLinux 9
 rockylinux9/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux9/rpm                  Builds an rpm and src.rpm.
-rockylinux9/rpm/debug            Debug options for rpm builds.
+rockylinux9/rpm/debug/buildroot  Outputs an rpm buildroot suitable for passing to rpmbuild.
+rockylinux9/rpm/debug/sources    Outputs all the sources specified in the spec file in the format given to rpmbuild.
+rockylinux9/rpm/debug/spec       Outputs the generated RPM spec file
 rockylinux9/worker               Builds the base worker image responsible for building the rpm
 trixie/deb (default)             Builds a deb package.
 trixie/dsc                       Builds a Debian source package.

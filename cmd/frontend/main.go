@@ -65,12 +65,12 @@ func main() {
 
 func dalecMain() {
 	ctx := appcontext.Context()
-	mux, err := frontendapi.NewBuildRouter(ctx)
+	r, err := frontendapi.NewRouter(ctx)
 	if err != nil {
 		bklog.L.WithError(err).Fatal("error creating frontend router")
 	}
 
-	if err := grpcclient.RunFromEnvironment(ctx, mux.Handler(frontend.WithTargetForwardingHandler)); err != nil {
+	if err := grpcclient.RunFromEnvironment(ctx, r.Handler(frontend.WithTargetForwardingHandler)); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
 	}
