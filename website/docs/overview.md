@@ -34,6 +34,8 @@ To start building with Dalec, you'll need [Docker](https://docs.docker.com/engin
 
 👉 **Ready to build?** See the [Quickstart](quickstart.md) guide!
 
+**Using VSCode?** Install the [Dalec extension](https://github.com/project-dalec/dalec-vscode-extension) for schema validation and IntelliSense.
+
 ## Build Types
 
 ### Building from Source
