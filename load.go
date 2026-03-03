@@ -26,6 +26,12 @@ const (
 )
 
 func knownArg(key string) bool {
+
+	// Allow sysext builder knobs to be passed without requiring every spec
+	// to declare them under `args:`.
+	if strings.HasPrefix(key, "DALEC_SYSEXT_") {
+		return true
+	}
 	switch key {
 	case "BUILDKIT_SYNTAX":
 		return true
