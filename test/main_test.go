@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -74,8 +75,18 @@ func TestMain(m *testing.M) {
 		ctx, done := signal.NotifyContext(baseCtx, os.Interrupt)
 		baseCtx = ctx
 
+		closeTestEnv := sync.OnceFunc(func() {
+			if err := testEnv.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "Error closing test environment:", err)
+			}
+		})
+
 		go func() {
 			<-ctx.Done()
+
+			// Cleanup test env before restoring default signal handling, so we give a chance for a proper cleanup.
+			closeTestEnv()
+
 			// The context was cancelled due to interrupt
 			// This _should_ trigger builds to cancel naturally and exit the program,
 			// but in some cases it may not (due to timing, bugs in buildkit, uninteruptable operations, etc.).
@@ -96,11 +107,7 @@ func TestMain(m *testing.M) {
 			cancel()
 		}()
 
-		defer func() {
-			if err := testEnv.Close(); err != nil {
-				fmt.Fprintln(os.Stderr, "Error closing test environment:", err)
-			}
-		}()
+		defer closeTestEnv()
 
 		if err := testEnv.Load(ctx, phonyRef, fixtures.PhonyFrontend); err != nil {
 			panic(err)
