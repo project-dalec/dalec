@@ -50,10 +50,17 @@ func buildBaseFrontend(ctx context.Context, c gwclient.Client) (*gwclient.Result
 		return nil, errors.Wrap(err, "error marshaling Dockerfile context")
 	}
 
+	// If the test runner requested frontend coverage, build the frontend binary
+	// with coverage instrumentation (Dockerfile uses DALEC_FRONTEND_COVERAGE).
+	frontendOpt := map[string]string{}
+	if os.Getenv("DALEC_FRONTEND_GOCOVERDIR") != "" {
+		frontendOpt["build-arg:DALEC_FRONTEND_COVERAGE"] = "1"
+	}
+
 	defPB := def.ToPB()
 	return c.Solve(ctx, gwclient.SolveRequest{
 		Frontend:    "dockerfile.v0",
-		FrontendOpt: map[string]string{},
+		FrontendOpt: frontendOpt,
 		FrontendInputs: map[string]*pb.Definition{
 			dockerui.DefaultLocalNameContext:    defPB,
 			dockerui.DefaultLocalNameDockerfile: dockerfileDef.ToPB(),
