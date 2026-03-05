@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/containerd/plugin"
+	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/internal/plugins"
 	_ "github.com/project-dalec/dalec/targets/plugin"
 )
@@ -47,6 +48,7 @@ func main() {
 	}
 
 	ctx := context.Background()
+	spec := &dalec.Spec{}
 	set := plugin.NewPluginSet()
 
 	var out []Info
@@ -64,7 +66,11 @@ func main() {
 		}
 
 		provider := v.(plugins.RouteProvider)
-		for _, route := range provider.Routes() {
+		routes, err := provider.Routes(ctx, spec)
+		if err != nil {
+			panic(fmt.Errorf("failed to get routes for plugin %s: %w", reg.ID, err))
+		}
+		for _, route := range routes {
 			_, suffix, ok := strings.Cut(route.FullPath, "/")
 			if ok && suffix == "worker" {
 				out = append(out, Info{Target: route.FullPath})

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/containerd/plugin"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
@@ -87,12 +88,13 @@ func lookupCmd(ctx context.Context, cmd string) (plugins.CmdHandler, error) {
 }
 
 func dalecMain(ctx context.Context) {
-	r, err := frontendapi.NewRouter(ctx)
-	if err != nil {
-		bklog.L.WithError(err).Fatal("error creating frontend router")
-	}
-	handler := r.Handler(frontend.WithTargetForwardingHandler)
-	handler = wrapWithCoverage(handler)
+	handler := wrapWithCoverage(func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		r, err := frontendapi.NewRouter(ctx, client)
+		if err != nil {
+			return nil, err
+		}
+		return r.Handler(frontend.WithTargetForwardingHandler)(ctx, client)
+	})
 
 	if err := grpcclient.RunFromEnvironment(ctx, handler); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")

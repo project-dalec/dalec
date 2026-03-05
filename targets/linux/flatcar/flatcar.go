@@ -38,7 +38,10 @@ func (c *Config) SysextEnv(spec *dalec.Spec, targetKey string) map[string]string
 	}
 }
 
-func (c *Config) Routes(prefix string) []frontend.Route {
+func (c *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
+	_, specDefined := spec.Targets[prefix]
+	specDefined = specDefined && len(spec.Targets) > 0
+
 	return []frontend.Route{
 		{
 			FullPath: prefix + "/testing/sysext",
@@ -49,6 +52,7 @@ func (c *Config) Routes(prefix string) []frontend.Route {
 					Description: "Build a Flatcar-compatible systemd sysext (.raw)",
 					Default:     true,
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -59,9 +63,10 @@ func (c *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/worker",
 					Description: "Builds the worker image used to assemble Flatcar sysext images.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
-	}
+	}, nil
 }
 
 // ---- linux.DistroConfig delegation ----
