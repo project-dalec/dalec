@@ -3,6 +3,7 @@ package dalec
 import (
 	"context"
 	goerrors "errors"
+	"strings"
 
 	"github.com/google/shlex"
 	"github.com/moby/buildkit/client/llb"
@@ -105,11 +106,24 @@ func MergeImageConfig(dst *DockerImageConfig, src *ImageConfig) error {
 		// If the env var already exists, replace it
 		envIdx := make(map[string]int)
 		for i, env := range dst.Env {
-			envIdx[env] = i
+			// Extract the environment variable name (part before '=')
+			varName, _, found := strings.Cut(env, "=")
+			if found {
+				envIdx[varName] = i
+			} else {
+				// Environment variable without '=' - use the whole string as key
+				envIdx[env] = i
+			}
 		}
 
 		for _, env := range src.Env {
-			if idx, ok := envIdx[env]; ok {
+			// Extract the environment variable name from the new env var
+			varName, _, found := strings.Cut(env, "=")
+			if !found {
+				varName = env
+			}
+
+			if idx, ok := envIdx[varName]; ok {
 				dst.Env[idx] = env
 			} else {
 				dst.Env = append(dst.Env, env)
