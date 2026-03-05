@@ -90,8 +90,25 @@ func (c *Config) Install(pkgs []string, opts ...DnfInstallOpt) llb.RunOption {
 }
 
 // Routes returns the flat routes for this RPM distro config, prefixed with the given prefix.
-func (cfg *Config) Routes(prefix string) []frontend.Route {
+func (cfg *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
+	// Check whether this target key is defined in the spec.
+	_, specDefined := spec.Targets[prefix]
+	// Only mark SpecDefined when the spec actually defines targets.
+	specDefined = specDefined && len(spec.Targets) > 0
+
 	routes := []frontend.Route{
+		{
+			FullPath: prefix,
+			Handler:  linux.HandleContainer(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix,
+					Description: "Builds a container image for " + cfg.FullName,
+				},
+				SpecDefined: specDefined,
+				Hidden:      true,
+			},
+		},
 		{
 			FullPath: prefix + "/rpm",
 			Handler:  linux.HandlePackage(cfg),
@@ -100,6 +117,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/rpm",
 					Description: "Builds an rpm and src.rpm.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -111,6 +129,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Description: "Builds a container image for " + cfg.FullName,
 					Default:     true,
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -121,6 +140,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/container/depsonly",
 					Description: "Builds a container image with only the runtime dependencies installed.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -131,12 +151,13 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/worker",
 					Description: "Builds the base worker image responsible for building the rpm",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 	}
 
 	// RPM debug sub-routes
-	routes = append(routes, cfg.DebugRoutes(prefix+"/rpm/debug")...)
+	routes = append(routes, cfg.DebugRoutes(prefix+"/rpm/debug", specDefined)...)
 
 	if cfg.SysextSupported {
 		routes = append(routes, frontend.Route{
@@ -147,9 +168,10 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/testing/sysext",
 					Description: "Builds a systemd system extension image.",
 				},
+				SpecDefined: specDefined,
 			},
 		})
 	}
 
-	return routes
+	return routes, nil
 }

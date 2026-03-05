@@ -72,9 +72,6 @@ type Forward struct {
 // It replaces the hierarchical BuildMux with a simpler dispatch model.
 type Router struct {
 	routes map[string]Route
-
-	// cached spec so we don't have to load it every time its needed
-	spec *dalec.Spec
 }
 
 // Add registers a route. If a route with the same FullPath already exists
@@ -123,11 +120,6 @@ func (r *Router) Handle(ctx context.Context, client gwclient.Client) (_ *gwclien
 		if retErr != nil {
 			if _, ok := opts[keyTopLevelTarget]; !ok {
 				retErr = errors.Wrapf(retErr, "error handling requested build target %q", target)
-
-				spec, _ := r.loadSpec(ctx, client)
-				if spec != nil && spec.Name != "" {
-					retErr = errors.Wrapf(retErr, "spec: %s", spec.Name)
-				}
 			}
 		}
 	}()
@@ -219,16 +211,9 @@ func (r *Router) describe() (*gwclient.Result, error) {
 }
 
 // list returns the target list. For static routes, metadata is available
-// directly. For forwarding routes, the remote frontend is queried lazily.
+// directly; SpecDefined is set by providers at route registration time.
+// For forwarding routes, the remote frontend is queried lazily.
 func (r *Router) list(ctx context.Context, client gwclient.Client, target string) (*gwclient.Result, error) {
-	spec, err := r.loadSpec(ctx, client)
-	if err != nil {
-		bklog.G(ctx).WithError(err).Warn("Could not load spec for target list annotation")
-		// Continue without spec — targets just won't have SpecDefined set.
-	}
-
-	hasSpecTargets := spec != nil && len(spec.Targets) > 0
-
 	var ls TargetList
 
 	keys := maps.Keys(r.routes)
@@ -247,28 +232,20 @@ func (r *Router) list(ctx context.Context, client gwclient.Client, target string
 			continue
 		}
 
-		dt := route.Info
-		if hasSpecTargets {
-			tlk := topLevelKey(key)
-			if _, ok := spec.Targets[tlk]; ok {
-				dt.SpecDefined = true
-			}
-		}
-
 		// Forwarding route: query the remote frontend for its sub-targets.
 		if route.Forward != nil {
 			subTargets, err := queryForwardedTargets(ctx, client, key, route.Forward)
 			if err != nil {
 				bklog.G(ctx).WithError(err).Warn("Could not query forwarded frontend targets")
 				// Fall through to show the single forwarding entry.
-				ls.Targets = append(ls.Targets, dt)
+				ls.Targets = append(ls.Targets, route.Info)
 				continue
 			}
 			ls.Targets = append(ls.Targets, subTargets...)
 			continue
 		}
 
-		ls.Targets = append(ls.Targets, dt)
+		ls.Targets = append(ls.Targets, route.Info)
 	}
 
 	return dalecTargetListToResult(ls)
@@ -309,7 +286,7 @@ func queryForwardedTargets(ctx context.Context, client gwclient.Client, prefix s
 	targets := make([]Target, 0, len(remote.Targets))
 	for _, t := range remote.Targets {
 		t.Name = path.Join(prefix, t.Name)
-		targets = append(targets, Target{Target: t})
+		targets = append(targets, Target{Target: t, SpecDefined: true})
 	}
 	return targets, nil
 }
@@ -391,25 +368,6 @@ func (r *Router) lookupTarget(ctx context.Context, target string) (matchedPath s
 	return "", nil, handlerNotFound(target, maps.Keys(r.routes))
 }
 
-func (r *Router) loadSpec(ctx context.Context, client gwclient.Client) (*dalec.Spec, error) {
-	if r.spec != nil {
-		return r.spec, nil
-	}
-	dc, err := dockerui.NewClient(client)
-	if err != nil {
-		return nil, err
-	}
-
-	spec, err := LoadSpec(ctx, dc, nil, func(cfg *LoadConfig) {
-		cfg.SubstituteOpts = append(cfg.SubstituteOpts, dalec.WithAllowAnyArg)
-	})
-	if err != nil {
-		return nil, err
-	}
-	r.spec = spec
-	return spec, nil
-}
-
 // topLevelKey returns the first path segment of a route path.
 // e.g. "azlinux3/container/depsonly" → "azlinux3"
 func topLevelKey(routePath string) string {
@@ -419,6 +377,21 @@ func topLevelKey(routePath string) string {
 	return routePath
 }
 
+// LoadSpecForRouting loads a dalec spec from the gateway client's build
+// context for routing purposes only. Build args are substituted with
+// WithAllowAnyArg so that unresolved args don't cause errors during
+// route setup.
+func LoadSpecForRouting(ctx context.Context, client gwclient.Client) (*dalec.Spec, error) {
+	dc, err := dockerui.NewClient(client)
+	if err != nil {
+		return nil, err
+	}
+
+	return LoadSpec(ctx, dc, nil, func(cfg *LoadConfig) {
+		cfg.SubstituteOpts = append(cfg.SubstituteOpts, dalec.WithAllowAnyArg)
+	})
+}
+
 // WithTargetForwardingHandler registers a forwarding handler for each
 // spec target that has a custom frontend. This replaces any builtin
 // routes for that target key prefix.
@@ -426,7 +399,7 @@ func WithTargetForwardingHandler(ctx context.Context, client gwclient.Client, r 
 	if k := GetTargetKey(client); k != "" {
 		return fmt.Errorf("target forwarding requested but target is already forwarded: this is a bug in the frontend for %q", k)
 	}
-	spec, err := r.loadSpec(ctx, client)
+	spec, err := LoadSpecForRouting(ctx, client)
 	if err != nil {
 		return err
 	}
