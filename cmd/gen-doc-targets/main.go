@@ -25,16 +25,16 @@ func main() {
 	bklog.L.Logger.SetLevel(logrus.ErrorLevel)
 	ctx := appcontext.Context()
 
-	r, err := frontendapi.NewRouter(ctx)
+	client := &targetPrintClient{}
+	r, err := frontendapi.NewRouter(ctx, client)
 	if err != nil {
 		bklog.L.Fatal(err)
 	}
 
-	var client gwclient.Client = &targetPrintClient{}
 	res, err := r.Handle(ctx, client)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(2)
 	}
 
 	dt, ok := res.Metadata["result.txt"]
@@ -66,6 +66,8 @@ func main() {
 	}
 }
 
+// targetPrintClient embeds gwclient.Client and overrides methods needed
+// to load an empty spec during route setup and trigger the targets subrequest.
 type targetPrintClient struct {
 	gwclient.Client
 }
@@ -92,8 +94,8 @@ func (t *targetPrintClient) Solve(_ context.Context, _ gwclient.SolveRequest) (*
 	return res, nil
 }
 
-// emptySpecRef implements gwclient.Reference and returns an empty YAML object
-// from ReadFile, which LoadSpec interprets as an empty dalec.Spec.
+// emptySpecRef embeds gwclient.Reference and overrides ReadFile to return
+// an empty YAML object, which LoadSpec interprets as an empty dalec.Spec.
 type emptySpecRef struct {
 	gwclient.Reference
 }
