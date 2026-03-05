@@ -6,10 +6,11 @@ COPY . .
 ENV CGO_ENABLED=0
 ARG TARGETARCH TARGETOS GOFLAGS=-trimpath
 ENV GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFLAGS=${GOFLAGS}
+ARG EXTRA_BUILD_FLAGS=""
 RUN \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -o /frontend ./cmd/frontend
+    go build -o /frontend ${EXTRA_BUILD_FLAGS} ./cmd/frontend
 
 FROM scratch AS frontend
 COPY --from=frontend-build /frontend /frontend
