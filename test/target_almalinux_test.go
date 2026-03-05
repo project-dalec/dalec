@@ -64,6 +64,7 @@ func TestAlmalinux8(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
+			Key:       "almalinux8",
 			Package:   "almalinux8/rpm",
 			Container: "almalinux8/container",
 			DepsOnly:  "almalinux8/container/depsonly",
