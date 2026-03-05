@@ -1,6 +1,9 @@
 package plugins
 
 import (
+	"context"
+
+	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 )
 
@@ -12,12 +15,12 @@ const (
 
 // RouteProvider is implemented by plugins that supply flat routes for the Router.
 type RouteProvider interface {
-	Routes() []frontend.Route
+	Routes(ctx context.Context, spec *dalec.Spec) ([]frontend.Route, error)
 }
 
 // RouteProviderFunc is a convenience adapter for RouteProvider.
-type RouteProviderFunc func() []frontend.Route
+type RouteProviderFunc func(ctx context.Context, spec *dalec.Spec) ([]frontend.Route, error)
 
-func (f RouteProviderFunc) Routes() []frontend.Route {
-	return f()
+func (f RouteProviderFunc) Routes(ctx context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
+	return f(ctx, spec)
 }

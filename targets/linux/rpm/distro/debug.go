@@ -157,7 +157,7 @@ func (c *Config) HandleSpec(ctx context.Context, client gwclient.Client) (*gwcli
 }
 
 // DebugRoutes returns flat routes for RPM debug targets under the given prefix.
-func (c *Config) DebugRoutes(prefix string) []frontend.Route {
+func (c *Config) DebugRoutes(prefix string, specDefined bool) []frontend.Route {
 	return []frontend.Route{
 		{
 			FullPath: prefix + "/buildroot",
@@ -167,6 +167,7 @@ func (c *Config) DebugRoutes(prefix string) []frontend.Route {
 					Name:        prefix + "/buildroot",
 					Description: "Outputs an rpm buildroot suitable for passing to rpmbuild.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -177,6 +178,7 @@ func (c *Config) DebugRoutes(prefix string) []frontend.Route {
 					Name:        prefix + "/sources",
 					Description: "Outputs all the sources specified in the spec file in the format given to rpmbuild.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -187,6 +189,7 @@ func (c *Config) DebugRoutes(prefix string) []frontend.Route {
 					Name:        prefix + "/spec",
 					Description: "Outputs the generated RPM spec file",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 	}

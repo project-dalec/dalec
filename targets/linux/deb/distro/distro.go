@@ -98,7 +98,11 @@ func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.
 }
 
 // Routes returns the flat routes for this DEB distro config, prefixed with the given prefix.
-func (cfg *Config) Routes(prefix string) []frontend.Route {
+func (cfg *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
+	// Check whether this target key is defined in the spec.
+	_, specDefined := spec.Targets[prefix]
+	specDefined = specDefined && len(spec.Targets) > 0
+
 	routes := []frontend.Route{
 		{
 			FullPath: prefix,
@@ -108,7 +112,8 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix,
 					Description: "Builds a deb package.",
 				},
-				Hidden: true,
+				SpecDefined: specDefined,
+				Hidden:      true,
 			},
 		},
 		{
@@ -120,6 +125,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Description: "Builds a deb package.",
 					Default:     true,
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -130,6 +136,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/testing/container",
 					Description: "Builds a container image for testing purposes only.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -140,6 +147,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/dsc",
 					Description: "Builds a Debian source package.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -150,6 +158,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/worker",
 					Description: "Builds the worker image.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 	}
@@ -163,9 +172,10 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/testing/sysext",
 					Description: "Builds a systemd system extension image.",
 				},
+				SpecDefined: specDefined,
 			},
 		})
 	}
 
-	return routes
+	return routes, nil
 }
