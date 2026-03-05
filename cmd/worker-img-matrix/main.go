@@ -11,6 +11,10 @@ import (
 	"strings"
 
 	"github.com/containerd/plugin"
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/frontend/subrequests/targets"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/project-dalec/dalec/internal/plugins"
 	_ "github.com/project-dalec/dalec/targets/plugin"
 )
@@ -47,6 +51,7 @@ func main() {
 	}
 
 	ctx := context.Background()
+	client := &stubClient{}
 	set := plugin.NewPluginSet()
 
 	var out []Info
@@ -64,7 +69,11 @@ func main() {
 		}
 
 		provider := v.(plugins.RouteProvider)
-		for _, route := range provider.Routes() {
+		routes, err := provider.Routes(ctx, client)
+		if err != nil {
+			panic(fmt.Errorf("failed to get routes for plugin %s: %w", reg.ID, err))
+		}
+		for _, route := range routes {
 			_, suffix, ok := strings.Cut(route.FullPath, "/")
 			if ok && suffix == "worker" {
 				out = append(out, Info{Target: route.FullPath})
@@ -82,4 +91,36 @@ func main() {
 	if _, err := fmt.Fprintln(outF, string(dt)); err != nil {
 		panic(fmt.Errorf("failed to write output: %w", err))
 	}
+}
+
+// stubClient provides just enough gwclient.Client implementation for
+// spec-aware route registration to load an empty spec.
+type stubClient struct {
+	gwclient.Client
+}
+
+func (s *stubClient) BuildOpts() gwclient.BuildOpts {
+	return gwclient.BuildOpts{
+		Opts:    map[string]string{"requestid": targets.SubrequestsTargetsDefinition.Name},
+		LLBCaps: pb.Caps.CapSet(pb.Caps.All()),
+		Caps:    pb.Caps.CapSet(pb.Caps.All()),
+	}
+}
+
+func (s *stubClient) Inputs(_ context.Context) (map[string]llb.State, error) {
+	return map[string]llb.State{"dockerfile": llb.Scratch()}, nil
+}
+
+func (s *stubClient) Solve(_ context.Context, _ gwclient.SolveRequest) (*gwclient.Result, error) {
+	res := gwclient.NewResult()
+	res.SetRef(&emptySpecRef{})
+	return res, nil
+}
+
+type emptySpecRef struct {
+	gwclient.Reference
+}
+
+func (r *emptySpecRef) ReadFile(_ context.Context, _ gwclient.ReadRequest) ([]byte, error) {
+	return []byte("{}"), nil
 }

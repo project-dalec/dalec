@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/containerd/plugin"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/debug"
 	"github.com/project-dalec/dalec/internal/plugins"
@@ -12,7 +13,7 @@ import (
 )
 
 // NewRouter creates a flat Router with all routes registered eagerly.
-func NewRouter(ctx context.Context) (*frontend.Router, error) {
+func NewRouter(ctx context.Context, client gwclient.Client) (*frontend.Router, error) {
 	r := &frontend.Router{}
 
 	// Register debug routes.
@@ -21,14 +22,14 @@ func NewRouter(ctx context.Context) (*frontend.Router, error) {
 	}
 
 	// Load route providers from the plugin registry.
-	if err := loadRouteProviders(ctx, r); err != nil {
+	if err := loadRouteProviders(ctx, client, r); err != nil {
 		return nil, err
 	}
 
 	return r, nil
 }
 
-func loadRouteProviders(ctx context.Context, r *frontend.Router) error {
+func loadRouteProviders(ctx context.Context, client gwclient.Client, r *frontend.Router) error {
 	set := plugin.NewPluginSet()
 
 	filter := func(reg *plugins.Registration) bool {
@@ -55,7 +56,11 @@ func loadRouteProviders(ctx context.Context, r *frontend.Router) error {
 		if !ok {
 			return fmt.Errorf("plugin %T does not implement RouteProvider", v)
 		}
-		for _, route := range provider.Routes() {
+		routes, err := provider.Routes(ctx, client)
+		if err != nil {
+			return err
+		}
+		for _, route := range routes {
 			r.Add(ctx, route)
 		}
 	}

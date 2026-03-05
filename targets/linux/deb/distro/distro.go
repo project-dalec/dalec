@@ -6,6 +6,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
@@ -98,7 +99,16 @@ func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.
 }
 
 // Routes returns the flat routes for this DEB distro config, prefixed with the given prefix.
-func (cfg *Config) Routes(prefix string) []frontend.Route {
+func (cfg *Config) Routes(prefix string, ctx context.Context, client gwclient.Client) ([]frontend.Route, error) {
+	spec, err := frontend.LoadSpecFromClient(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check whether this target key is defined in the spec.
+	_, specDefined := spec.Targets[prefix]
+	specDefined = specDefined && len(spec.Targets) > 0
+
 	routes := []frontend.Route{
 		{
 			FullPath: prefix,
@@ -108,7 +118,8 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix,
 					Description: "Builds a deb package.",
 				},
-				Hidden: true,
+				SpecDefined: specDefined,
+				Hidden:      true,
 			},
 		},
 		{
@@ -120,6 +131,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Description: "Builds a deb package.",
 					Default:     true,
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -130,6 +142,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/testing/container",
 					Description: "Builds a container image for testing purposes only.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -140,6 +153,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/dsc",
 					Description: "Builds a Debian source package.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -150,6 +164,7 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/worker",
 					Description: "Builds the worker image.",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 	}
@@ -163,9 +178,10 @@ func (cfg *Config) Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/testing/sysext",
 					Description: "Builds a systemd system extension image.",
 				},
+				SpecDefined: specDefined,
 			},
 		})
 	}
 
-	return routes
+	return routes, nil
 }

@@ -8,6 +8,7 @@ import (
 const DebugRoute = "debug"
 
 // Routes returns the flat routes for the debug handler, prefixed with the given prefix.
+// Debug routes are never spec-defined since no spec would have a "debug" target key.
 func Routes(prefix string) []frontend.Route {
 	return []frontend.Route{
 		{

@@ -43,7 +43,15 @@ var distroConfig = &distro.Config{
 }
 
 // Routes returns the flat routes for the Windows target, prefixed with the given prefix.
-func Routes(prefix string) []frontend.Route {
+func Routes(prefix string, ctx context.Context, client gwclient.Client) ([]frontend.Route, error) {
+	spec, err := frontend.LoadSpecFromClient(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
+	_, specDefined := spec.Targets[prefix]
+	specDefined = specDefined && len(spec.Targets) > 0
+
 	defaultPlatform := platforms.DefaultSpec()
 	defaultPlatform.OS = "windows"
 
@@ -67,6 +75,7 @@ func Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/zip",
 					Description: "Builds binaries combined into a zip file",
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -78,6 +87,7 @@ func Routes(prefix string) []frontend.Route {
 					Description: "Builds binaries and installs them into a Windows base image",
 					Default:     true,
 				},
+				SpecDefined: specDefined,
 			},
 		},
 		{
@@ -88,9 +98,10 @@ func Routes(prefix string) []frontend.Route {
 					Name:        prefix + "/worker",
 					Description: "Builds the base worker image responsible for building the package",
 				},
+				SpecDefined: specDefined,
 			},
 		},
-	}
+	}, nil
 }
 
 func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {

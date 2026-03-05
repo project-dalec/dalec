@@ -1,6 +1,9 @@
 package plugins
 
 import (
+	"context"
+
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec/frontend"
 )
 
@@ -12,12 +15,12 @@ const (
 
 // RouteProvider is implemented by plugins that supply flat routes for the Router.
 type RouteProvider interface {
-	Routes() []frontend.Route
+	Routes(ctx context.Context, client gwclient.Client) ([]frontend.Route, error)
 }
 
 // RouteProviderFunc is a convenience adapter for RouteProvider.
-type RouteProviderFunc func() []frontend.Route
+type RouteProviderFunc func(ctx context.Context, client gwclient.Client) ([]frontend.Route, error)
 
-func (f RouteProviderFunc) Routes() []frontend.Route {
-	return f()
+func (f RouteProviderFunc) Routes(ctx context.Context, client gwclient.Client) ([]frontend.Route, error) {
+	return f(ctx, client)
 }

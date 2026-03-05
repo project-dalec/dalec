@@ -54,7 +54,12 @@ type DistroConfig interface {
 }
 
 func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
-	img, err := resolveConfig(ctx, sOpt, spec, platform, targetKey)
+	bi, err := spec.GetSingleBase(targetKey)
+	if err != nil {
+		return nil, err
+	}
+
+	img, err := resolveBaseConfig(ctx, sOpt, platform, bi)
 	if err != nil {
 		return nil, err
 	}
@@ -66,12 +71,7 @@ func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Sp
 	return img, nil
 }
 
-func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
-	bi, err := spec.GetSingleBase(targetKey)
-	if err != nil {
-		return nil, err
-	}
-
+func resolveBaseConfig(ctx context.Context, sOpt dalec.SourceOpts, platform *ocispecs.Platform, bi *dalec.BaseImage) (*dalec.DockerImageSpec, error) {
 	if bi == nil {
 		return dalec.BaseImageConfig(platform), nil
 	}
