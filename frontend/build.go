@@ -23,10 +23,6 @@ type LoadConfig struct {
 
 type LoadOpt func(*LoadConfig)
 
-type frontendClient interface {
-	CurrentFrontend() (*llb.State, error)
-}
-
 func WithAllowArgs(args ...string) LoadOpt {
 	return func(cfg *LoadConfig) {
 		set := make(map[string]struct{}, len(args))
@@ -199,13 +195,15 @@ func WithDefaultPlatform(platform ocispecs.Platform, build gwclient.BuildFunc) g
 		if client.BuildOpts().Opts["platform"] != "" {
 			return build(ctx, client)
 		}
-		client = &clientWithPlatform{
+		client = withCurrentFrontend(client, &clientWithPlatform{
 			Client:   client,
 			platform: &platform,
-		}
+		})
 		return build(ctx, client)
 	}
 }
+
+var _ gwclient.Client = (*clientWithPlatform)(nil)
 
 type clientWithPlatform struct {
 	gwclient.Client
@@ -219,7 +217,7 @@ func (c *clientWithPlatform) BuildOpts() gwclient.BuildOpts {
 }
 
 func GetCurrentFrontend(client gwclient.Client) (llb.State, error) {
-	f, err := client.(frontendClient).CurrentFrontend()
+	f, err := client.(currentFrontend).CurrentFrontend()
 	if err != nil {
 		return llb.Scratch(), err
 	}
