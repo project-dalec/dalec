@@ -8,10 +8,10 @@ import (
 
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
-	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/internal/gwutil"
 )
 
 const (
@@ -39,15 +39,8 @@ func (err *noSuchHandlerError) Error() string {
 	return fmt.Sprintf("no such handler for target %q: available targets: %s", err.Target, strings.Join(err.Available, ", "))
 }
 
-// CurrentFrontend is an interface typically implemented by a [gwclient.Client].
-// This is used to get the rootfs of the current frontend.
-type CurrentFrontend interface {
-	CurrentFrontend() (*llb.State, error)
-}
-
 var (
 	_ gwclient.Client = (*clientWithCustomOpts)(nil)
-	_ CurrentFrontend = (*clientWithCustomOpts)(nil)
 )
 
 type clientWithCustomOpts struct {
@@ -59,20 +52,16 @@ func (d *clientWithCustomOpts) BuildOpts() gwclient.BuildOpts {
 	return d.opts
 }
 
-func (d *clientWithCustomOpts) CurrentFrontend() (*llb.State, error) {
-	return d.Client.(CurrentFrontend).CurrentFrontend()
-}
-
-func setClientOptOption(client gwclient.Client, extraOpts map[string]string) *clientWithCustomOpts {
+func setClientOptOption(client gwclient.Client, extraOpts map[string]string) gwclient.Client {
 	opts := client.BuildOpts()
 
 	for key, value := range extraOpts {
 		opts.Opts[key] = value
 	}
-	return &clientWithCustomOpts{
+	return gwutil.WithCurrentFrontend(client, &clientWithCustomOpts{
 		Client: client,
 		opts:   opts,
-	}
+	})
 }
 
 func maybeSetDalecTargetKey(client gwclient.Client, key string) gwclient.Client {
@@ -82,13 +71,13 @@ func maybeSetDalecTargetKey(client gwclient.Client, key string) gwclient.Client 
 		return client
 	}
 
-	// optimization to help prevent unnecessary grpc requests
+	// Optimization to help prevent unnecessary grpc requests.
 	// The gateway client will make a grpc request to get the build opts from the gateway.
 	// This just caches those opts locally.
 	// If the client is already a clientWithCustomOpts, then the opts are already cached.
 	if _, ok := client.(*clientWithCustomOpts); !ok {
 		// this forces the client to use our cached opts from above
-		client = &clientWithCustomOpts{opts: opts, Client: client}
+		client = gwutil.WithCurrentFrontend(client, &clientWithCustomOpts{opts: opts, Client: client})
 	}
 	return setClientOptOption(client, map[string]string{keyTopLevelTarget: key, "build-arg:" + dalec.KeyDalecTarget: key})
 }

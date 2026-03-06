@@ -25,6 +25,7 @@ import (
 	"github.com/moby/buildkit/solver/pb"
 	spb "github.com/moby/buildkit/sourcepolicy/pb"
 	pkgerrors "github.com/pkg/errors"
+	"github.com/project-dalec/dalec/internal/gwutil"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -398,7 +399,7 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	}
 
 	_, err = c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, error) {
-		gwc = &clientForceDalecWithInput{gwc}
+		gwc = gwutil.WithCurrentFrontend(gwc, &clientForceDalecWithInput{gwc})
 
 		b.mu.Lock()
 		for id, f := range b.refs {
@@ -441,12 +442,12 @@ type gwClientInputInject struct {
 	f  gwclient.BuildFunc
 }
 
-func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) *gwClientInputInject {
-	return &gwClientInputInject{
+func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) gwclient.Client {
+	return gwutil.WithCurrentFrontend(c, &gwClientInputInject{
 		Client: c,
 		id:     id,
 		f:      f,
-	}
+	})
 }
 
 func (c *gwClientInputInject) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
