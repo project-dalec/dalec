@@ -1,7 +1,6 @@
 package testenv
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -91,12 +90,32 @@ func (b *BuildxEnv) supportsDialStdio(ctx context.Context) (bool, error) {
 
 var errDialStdioNotSupported = errors.New("buildx dial-stdio not supported")
 
-type connCloseWrapper struct {
+// cmdConn wraps a net.Conn and replaces generic pipe errors with the
+// actual error from the underlying command when it has exited.
+type cmdConn struct {
 	net.Conn
-	close func()
+	close   func()
+	cmdWait <-chan error
 }
 
-func (c *connCloseWrapper) Close() error {
+func (c *cmdConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if err != nil {
+		// If the command has exited with an error, surface that instead
+		// of the generic pipe closed error.
+		select {
+		case cmdErr := <-c.cmdWait:
+			if cmdErr != nil {
+				return n, fmt.Errorf("%v: %w", cmdErr, err)
+			}
+		default:
+		}
+	}
+
+	return n, err
+}
+
+func (c *cmdConn) Close() error {
 	if c.close != nil {
 		c.close()
 	}
@@ -126,68 +145,81 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 		// the buildx dial-stdio process from cleaning up its resources properly.
 		cmd := exec.Command("docker", args...)
 		cmd.Env = os.Environ()
+		setSysProcAttr(cmd)
 
 		dialStdioConn, clientConn := net.Pipe()
-		cmd.Stdin = dialStdioConn
 		cmd.Stdout = dialStdioConn
 
-		// Use a pipe to check when the connection is actually complete
-		// Also write all of stderr to an error buffer so we can have more details
-		// in the error message when the command fails.
-		r, w := io.Pipe()
-		errBuf := bytes.NewBuffer(nil)
-		ww := io.MultiWriter(w, errBuf)
-		cmd.Stderr = ww
+		// Capture stderr so we can include it in error messages
+		// when the command fails.
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		// Use StdinPipe instead of setting cmd.Stdin directly.
+		// When cmd.Stdin is set to a non-*os.File (like net.Conn),
+		// exec creates an internal goroutine to copy data into the
+		// process's stdin pipe, and cmd.Wait blocks until that
+		// goroutine finishes. If the process exits immediately (e.g.
+		// bad arguments), the goroutine is stuck reading from
+		// dialStdioConn (nobody is writing yet), so cmd.Wait hangs.
+		// StdinPipe avoids the internal goroutine entirely.
+		stdinPipe, err := cmd.StdinPipe()
+		if err != nil {
+			_, _ = dialStdioConn.Close(), clientConn.Close()
+
+			return nil, fmt.Errorf("creating stdin pipe: %w", err)
+		}
 
 		if err := cmd.Start(); err != nil {
-			return nil, err
+			_, _, _ = stdinPipe.Close(), dialStdioConn.Close(), clientConn.Close()
+
+			if s := strings.TrimSpace(stderr.String()); s != "" {
+				return nil, fmt.Errorf("starting buildx dial-stdio: %s: %w", strings.TrimSpace(stderr.String()), err)
+			}
+
+			return nil, fmt.Errorf("starting buildx dial-stdio: %w", err)
 		}
 
-		// chWait is closed when cmd.Wait() returns, signaling the cleanup
-		// function that the process has exited.
-		chWait := make(chan struct{})
+		// Copy client writes to the process's stdin.
+		// This goroutine stops when dialStdioConn is closed (read
+		// returns error) or stdinPipe is closed (write returns error).
 		go func() {
-			err := cmd.Wait()
-			close(chWait)
-			dialStdioConn.Close()
-			// pkgerrors.Wrap will return nil if err is nil, otherwise it will give
-			// us a wrapped error with the buffered stderr from the command.
-			w.CloseWithError(pkgerrors.Wrapf(err, "%s", errBuf))
+			io.Copy(stdinPipe, dialStdioConn) //nolint:errcheck
+			stdinPipe.Close()
 		}()
 
-		defer r.Close()
-
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			txt := strings.ToLower(scanner.Text())
-
-			if strings.HasPrefix(txt, "#1 dialing builder") && strings.HasSuffix(txt, "done") {
-				go func() {
-					// Continue draining stderr so the process does not get blocked
-					_, _ = io.Copy(io.Discard, r)
-				}()
-				break
+		// cmdWait is closed when cmd.Wait() returns, signaling the cleanup
+		// function that the process has exited.
+		// waitErr is written before cmdWait is closed, so it is safe to
+		// read after receiving from cmdWait.
+		cmdWait := make(chan error, 1)
+		cmdDone := make(chan struct{})
+		go func() {
+			err := cmd.Wait()
+			if stderr.Len() > 0 && err != nil {
+				err = fmt.Errorf("%v: %w", strings.TrimSpace(stderr.String()), err)
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, err
-		}
+			cmdWait <- err
+			close(cmdWait)
+			dialStdioConn.Close()
+			close(cmdDone)
+		}()
 
-		out := &connCloseWrapper{
-			Conn: clientConn,
+		out := &cmdConn{
+			Conn:    clientConn,
+			cmdWait: cmdWait,
 			close: sync.OnceFunc(func() {
-				// Close the stdin/stdout pipe to the process.
-				// This causes stdin EOF in buildx's dial-stdio, which triggers
-				// closeWrite(conn) on the buildkit connection and should start
-				// the chain reaction for docker CLI process to exit.
+				// Close the pipe to the process. This sends EOF on stdin
+				// (like Ctrl+D), which triggers closeWrite(conn) on the
+				// buildkit connection and starts the chain reaction for the
+				// docker CLI process to exit.
 				dialStdioConn.Close()
 
 				select {
-				case <-chWait:
+				case <-cmdDone:
 				case <-time.After(10 * time.Second):
-					// Safety net: force kill if still running.
-					cmd.Process.Kill() //nolint:errcheck
-					<-chWait
+					killProcessGroup(cmd)
+					<-cmdWait
 				}
 			}),
 		}
