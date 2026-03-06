@@ -19,6 +19,7 @@ import (
 	"github.com/moby/buildkit/util/bklog"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/internal/gwutil"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/exp/maps"
 )
@@ -381,6 +382,10 @@ func topLevelKey(routePath string) string {
 // context. Build args are substituted with WithAllowAnyArg so that
 // unresolved args don't cause errors during route setup.
 func LoadSpecFromClient(ctx context.Context, client gwclient.Client) (*dalec.Spec, error) {
+	if loader, ok := client.(gwutil.SpecLoader); ok {
+		return loader.LoadSpec(ctx)
+	}
+
 	dc, err := dockerui.NewClient(client)
 	if err != nil {
 		return nil, err

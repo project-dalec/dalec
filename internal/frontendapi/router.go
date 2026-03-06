@@ -3,17 +3,21 @@ package frontendapi
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/containerd/plugin"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/debug"
+	"github.com/project-dalec/dalec/internal/gwutil"
 	"github.com/project-dalec/dalec/internal/plugins"
 	_ "github.com/project-dalec/dalec/targets/plugin"
 )
 
 // NewRouter creates a flat Router with all routes registered eagerly.
 func NewRouter(ctx context.Context, client gwclient.Client) (*frontend.Router, error) {
+	client = newCachedSpecClient(client)
 	r := &frontend.Router{}
 
 	// Register debug routes.
@@ -66,4 +70,30 @@ func loadRouteProviders(ctx context.Context, client gwclient.Client, r *frontend
 	}
 
 	return nil
+}
+
+// cachedSpecClient wraps a gwclient.Client and caches the spec loaded by
+// LoadSpecFromClient so that it is only loaded once.
+type cachedSpecClient struct {
+	gwclient.Client
+
+	loadOnce sync.Once
+	spec     *dalec.Spec
+	err      error
+}
+
+// Compile-time check that cachedSpecClient implements gwutil.SpecLoader.
+var _ gwutil.SpecLoader = (*cachedSpecClient)(nil)
+
+func newCachedSpecClient(client gwclient.Client) gwclient.Client {
+	return gwutil.WithCurrentFrontend(client, &cachedSpecClient{
+		Client: client,
+	})
+}
+
+func (c *cachedSpecClient) LoadSpec(ctx context.Context) (*dalec.Spec, error) {
+	c.loadOnce.Do(func() {
+		c.spec, c.err = frontend.LoadSpecFromClient(ctx, c.Client)
+	})
+	return c.spec, c.err
 }
