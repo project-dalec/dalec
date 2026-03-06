@@ -15,6 +15,7 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/internal/gwutil"
 )
 
 type LoadConfig struct {
@@ -22,10 +23,6 @@ type LoadConfig struct {
 }
 
 type LoadOpt func(*LoadConfig)
-
-type frontendClient interface {
-	CurrentFrontend() (*llb.State, error)
-}
 
 func WithAllowArgs(args ...string) LoadOpt {
 	return func(cfg *LoadConfig) {
@@ -199,13 +196,15 @@ func WithDefaultPlatform(platform ocispecs.Platform, build gwclient.BuildFunc) g
 		if client.BuildOpts().Opts["platform"] != "" {
 			return build(ctx, client)
 		}
-		client = &clientWithPlatform{
+		client = gwutil.WithCurrentFrontend(client, &clientWithPlatform{
 			Client:   client,
 			platform: &platform,
-		}
+		})
 		return build(ctx, client)
 	}
 }
+
+var _ gwclient.Client = (*clientWithPlatform)(nil)
 
 type clientWithPlatform struct {
 	gwclient.Client
@@ -219,7 +218,7 @@ func (c *clientWithPlatform) BuildOpts() gwclient.BuildOpts {
 }
 
 func GetCurrentFrontend(client gwclient.Client) (llb.State, error) {
-	f, err := client.(frontendClient).CurrentFrontend()
+	f, err := client.(gwutil.CurrentFrontend).CurrentFrontend()
 	if err != nil {
 		return llb.Scratch(), err
 	}

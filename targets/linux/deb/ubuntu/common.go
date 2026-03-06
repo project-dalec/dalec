@@ -1,12 +1,5 @@
 package ubuntu
 
-import (
-	"context"
-
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/project-dalec/dalec/frontend"
-)
-
 var (
 	builderPackages = []string{
 		"aptitude",
@@ -28,15 +21,4 @@ var (
 	basePackages = []string{
 		"ca-certificates",
 	}
-
-	targets = map[string]gwclient.BuildFunc{
-		BionicDefaultTargetKey: BionicConfig.Handle, // 18.04
-		FocalDefaultTargetKey:  FocalConfig.Handle,  // 20.04
-		JammyDefaultTargetKey:  JammyConfig.Handle,  // 22.04
-		NobleDefaultTargetKey:  NobleConfig.Handle,  // 24.04
-	}
 )
-
-func Handlers(ctx context.Context, client gwclient.Client, m *frontend.BuildMux) error {
-	return frontend.LoadBuiltinTargets(targets)(ctx, client, m)
-}

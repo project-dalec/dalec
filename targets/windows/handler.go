@@ -42,29 +42,66 @@ var distroConfig = &distro.Config{
 	},
 }
 
-func Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	var mux frontend.BuildMux
+// Routes returns the flat routes for the Windows target, prefixed with the given prefix.
+func Routes(prefix string, ctx context.Context, client gwclient.Client) ([]frontend.Route, error) {
+	spec, err := frontend.LoadSpecFromClient(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
+	_, specDefined := spec.Targets[prefix]
+	specDefined = specDefined && len(spec.Targets) > 0
 
 	defaultPlatform := platforms.DefaultSpec()
 	defaultPlatform.OS = "windows"
 
-	mux.Add("zip", frontend.WithDefaultPlatform(defaultPlatform, handleZip), &bktargets.Target{
-		Name:        "zip",
-		Description: "Builds binaries combined into a zip file",
-	})
-
-	mux.Add("container", frontend.WithDefaultPlatform(defaultPlatform, handleContainer), &bktargets.Target{
-		Name:        "container",
-		Description: "Builds binaries and installs them into a Windows base image",
-		Default:     true,
-	})
-
-	mux.Add("worker", handleWorker, &bktargets.Target{
-		Name:        "worker",
-		Description: "Builds the base worker image responsible for building the package",
-	})
-
-	return mux.Handle(ctx, client)
+	return []frontend.Route{
+		{
+			FullPath: prefix,
+			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handleContainer),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix,
+					Description: "Builds binaries and installs them into a Windows base image",
+				},
+				Hidden: true,
+			},
+		},
+		{
+			FullPath: prefix + "/zip",
+			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handleZip),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/zip",
+					Description: "Builds binaries combined into a zip file",
+				},
+				SpecDefined: specDefined,
+			},
+		},
+		{
+			FullPath: prefix + "/container",
+			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handleContainer),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/container",
+					Description: "Builds binaries and installs them into a Windows base image",
+					Default:     true,
+				},
+				SpecDefined: specDefined,
+			},
+		},
+		{
+			FullPath: prefix + "/worker",
+			Handler:  handleWorker,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/worker",
+					Description: "Builds the base worker image responsible for building the package",
+				},
+				SpecDefined: specDefined,
+			},
+		},
+	}, nil
 }
 
 func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
