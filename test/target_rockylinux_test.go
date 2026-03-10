@@ -1,6 +1,7 @@
 package test
 
 import (
+	"context"
 	"testing"
 
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -11,7 +12,7 @@ func TestRockylinux9(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
-	testLinuxDistro(ctx, t, testLinuxConfig{
+	cfg := testLinuxConfig{
 		Target: targetConfig{
 			Key:       "rockylinux9",
 			Package:   "rockylinux9/rpm",
@@ -51,14 +52,16 @@ func TestRockylinux9(t *testing.T) {
 			{OS: "linux", Architecture: "arm64"},
 		},
 		PackageOutputPath: rpmTargetOutputPath("el9"),
-	})
+	}
+	testLinuxDistro(ctx, t, cfg)
+	testRockylinuxExtra(ctx, t, cfg, rockylinux.ConfigV9.ImageRef)
 }
 
 func TestRockylinux8(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
-	testLinuxDistro(ctx, t, testLinuxConfig{
+	cfg := testLinuxConfig{
 		Target: targetConfig{
 			Package:   "rockylinux8/rpm",
 			Container: "rockylinux8/container",
@@ -97,5 +100,11 @@ func TestRockylinux8(t *testing.T) {
 			{OS: "linux", Architecture: "arm64"},
 		},
 		PackageOutputPath: rpmTargetOutputPath("el8"),
-	})
+	}
+	testLinuxDistro(ctx, t, cfg)
+	testRockylinuxExtra(ctx, t, cfg, rockylinux.ConfigV8.ImageRef)
+}
+
+func testRockylinuxExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distroImageRef string) {
+	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef)
 }
