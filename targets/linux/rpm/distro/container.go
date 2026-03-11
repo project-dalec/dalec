@@ -95,16 +95,36 @@ func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (
 		}
 
 		pc := dalec.Platform(platform)
-		worker := cfg.Worker(sOpt, pg, pc)
 
-		deps := dalec.SortMapKeys(rtDeps)
+		// NOTE: Deps-only allows bare specs, ie specs with just the runtime deps included.
+		// This means we may need to fill in some of the details that are required by the package manager.
+		depsSpec := &dalec.Spec{
+			Name:        spec.Name + "-runtime-deps",
+			License:     spec.License,
+			Version:     spec.Version,
+			Revision:    spec.Revision,
+			Description: "Runtime dependencies meta package",
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: rtDeps,
+			},
+		}
 
-		withDownloads := worker.Run(dalec.ShArgs("set -ex; mkdir -p /tmp/rpms/RPMS/$(uname -m)")).
-			Run(cfg.Install(deps,
-				DnfDownloadAllDeps("/tmp/rpms/RPMS/$(uname -m)")), pg).Root()
-		rpmDir := llb.Scratch().File(llb.Copy(withDownloads, "/tmp/rpms", "/", dalec.WithDirContentsOnly()), pg)
+		if depsSpec.Name == "-runtime-deps" {
+			// Name cannot start with "-"
+			depsSpec.Name = "dalec-user" + depsSpec.Name
+		}
+		if depsSpec.Version == "" {
+			depsSpec.Version = "0.0.1"
+		}
+		if depsSpec.Revision == "" {
+			depsSpec.Revision = "1"
+		}
+		if depsSpec.License == "" {
+			depsSpec.License = "MIT"
+		}
 
-		ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, rpmDir, pg, pc)
+		pkg := cfg.BuildPkg(ctx, client, sOpt, depsSpec, targetKey, pg)
+		ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, pkg, pg)
 
 		def, err := ctr.Marshal(ctx, pc)
 		if err != nil {

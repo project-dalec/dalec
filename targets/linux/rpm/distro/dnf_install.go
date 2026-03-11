@@ -34,12 +34,6 @@ type dnfInstallConfig struct {
 
 	constraints []llb.ConstraintsOpt
 
-	downloadOnly bool
-
-	allDeps bool
-
-	downloadDir string
-
 	// When true, don't omit docs from the installed RPMs.
 	includeDocs bool
 
@@ -82,14 +76,6 @@ func DnfForceArch(arch string) DnfInstallOpt {
 	}
 }
 
-func DnfDownloadAllDeps(dest string) DnfInstallOpt {
-	return func(cfg *dnfInstallConfig) {
-		cfg.downloadOnly = true
-		cfg.allDeps = true
-		cfg.downloadDir = dest
-	}
-}
-
 func IncludeDocs(v bool) DnfInstallOpt {
 	return func(cfg *dnfInstallConfig) {
 		cfg.includeDocs = v
@@ -108,18 +94,6 @@ func dnfInstallFlags(cfg *dnfInstallConfig) string {
 	if cfg.root != "" {
 		cmdOpts += " --installroot=" + cfg.root
 		cmdOpts += " --setopt=reposdir=/etc/yum.repos.d"
-	}
-
-	if cfg.downloadOnly {
-		cmdOpts += " --downloadonly"
-	}
-
-	if cfg.allDeps {
-		cmdOpts += " --alldeps"
-	}
-
-	if cfg.downloadDir != "" {
-		cmdOpts += " --downloaddir " + cfg.downloadDir
 	}
 
 	if !cfg.includeDocs {
