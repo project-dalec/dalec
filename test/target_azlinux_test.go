@@ -46,6 +46,7 @@ func TestMariner2(t *testing.T) {
 			Key:       azlinux.Mariner2TargetKey,
 			Package:   "mariner2/rpm",
 			Container: "mariner2/container",
+			DepsOnly:  "mariner2/container/depsonly",
 			Worker:    "mariner2/worker",
 			FormatDepEqual: func(v, _ string) string {
 				return v
@@ -91,6 +92,7 @@ func TestAzlinux3(t *testing.T) {
 			Key:                   "azlinux3",
 			Package:               "azlinux3/rpm",
 			Container:             "azlinux3/container",
+			DepsOnly:              "azlinux3/container/depsonly",
 			Worker:                "azlinux3/worker",
 			Sysext:                "azlinux3/testing/sysext",
 			ListExpectedSignFiles: azlinuxListSignFiles("azl3"),
