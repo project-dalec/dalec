@@ -12,21 +12,14 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-dalec/dalec"
-	"github.com/project-dalec/dalec/internal/commands"
-	"github.com/project-dalec/dalec/internal/plugins"
 )
 
-func init() {
-	var runner Runner
-	commands.RegisterPlugin(testRunnerCmdName, plugins.CmdHandlerFunc(runner.Cmd))
-}
-
-const testRunnerCmdName = "test-runner"
+const CmdName = "test-runner"
 
 type Runner struct{}
 
 func (tr *Runner) Cmd(ctx context.Context, args []string) {
-	flags := flag.NewFlagSet(testRunnerCmdName, flag.ExitOnError)
+	flags := flag.NewFlagSet(CmdName, flag.ExitOnError)
 	flags.Parse(args) //nolint:errcheck // errors are handled by ExitOnError
 
 	if flags.NArg() < 1 {
@@ -62,7 +55,7 @@ func (tr *Runner) Cmd(ctx context.Context, args []string) {
 	case string(trueCmd):
 		trueCmd.Cmd(args)
 	default:
-		fmt.Fprintln(os.Stderr, testRunnerCmdName+":", "Unknown command:", cmd)
+		fmt.Fprintln(os.Stderr, CmdName+":", "Unknown command:", cmd)
 		exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
 	}
 }
@@ -85,7 +78,7 @@ func testRunner(args []string, opts ...ValidationOpt) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 		const p = "/tmp/internal/dalec/testrunner/frontend"
 
-		args = append([]string{p, testRunnerCmdName}, args...)
+		args = append([]string{p, CmdName}, args...)
 		llb.Args(args).SetRunOption(ei)
 
 		info := validationOpts(opts...)

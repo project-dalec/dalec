@@ -6,7 +6,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/frontend/subrequests/targets"
+	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets/linux"
@@ -38,18 +38,30 @@ func (c *Config) SysextEnv(spec *dalec.Spec, targetKey string) map[string]string
 	}
 }
 
-func (c *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	var mux frontend.BuildMux
-	mux.Add("testing/sysext", linux.HandleSysext(c), &targets.Target{
-		Name:        "testing/sysext",
-		Description: "Build a Flatcar-compatible systemd sysext (.raw)",
-		Default:     true,
-	})
-	mux.Add("worker", c.HandleWorker, &targets.Target{
-		Name:        "worker",
-		Description: "Builds the worker image used to assemble Flatcar sysext images.",
-	})
-	return mux.Handle(ctx, client)
+func (c *Config) Routes(prefix string) []frontend.Route {
+	return []frontend.Route{
+		{
+			FullPath: prefix + "/testing/sysext",
+			Handler:  linux.HandleSysext(c),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/testing/sysext",
+					Description: "Build a Flatcar-compatible systemd sysext (.raw)",
+					Default:     true,
+				},
+			},
+		},
+		{
+			FullPath: prefix + "/worker",
+			Handler:  c.HandleWorker,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/worker",
+					Description: "Builds the worker image used to assemble Flatcar sysext images.",
+				},
+			},
+		},
+	}
 }
 
 // ---- linux.DistroConfig delegation ----

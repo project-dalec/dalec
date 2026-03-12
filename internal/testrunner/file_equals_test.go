@@ -30,7 +30,7 @@ func TestCheckFileEqualsWithCheckLLB(t *testing.T) {
 	t.Run("executes when equals set", func(t *testing.T) {
 		checker := checkOutputFromYAML(t, "equals: data\n")
 		exec := singleExecOp(t, definitionFromStateOption(t, checkFileEquals.WithCheck("/tmp/file", checker, withTestFrontend())))
-		expect := []string{frontendMountPath, testRunnerCmdName, string(checkFileEquals), "/tmp/file", "data"}
+		expect := []string{frontendMountPath, CmdName, string(checkFileEquals), "/tmp/file", "data"}
 		assert.Check(t, cmp.DeepEqual(expect, exec.GetMeta().GetArgs()))
 	})
 
