@@ -3,6 +3,7 @@ package distro
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -142,6 +143,14 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 	}
 
 	if samePlatform(targetPlat, buildPlat) {
+		if slices.Contains(cfg.BuilderPackages, "dnf") {
+			// Install dnf first since this will be bootstrapped with a different package manager
+			// This keeps the package cache for the bootstrap mananager separate from the other base packages we use.
+			targetBase = targetBase.Run(
+				dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
+				cfg.Install([]string{"dnf"}, installOpts...),
+			).Root()
+		}
 		return targetBase.Run(
 			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
 			cfg.Install(cfg.BuilderPackages, installOpts...),

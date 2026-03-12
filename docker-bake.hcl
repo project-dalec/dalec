@@ -3,7 +3,7 @@ group "default" {
 }
 
 group "test" {
-    targets = ["runc-test", "test-deps-only"]
+    targets = ["runc-test"]
 }
 
 variable "FRONTEND_REF" {
@@ -226,42 +226,6 @@ target "examples" {
     dockerfile = "docs/examples/${f}.yml"
     tags = ["local/dalec/examples/${f}:${distro}"]
 }
-
-target "deps-only" {
-    name = "deps-only-${distro}"
-    matrix = {
-        distro = ["mariner2"]
-    }
-    dockerfile-inline = <<EOT
-dependencies:
-    runtime:
-        patch: {}
-        bash: {}
-    EOT
-    args = {
-        "BUILDKIT_SYNTAX" = "dalec_frontend"
-    }
-    contexts = {
-        "dalec_frontend" = "target:frontend"
-    }
-    target = "${distro}/container/depsonly"
-    tags = ["local/dalec/deps-only:${distro}"]
-}
-
-target "test-deps-only" {
-    dockerfile-inline = <<EOT
-    FROM deps-only-context
-    # Make sure the deps-only target has the runtime dependencies we expect and not, for instance, "rpm"
-    RUN command -v bash
-    RUN command -v patch
-    RUN if command -v rpm; then echo should be a distroless image but rpm binary is installed; exit 1; fi
-    EOT
-
-    contexts = {
-        "deps-only-context" = "target:deps-only-mariner2"
-    }
-}
-
 
 variable "CI_FRONTEND_CACHE_SCOPE" {
     default = "dalec/frontend/ci"

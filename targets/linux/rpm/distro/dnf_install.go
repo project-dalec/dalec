@@ -34,12 +34,6 @@ type dnfInstallConfig struct {
 
 	constraints []llb.ConstraintsOpt
 
-	downloadOnly bool
-
-	allDeps bool
-
-	downloadDir string
-
 	// When true, don't omit docs from the installed RPMs.
 	includeDocs bool
 
@@ -82,14 +76,6 @@ func DnfForceArch(arch string) DnfInstallOpt {
 	}
 }
 
-func DnfDownloadAllDeps(dest string) DnfInstallOpt {
-	return func(cfg *dnfInstallConfig) {
-		cfg.downloadOnly = true
-		cfg.allDeps = true
-		cfg.downloadDir = dest
-	}
-}
-
 func IncludeDocs(v bool) DnfInstallOpt {
 	return func(cfg *dnfInstallConfig) {
 		cfg.includeDocs = v
@@ -108,18 +94,6 @@ func dnfInstallFlags(cfg *dnfInstallConfig) string {
 	if cfg.root != "" {
 		cmdOpts += " --installroot=" + cfg.root
 		cmdOpts += " --setopt=reposdir=/etc/yum.repos.d"
-	}
-
-	if cfg.downloadOnly {
-		cmdOpts += " --downloadonly"
-	}
-
-	if cfg.allDeps {
-		cmdOpts += " --alldeps"
-	}
-
-	if cfg.downloadDir != "" {
-		cmdOpts += " --downloaddir " + cfg.downloadDir
 	}
 
 	if !cfg.includeDocs {
@@ -183,12 +157,18 @@ if [ -x "$import_keys_path" ]; then
 	"$import_keys_path"
 fi
 
+if [ "$cmd" = "tdnf" ] && command -v dnf &>/dev/null; then
+	# tdnf has a lot of limitations that cause issues (no --forcearch, issues with gpg keys on local file installs)
+	# We already have dnf, so prefer that.
+	cmd="dnf"
+fi
+
 if [ -n "$force_arch" ]; then
-        if [ "$cmd" = "tdnf" ]; then
-                echo "tdnf does not support --forcearch; cross-arch installs must use dnf" >&2
-                exit 70
-        fi
-        install_flags="$install_flags --forcearch=$force_arch"
+	if [ "$cmd" = "tdnf" ]; then
+		echo "tdnf does not support --forcearch; cross-arch installs must use dnf" >&2
+		exit 70
+	fi
+	install_flags="$install_flags --forcearch=$force_arch"
 fi
 
 $cmd $dnf_sub_cmd $install_flags "${@}"
@@ -276,6 +256,8 @@ func DnfInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.Run
 	return dnfCommand(cfg, releaseVer, "dnf", append([]string{"install"}, pkgs...), nil)
 }
 
+// TdnfInstall uses tdnf to install packages
+// NOTE: tdnf will be automatically upgraded to dnf to work around tdnf limitations *if* dnf is available
 func TdnfInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
 	return dnfCommand(cfg, releaseVer, "tdnf", append([]string{"install"}, pkgs...), nil)
 }

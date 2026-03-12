@@ -123,7 +123,7 @@ func signRepoUbuntu(gpgKey llb.State, repoPath string) llb.StateOption {
 			llb.AddMount("/tmp/gpg", gpgKey, llb.Readonly),
 			dalec.ProgressGroup("Importing gpg key")).
 			Run(
-				dalec.ShArgs(`ID=$(gpg --list-keys --keyid-format LONG | grep -B 2 'test@example.com' | grep 'pub' | awk '{print $2}' | cut -d'/' -f2) && \
+				dalec.ShArgs(`ID=$(gpg --list-keys --keyid-format LONG | awk '/^pub/{print $2}' | cut -d/ -f2 | head -1) && \
 					gpg --list-keys --keyid-format LONG && \
 					gpg --default-key $ID -abs -o `+repoPath+`/Release.gpg `+repoPath+`/Release && \
 					gpg --default-key "$ID" --clearsign -o `+repoPath+`/InRelease `+repoPath+`/Release`),

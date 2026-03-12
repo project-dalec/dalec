@@ -598,3 +598,105 @@ func distroSkipSigningTest(t *testing.T, spec *dalec.Spec, buildTarget string, e
 		}
 	}
 }
+
+// signRPMs signs all RPM files in the package state using a GPG key.
+// The worker state must have rpmsign available (or tdnf/dnf to install it).
+// The gpgKey state is expected to have a private key at /private.key
+// (as produced by [generateGPGKey]).
+// The pkgState is expected to have RPMs under /RPMS/<arch>/*.rpm
+// (the standard package target output).
+// It returns the modified package state with signed RPMs.
+func signRPMs(worker llb.State, gpgKey llb.State, pkgState llb.State) llb.State {
+	pg := dalec.ProgressGroup("Sign RPMs with GPG key")
+
+	scriptDt := `#!/usr/bin/env bash
+set -eux -o pipefail
+
+if ! command -v rpmsign &> /dev/null; then
+	if command -v tdnf &> /dev/null; then
+		tdnf install -y rpm-sign
+	elif command -v dnf &> /dev/null; then
+		dnf install -y rpm-sign
+	fi
+fi
+
+gpg --import < /tmp/gpg/private.key
+ID=$(gpg --list-keys --keyid-format LONG | awk '/^pub/{print $2}' | cut -d/ -f2 | head -1)
+
+echo "%_gpg_name $ID" > ~/.rpmmacros
+
+find /tmp/rpms/RPMS -name "*.rpm" -exec rpmsign --addsign {} \;
+`
+
+	script := llb.Scratch().File(
+		llb.Mkfile("/script.sh", 0o755, []byte(scriptDt)),
+		pg,
+	)
+
+	return worker.Run(
+		llb.AddMount("/tmp/signing", script, llb.Readonly),
+		llb.AddMount("/tmp/gpg", gpgKey, llb.Readonly),
+		llb.AddMount("/tmp/rpms", pkgState),
+		dalec.ShArgs("/tmp/signing/script.sh"),
+		pg,
+	).GetMount("/tmp/rpms")
+}
+
+// testSignedRPMCustomBaseImage tests that signed RPMs can be installed into
+// a container with a custom base image.
+//
+// This reproduces a bug where the tdnfrepogpgcheck plugin rejects signed RPMs
+// installed via "tdnf install /path/to/signed.rpm --installroot=/tmp/rootfs"
+// because the @cmdline virtual repo has no gpgkey entry.
+//
+// The distroImageRef parameter is the image reference for the distro's base
+// image (e.g., azlinux.Azlinux3Ref), which is used as the custom base image
+// in the spec.
+func testSignedRPMCustomBaseImage(ctx context.Context, t *testing.T, targetCfg targetConfig, distroImageRef string) {
+	t.Run("signed rpm with custom base image", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			// Get the worker state — we need it to generate GPG keys and sign RPMs.
+			sr := newSolveRequest(withBuildTarget(targetCfg.Worker), withSpec(ctx, t, nil))
+			w := reqToState(ctx, client, sr, t)
+
+			// Generate a GPG key pair for signing.
+			gpgKey := generateGPGKey(w, true)
+
+			// Create a simple spec and build the RPM package.
+			spec := newSimpleSpec()
+			pkgSr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Package))
+			pkgSt := reqToState(ctx, client, pkgSr, t)
+
+			// Sign the RPMs on the worker using rpmsign --addsign.
+			signedPkgSt := signRPMs(w, gpgKey, pkgSt)
+
+			// Create a container spec with a custom base image.
+			// This triggers skipBase=true in BuildContainer, meaning the RPMs
+			// are installed via "tdnf install /path/to/signed.rpm --installroot=/tmp/rootfs"
+			// into the custom base image's rootfs.
+			spec.Image = &dalec.ImageConfig{
+				Entrypoint: "/usr/bin/foo",
+				Bases: []dalec.BaseImage{
+					{
+						Rootfs: dalec.Source{
+							DockerImage: &dalec.SourceDockerImage{
+								Ref: distroImageRef,
+							},
+						},
+					},
+				},
+			}
+
+			containerSr := newSolveRequest(
+				withSpec(ctx, t, spec),
+				withBuildTarget(targetCfg.Container),
+				withBuildContext(ctx, t, dalec.GenericPkg, signedPkgSt),
+			)
+
+			solveT(ctx, t, client, containerSr)
+		})
+	})
+}

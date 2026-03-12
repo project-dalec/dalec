@@ -61,6 +61,8 @@ type targetConfig struct {
 	Package string
 	// Container is the target for creating a container
 	Container string
+	// DepsOnly is the target for creating a deps-only container (no package built, only runtime deps installed).
+	DepsOnly string
 	// Worker is the target for creating the worker image.
 	Worker string
 	// Sysext is the target for creating a systemd system extension.
@@ -717,6 +719,16 @@ index 0000000..5260cb1
 
 	t.Run("container", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("depsonly", func(t *testing.T) {
+			if testConfig.Target.DepsOnly == "" {
+				t.Skip("depsonly target not defined")
+			}
+
+			t.Parallel()
+			ctx := startTestSpan(ctx, t)
+			testDepsOnly(ctx, t, testConfig)
+		})
 
 		t.Run("creates_post_install_symlinks", func(t *testing.T) {
 			t.Parallel()
@@ -5400,6 +5412,85 @@ echo "This is a third test binary"
 		if err != nil {
 			t.Fatal(err)
 		}
+	})
+}
+
+func testDepsOnly(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	t.Run("minimal spec", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := &dalec.Spec{
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: map[string]dalec.PackageConstraints{
+					"curl": {},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testConfig.Target.DepsOnly))
+			res := solveT(ctx, t, client, req)
+
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/bin/curl"})
+			assert.NilError(t, err)
+		})
+	})
+
+	t.Run("full spec", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		// Full spec includes sources, build steps, and a shell script artifact.
+		// The deps-only target should install only runtime deps (curl) and NOT
+		// include the built artifact (/usr/bin/my-script) or its implicit dep.
+		spec := fillMetadata("test-deps-only-full", &dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"my-script": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents:    "#!/usr/bin/env bash\necho hello from deps-only test\n",
+							Permissions: 0o700,
+						},
+					},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "/bin/true"},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"my-script": {},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: map[string]dalec.PackageConstraints{
+					"curl": {},
+				},
+			},
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testConfig.Target.DepsOnly))
+			res := solveT(ctx, t, client, req)
+
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			// Runtime dep should be installed.
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/bin/curl"})
+			assert.NilError(t, err)
+
+			// The shell script artifact should NOT be present — deps-only
+			// never builds the package, so no artifacts are installed.
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/bin/my-script"})
+			assert.ErrorContains(t, err, "no such file")
+		})
 	})
 }
 
