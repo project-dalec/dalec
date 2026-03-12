@@ -1,12 +1,5 @@
 package debian
 
-import (
-	"context"
-
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/project-dalec/dalec/frontend"
-)
-
 var (
 	builderPackages = []string{
 		"aptitude",
@@ -28,14 +21,4 @@ var (
 	basePackages = []string{
 		"ca-certificates",
 	}
-
-	targets = map[string]gwclient.BuildFunc{
-		TrixieDefaultTargetKey:   TrixieConfig.Handle,
-		BookwormDefaultTargetKey: BookwormConfig.Handle,
-		BullseyeDefaultTargetKey: BullseyeConfig.Handle,
-	}
 )
-
-func Handlers(ctx context.Context, client gwclient.Client, m *frontend.BuildMux) error {
-	return frontend.LoadBuiltinTargets(targets)(ctx, client, m)
-}

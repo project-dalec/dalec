@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/targets/linux/deb/debian"
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
@@ -11,23 +12,49 @@ import (
 )
 
 func init() {
-	targets.RegisterBuildTarget(debian.TrixieDefaultTargetKey, debian.TrixieConfig.Handle)
-	targets.RegisterBuildTarget(debian.BookwormDefaultTargetKey, debian.BookwormConfig.Handle)
-	targets.RegisterBuildTarget(debian.BullseyeDefaultTargetKey, debian.BullseyeConfig.Handle)
+	registerRoutes("debian", func() []frontend.Route {
+		var routes []frontend.Route
+		routes = append(routes, debian.TrixieConfig.Routes(debian.TrixieDefaultTargetKey)...)
+		routes = append(routes, debian.BookwormConfig.Routes(debian.BookwormDefaultTargetKey)...)
+		routes = append(routes, debian.BullseyeConfig.Routes(debian.BullseyeDefaultTargetKey)...)
+		return routes
+	})
 
-	targets.RegisterBuildTarget(ubuntu.BionicDefaultTargetKey, ubuntu.BionicConfig.Handle)
-	targets.RegisterBuildTarget(ubuntu.FocalDefaultTargetKey, ubuntu.FocalConfig.Handle)
-	targets.RegisterBuildTarget(ubuntu.JammyDefaultTargetKey, ubuntu.JammyConfig.Handle)
-	targets.RegisterBuildTarget(ubuntu.NobleDefaultTargetKey, ubuntu.NobleConfig.Handle)
+	registerRoutes("ubuntu", func() []frontend.Route {
+		var routes []frontend.Route
+		routes = append(routes, ubuntu.BionicConfig.Routes(ubuntu.BionicDefaultTargetKey)...)
+		routes = append(routes, ubuntu.FocalConfig.Routes(ubuntu.FocalDefaultTargetKey)...)
+		routes = append(routes, ubuntu.JammyConfig.Routes(ubuntu.JammyDefaultTargetKey)...)
+		routes = append(routes, ubuntu.NobleConfig.Routes(ubuntu.NobleDefaultTargetKey)...)
+		return routes
+	})
 
-	targets.RegisterBuildTarget(almalinux.V8TargetKey, almalinux.ConfigV8.Handle)
-	targets.RegisterBuildTarget(almalinux.V9TargetKey, almalinux.ConfigV9.Handle)
+	registerRoutes("almalinux", func() []frontend.Route {
+		var routes []frontend.Route
+		routes = append(routes, almalinux.ConfigV8.Routes(almalinux.V8TargetKey)...)
+		routes = append(routes, almalinux.ConfigV9.Routes(almalinux.V9TargetKey)...)
+		return routes
+	})
 
-	targets.RegisterBuildTarget(rockylinux.V8TargetKey, rockylinux.ConfigV8.Handle)
-	targets.RegisterBuildTarget(rockylinux.V9TargetKey, rockylinux.ConfigV9.Handle)
+	registerRoutes("rockylinux", func() []frontend.Route {
+		var routes []frontend.Route
+		routes = append(routes, rockylinux.ConfigV8.Routes(rockylinux.V8TargetKey)...)
+		routes = append(routes, rockylinux.ConfigV9.Routes(rockylinux.V9TargetKey)...)
+		return routes
+	})
 
-	targets.RegisterBuildTarget(azlinux.Mariner2TargetKey, azlinux.Mariner2Config.Handle)
-	targets.RegisterBuildTarget(azlinux.AzLinux3TargetKey, azlinux.Azlinux3Config.Handle)
+	registerRoutes("azlinux", func() []frontend.Route {
+		var routes []frontend.Route
+		routes = append(routes, azlinux.Mariner2Config.Routes(azlinux.Mariner2TargetKey)...)
+		routes = append(routes, azlinux.Azlinux3Config.Routes(azlinux.AzLinux3TargetKey)...)
+		return routes
+	})
 
-	targets.RegisterBuildTarget(windows.DefaultTargetKey, windows.Handle)
+	registerRoutes("windows", func() []frontend.Route {
+		return windows.Routes(windows.DefaultTargetKey)
+	})
+}
+
+func registerRoutes(name string, routes func() []frontend.Route) {
+	targets.RegisterRouteProvider(name, routes)
 }

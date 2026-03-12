@@ -17,7 +17,7 @@ import (
 const (
 	keyResolveSpec = "frontend.dalec.resolve"
 
-	// KeyDefaultPlatform is the subreuqest id for returning the default platform
+	// KeyDefaultPlatform is the subrequest id for returning the default platform
 	// for the builder.
 	KeyDefaultPlatform = "frontend.dalec.defaultPlatform"
 	KeyJSONSchema      = "frontend.dalec.schema"
@@ -25,6 +25,7 @@ const (
 
 const keyTarget = "target"
 
+// noSuchHandlerError is returned when no route matches the requested target.
 type noSuchHandlerError struct {
 	Target    string
 	Available []string
@@ -38,7 +39,7 @@ func (err *noSuchHandlerError) Error() string {
 	return fmt.Sprintf("no such handler for target %q: available targets: %s", err.Target, strings.Join(err.Available, ", "))
 }
 
-// CurrentFrontend is an interface typically implemented by a [gwclient.Client]
+// CurrentFrontend is an interface typically implemented by a [gwclient.Client].
 // This is used to get the rootfs of the current frontend.
 type CurrentFrontend interface {
 	CurrentFrontend() (*llb.State, error)
@@ -57,6 +58,7 @@ type clientWithCustomOpts struct {
 func (d *clientWithCustomOpts) BuildOpts() gwclient.BuildOpts {
 	return d.opts
 }
+
 func (d *clientWithCustomOpts) CurrentFrontend() (*llb.State, error) {
 	return d.Client.(CurrentFrontend).CurrentFrontend()
 }
