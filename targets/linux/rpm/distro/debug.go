@@ -8,7 +8,7 @@ import (
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/frontend/subrequests/targets"
+	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
@@ -156,26 +156,38 @@ func (c *Config) HandleSpec(ctx context.Context, client gwclient.Client) (*gwcli
 	})
 }
 
-// HandleDebug returns a build function that adds support for some debugging targets for RPM builds.
-func (c *Config) HandleDebug() gwclient.BuildFunc {
-	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		var r frontend.BuildMux
-
-		r.Add("buildroot", c.HandleBuildroot, &targets.Target{
-			Name:        "buildroot",
-			Description: "Outputs an rpm buildroot suitable for passing to rpmbuild.",
-		})
-
-		r.Add("sources", c.HandleSources, &targets.Target{
-			Name:        "sources",
-			Description: "Outputs all the sources specified in the spec file in the format given to rpmbuild.",
-		})
-
-		r.Add("spec", c.HandleSpec, &targets.Target{
-			Name:        "spec",
-			Description: "Outputs the generated RPM spec file",
-		})
-
-		return r.Handle(ctx, client)
+// DebugRoutes returns flat routes for RPM debug targets under the given prefix.
+func (c *Config) DebugRoutes(prefix string) []frontend.Route {
+	return []frontend.Route{
+		{
+			FullPath: prefix + "/buildroot",
+			Handler:  c.HandleBuildroot,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/buildroot",
+					Description: "Outputs an rpm buildroot suitable for passing to rpmbuild.",
+				},
+			},
+		},
+		{
+			FullPath: prefix + "/sources",
+			Handler:  c.HandleSources,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/sources",
+					Description: "Outputs all the sources specified in the spec file in the format given to rpmbuild.",
+				},
+			},
+		},
+		{
+			FullPath: prefix + "/spec",
+			Handler:  c.HandleSpec,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/spec",
+					Description: "Outputs the generated RPM spec file",
+				},
+			},
+		},
 	}
 }

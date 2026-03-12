@@ -65,11 +65,11 @@ func main() {
 
 func dalecMain() {
 	ctx := appcontext.Context()
-	mux, err := frontendapi.NewBuildRouter(ctx)
+	r, err := frontendapi.NewRouter(ctx)
 	if err != nil {
 		bklog.L.WithError(err).Fatal("error creating frontend router")
 	}
-	handler := mux.Handler(frontend.WithTargetForwardingHandler)
+	handler := r.Handler(frontend.WithTargetForwardingHandler)
 	handler = wrapWithCoverage(handler)
 
 	if err := grpcclient.RunFromEnvironment(ctx, handler); err != nil {
