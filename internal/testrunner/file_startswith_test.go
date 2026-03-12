@@ -29,6 +29,6 @@ func TestCheckFileStartsWithCommand(t *testing.T) {
 func TestCheckFileStartsWithWithCheckLLB(t *testing.T) {
 	checker := checkOutputFromYAML(t, "starts_with: hello\n")
 	exec := singleExecOp(t, definitionFromStateOption(t, checkFileStartsWith.WithCheck("/tmp/out", checker, withTestFrontend())))
-	expect := []string{frontendMountPath, testRunnerCmdName, string(checkFileStartsWith), "/tmp/out", "hello"}
+	expect := []string{frontendMountPath, CmdName, string(checkFileStartsWith), "/tmp/out", "hello"}
 	assert.Check(t, cmp.DeepEqual(expect, exec.GetMeta().GetArgs()))
 }

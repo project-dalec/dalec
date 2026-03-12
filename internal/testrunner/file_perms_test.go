@@ -55,7 +55,7 @@ func TestCheckFilePermsWithCheckLLB(t *testing.T) {
 		exec := singleExecOp(t, definitionFromStateOption(t, checkFilePerms.WithCheck("/bin/tool", checker, withTestFrontend())))
 		expect := []string{
 			frontendMountPath,
-			testRunnerCmdName,
+			CmdName,
 			string(checkFilePerms),
 			"--" + noFollowFlagName + "=false",
 			"/bin/tool",

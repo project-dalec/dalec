@@ -30,7 +30,7 @@ func TestCheckFileEndsWithWithCheckLLB(t *testing.T) {
 	t.Run("runs when suffix provided", func(t *testing.T) {
 		checker := checkOutputFromYAML(t, "ends_with: done\n")
 		exec := singleExecOp(t, definitionFromStateOption(t, checkFileEndsWith.WithCheck("/tmp/out", checker, withTestFrontend())))
-		expect := []string{frontendMountPath, testRunnerCmdName, string(checkFileEndsWith), "/tmp/out", "done"}
+		expect := []string{frontendMountPath, CmdName, string(checkFileEndsWith), "/tmp/out", "done"}
 		assert.Check(t, cmp.DeepEqual(expect, exec.GetMeta().GetArgs()))
 	})
 

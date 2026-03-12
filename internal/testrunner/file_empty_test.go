@@ -32,7 +32,7 @@ func TestCheckFileEmptyCommand(t *testing.T) {
 func TestCheckFileEmptyWithCheckLLB(t *testing.T) {
 	t.Run("empty true", func(t *testing.T) {
 		exec := singleExecOp(t, definitionFromStateOption(t, checkFileEmpty.WithCheck("/tmp/out", checkOutputFromYAML(t, "empty: true\n"), withTestFrontend())))
-		expect := []string{frontendMountPath, testRunnerCmdName, string(checkFileEmpty), "/tmp/out"}
+		expect := []string{frontendMountPath, CmdName, string(checkFileEmpty), "/tmp/out"}
 		assert.Check(t, cmp.DeepEqual(expect, exec.GetMeta().GetArgs()))
 	})
 

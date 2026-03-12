@@ -43,7 +43,7 @@ func TestCheckFileContainsWithCheckLLB(t *testing.T) {
 		exec := singleExecOp(t, def)
 		expect := []string{
 			frontendMountPath,
-			testRunnerCmdName,
+			CmdName,
 			string(checkFileContains),
 			"/tmp/output",
 			checker.Contains[i],

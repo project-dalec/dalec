@@ -51,7 +51,7 @@ func TestCheckFileIsDirWithCheckLLB(t *testing.T) {
 		exec := singleExecOp(t, definitionFromStateOption(t, checkFileIsDir.WithCheck("/data", checker, withTestFrontend())))
 		expect := []string{
 			frontendMountPath,
-			testRunnerCmdName,
+			CmdName,
 			string(checkFileIsDir),
 			"--not=false",
 			"--" + noFollowFlagName + "=false",
@@ -64,7 +64,7 @@ func TestCheckFileIsDirWithCheckLLB(t *testing.T) {
 		exec := singleExecOp(t, definitionFromStateOption(t, checkFileIsDir.WithCheck("/file", fileCheckFromYAML(t, "{}"), withTestFrontend())))
 		expect := []string{
 			frontendMountPath,
-			testRunnerCmdName,
+			CmdName,
 			string(checkFileIsDir),
 			"--not=true",
 			"--" + noFollowFlagName + "=false",

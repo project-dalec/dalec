@@ -45,7 +45,7 @@ func TestCheckFileLinkTargetWithCheckLLB(t *testing.T) {
 		exec := singleExecOp(t, definitionFromStateOption(t, checkFileLinkTarget.WithCheck("/tmp/link", checker, withTestFrontend())))
 		expect := []string{
 			frontendMountPath,
-			testRunnerCmdName,
+			CmdName,
 			string(checkFileLinkTarget),
 			"/tmp/link",
 			"/usr/bin/tool",

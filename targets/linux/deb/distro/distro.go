@@ -6,8 +6,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/frontend/subrequests/targets"
+	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
@@ -98,36 +97,75 @@ func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.
 	return dalec.WithRunOptions(withRepos, withData, keyMounts)
 }
 
-func (cfg *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	var mux frontend.BuildMux
-
-	mux.Add("deb", linux.HandlePackage(cfg), &targets.Target{
-		Name:        "deb",
-		Description: "Builds a deb package.",
-		Default:     true,
-	})
-
-	mux.Add("testing/container", linux.HandleContainer(cfg), &targets.Target{
-		Name:        "testing/container",
-		Description: "Builds a container image for testing purposes only.",
-	})
-
-	mux.Add("dsc", cfg.HandleSourcePkg, &targets.Target{
-		Name:        "dsc",
-		Description: "Builds a Debian source package.",
-	})
-
-	mux.Add("worker", cfg.HandleWorker, &targets.Target{
-		Name:        "worker",
-		Description: "Builds the worker image.",
-	})
+// Routes returns the flat routes for this DEB distro config, prefixed with the given prefix.
+func (cfg *Config) Routes(prefix string) []frontend.Route {
+	routes := []frontend.Route{
+		{
+			FullPath: prefix,
+			Handler:  linux.HandlePackage(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix,
+					Description: "Builds a deb package.",
+				},
+				Hidden: true,
+			},
+		},
+		{
+			FullPath: prefix + "/deb",
+			Handler:  linux.HandlePackage(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/deb",
+					Description: "Builds a deb package.",
+					Default:     true,
+				},
+			},
+		},
+		{
+			FullPath: prefix + "/testing/container",
+			Handler:  linux.HandleContainer(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/testing/container",
+					Description: "Builds a container image for testing purposes only.",
+				},
+			},
+		},
+		{
+			FullPath: prefix + "/dsc",
+			Handler:  cfg.HandleSourcePkg,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/dsc",
+					Description: "Builds a Debian source package.",
+				},
+			},
+		},
+		{
+			FullPath: prefix + "/worker",
+			Handler:  cfg.HandleWorker,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/worker",
+					Description: "Builds the worker image.",
+				},
+			},
+		},
+	}
 
 	if cfg.SysextSupported {
-		mux.Add("testing/sysext", linux.HandleSysext(cfg), &targets.Target{
-			Name:        "testing/sysext",
-			Description: "Builds a systemd system extension image.",
+		routes = append(routes, frontend.Route{
+			FullPath: prefix + "/testing/sysext",
+			Handler:  linux.HandleSysext(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/testing/sysext",
+					Description: "Builds a systemd system extension image.",
+				},
+			},
 		})
 	}
 
-	return mux.Handle(ctx, client)
+	return routes
 }
