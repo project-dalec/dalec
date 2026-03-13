@@ -17,6 +17,7 @@ import (
 
 	"github.com/cpuguy83/dockercfg"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session/auth"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
@@ -430,7 +431,7 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	}
 
 	_, err = c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, error) {
-		gwc = &clientForceDalecWithInput{gwc}
+		gwc = withCurrentFrontend(gwc, &clientForceDalecWithInput{gwc})
 
 		b.mu.Lock()
 		for id, f := range b.refs {
@@ -473,12 +474,12 @@ type gwClientInputInject struct {
 	f  gwclient.BuildFunc
 }
 
-func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) *gwClientInputInject {
-	return &gwClientInputInject{
+func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) gwclient.Client {
+	return withCurrentFrontend(c, &gwClientInputInject{
 		Client: c,
 		id:     id,
 		f:      f,
-	}
+	})
 }
 
 func (c *gwClientInputInject) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
@@ -570,4 +571,29 @@ func (ap *authProvider) VerifyTokenAuthority(ctx context.Context, req *auth.Veri
 
 func (ap *authProvider) Register(server *grpc.Server) {
 	auth.RegisterAuthServer(server, ap)
+}
+
+// currentFrontend is the interface for obtaining the current frontend's rootfs.
+// This mirrors the unexported interface in the frontend package.
+type currentFrontend interface {
+	CurrentFrontend() (*llb.State, error)
+}
+
+// withCurrentFrontend wraps a gwclient.Client to preserve the currentFrontend
+// interface through client wrapping.
+func withCurrentFrontend(inner gwclient.Client, wrapper gwclient.Client) gwclient.Client {
+	cf, ok := inner.(currentFrontend)
+	if !ok {
+		return wrapper
+	}
+	return &clientWithCurrentFrontend{Client: wrapper, cf: cf}
+}
+
+type clientWithCurrentFrontend struct {
+	gwclient.Client
+	cf currentFrontend
+}
+
+func (c *clientWithCurrentFrontend) CurrentFrontend() (*llb.State, error) {
+	return c.cf.CurrentFrontend()
 }

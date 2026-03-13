@@ -1,13 +1,11 @@
 package distro
 
 import (
-	"context"
 	"path/filepath"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/frontend/subrequests/targets"
+	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets/linux"
@@ -91,41 +89,89 @@ func (c *Config) Install(pkgs []string, opts ...DnfInstallOpt) llb.RunOption {
 	return dalec.WithRunOptions(c.InstallFunc(&cfg, c.ReleaseVer, pkgs), c.PackageCacheMount(cfg.root))
 }
 
-func (cfg *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	var mux frontend.BuildMux
+// Routes returns the flat routes for this RPM distro config, prefixed with the given prefix.
+func (cfg *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
+	// Check whether this target key is defined in the spec.
+	_, specDefined := spec.Targets[prefix]
+	// Only mark SpecDefined when the spec actually defines targets.
+	specDefined = specDefined && len(spec.Targets) > 0
 
-	mux.Add("rpm", linux.HandlePackage(cfg), &targets.Target{
-		Name:        "rpm",
-		Description: "Builds an rpm and src.rpm.",
-	})
+	routes := []frontend.Route{
+		{
+			FullPath: prefix,
+			Handler:  linux.HandleContainer(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix,
+					Description: "Builds a container image for " + cfg.FullName,
+				},
+				SpecDefined: specDefined,
+				Hidden:      true,
+			},
+		},
+		{
+			FullPath: prefix + "/rpm",
+			Handler:  linux.HandlePackage(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/rpm",
+					Description: "Builds an rpm and src.rpm.",
+				},
+				SpecDefined: specDefined,
+			},
+		},
+		{
+			FullPath: prefix + "/container",
+			Handler:  linux.HandleContainer(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/container",
+					Description: "Builds a container image for " + cfg.FullName,
+					Default:     true,
+				},
+				SpecDefined: specDefined,
+			},
+		},
+		{
+			FullPath: prefix + "/container/depsonly",
+			Handler:  cfg.HandleDepsOnly,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/container/depsonly",
+					Description: "Builds a container image with only the runtime dependencies installed.",
+				},
+				SpecDefined: specDefined,
+			},
+		},
+		{
+			FullPath: prefix + "/worker",
+			Handler:  cfg.HandleWorker,
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/worker",
+					Description: "Builds the base worker image responsible for building the rpm",
+				},
+				SpecDefined: specDefined,
+			},
+		},
+	}
 
-	mux.Add("rpm/debug", cfg.HandleDebug(), &targets.Target{
-		Name:        "rpm/debug",
-		Description: "Debug options for rpm builds.",
-	})
-
-	mux.Add("container", linux.HandleContainer(cfg), &targets.Target{
-		Name:        "container",
-		Description: "Builds a container image for " + cfg.FullName,
-		Default:     true,
-	})
-
-	mux.Add("container/depsonly", cfg.HandleDepsOnly, &targets.Target{
-		Name:        "container/depsonly",
-		Description: "Builds a container image with only the runtime dependencies installed.",
-	})
-
-	mux.Add("worker", cfg.HandleWorker, &targets.Target{
-		Name:        "worker",
-		Description: "Builds the base worker image responsible for building the rpm",
-	})
+	// RPM debug sub-routes
+	routes = append(routes, cfg.DebugRoutes(prefix+"/rpm/debug", specDefined)...)
 
 	if cfg.SysextSupported {
-		mux.Add("testing/sysext", linux.HandleSysext(cfg), &targets.Target{
-			Name:        "testing/sysext",
-			Description: "Builds a systemd system extension image.",
+		routes = append(routes, frontend.Route{
+			FullPath: prefix + "/testing/sysext",
+			Handler:  linux.HandleSysext(cfg),
+			Info: frontend.Target{
+				Target: bktargets.Target{
+					Name:        prefix + "/testing/sysext",
+					Description: "Builds a systemd system extension image.",
+				},
+				SpecDefined: specDefined,
+			},
 		})
 	}
 
-	return mux.Handle(ctx, client)
+	return routes, nil
 }

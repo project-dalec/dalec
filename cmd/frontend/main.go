@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"flag"
 	"fmt"
 	"os"
 
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
@@ -65,12 +67,14 @@ func main() {
 
 func dalecMain() {
 	ctx := appcontext.Context()
-	mux, err := frontendapi.NewBuildRouter(ctx)
-	if err != nil {
-		bklog.L.WithError(err).Fatal("error creating frontend router")
-	}
 
-	if err := grpcclient.RunFromEnvironment(ctx, mux.Handler(frontend.WithTargetForwardingHandler)); err != nil {
+	if err := grpcclient.RunFromEnvironment(ctx, func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		r, err := frontendapi.NewRouter(ctx, client)
+		if err != nil {
+			return nil, err
+		}
+		return r.Handler(frontend.WithTargetForwardingHandler)(ctx, client)
+	}); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
 	}
