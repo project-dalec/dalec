@@ -30,12 +30,40 @@ var (
 // This handles enabled or not enabled for this special case instead of using
 // the postinst provided by `dh_installsystemd` without `--no-eable` set.
 func customDHInstallSystemdPostinst(spec *dalec.Spec, target string) ([]byte, error) {
-	artifacts := spec.GetArtifacts(target)
-	units := artifacts.Systemd.GetUnits()
-	grouped := groupUnitsByBaseName(units)
-
 	buf := bytes.NewBuffer(nil)
 
+	// Primary package units
+	artifacts := spec.GetArtifacts(target)
+	units := artifacts.Systemd.GetUnits()
+	if err := writeCustomEnableForUnits(buf, units); err != nil {
+		return nil, err
+	}
+
+	// Subpackage units
+	packages := spec.GetSubPackages(target)
+	if len(packages) > 0 {
+		keys := dalec.SortMapKeys(packages)
+		for _, key := range keys {
+			pkg := packages[key]
+			if pkg.Artifacts == nil {
+				continue
+			}
+			subUnits := pkg.Artifacts.Systemd.GetUnits()
+			if err := writeCustomEnableForUnits(buf, subUnits); err != nil {
+				return nil, errors.Wrapf(err, "subpackage %s", key)
+			}
+		}
+	}
+
+	return buf.Bytes(), nil
+}
+
+func writeCustomEnableForUnits(buf *bytes.Buffer, units map[string]dalec.SystemdUnitConfig) error {
+	if len(units) == 0 {
+		return nil
+	}
+
+	grouped := groupUnitsByBaseName(units)
 	sorted := dalec.SortMapKeys(grouped)
 	for _, v := range sorted {
 		ls := grouped[v]
@@ -43,20 +71,19 @@ func customDHInstallSystemdPostinst(spec *dalec.Spec, target string) ([]byte, er
 			continue
 		}
 
-		sorted := dalec.SortMapKeys(ls)
-
-		for _, name := range sorted {
+		sortedNames := dalec.SortMapKeys(ls)
+		for _, name := range sortedNames {
 			cfg := ls[name]
 			if err := writeCustomEnablePartial(buf, name, &cfg); err != nil {
-				return nil, errors.Wrapf(err, "error writing custom systemd enable template for unit: %s", name)
+				return errors.Wrapf(err, "error writing custom systemd enable template for unit: %s", name)
 			}
 			if err := customStartTmpl.Execute(buf, name); err != nil {
-				return nil, errors.Wrapf(err, "error writing custom systemd start template for unit: %s", name)
+				return errors.Wrapf(err, "error writing custom systemd start template for unit: %s", name)
 			}
 		}
 	}
 
-	return buf.Bytes(), nil
+	return nil
 }
 
 func writeCustomEnablePartial(buf io.Writer, name string, cfg *dalec.SystemdUnitConfig) error {
