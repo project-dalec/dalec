@@ -7,7 +7,7 @@ require (
 	github.com/atombender/go-jsonschema v0.20.0
 	github.com/bazelbuild/remote-apis v0.0.0-20250915115802-824e1ba94b2d
 	github.com/cavaliergopher/rpm v1.3.0
-	github.com/containerd/containerd/v2 v2.2.1
+	github.com/containerd/containerd/v2 v2.2.2
 	github.com/containerd/platforms v1.0.0-rc.2
 	github.com/containerd/plugin v1.0.0
 	github.com/cpuguy83/dockercfg v0.3.2
@@ -32,7 +32,7 @@ require (
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621
 	golang.org/x/sync v0.19.0
 	golang.org/x/tools v0.39.0
-	google.golang.org/grpc v1.76.0
+	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 	gotest.tools/v3 v3.5.2
 	pault.ag/go/debian v0.18.0
