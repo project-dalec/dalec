@@ -48,6 +48,22 @@ func TestHandleSecretToken(t *testing.T) {
 		assertFieldAbsent(t, resp, keyUsername)
 		assertFieldAbsent(t, resp, keyPassword)
 	})
+
+	t.Run("trailing newline trimmed from token", func(t *testing.T) {
+		// Secrets mounted from files may have trailing newlines.
+		// These must be stripped to avoid breaking the credential protocol response.
+		payload := &gitPayload{
+			protocol: "https",
+			host:     "github.com",
+		}
+
+		resp, err := handleSecretToken([]byte("ghp_abc123\n"), payload)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assertFieldEquals(t, resp, keyPassword, "ghp_abc123")
+	})
 }
 
 func TestHandleSecretHeader(t *testing.T) {
@@ -115,6 +131,38 @@ func TestHandleSecretHeader(t *testing.T) {
 		_, err := handleSecretHeader([]byte("nospaceshere"), payload)
 		if err == nil {
 			t.Fatal("expected error for malformed header, got nil")
+		}
+	})
+
+	t.Run("trailing newline trimmed from header", func(t *testing.T) {
+		// Secrets mounted from files may have trailing newlines.
+		payload := &gitPayload{
+			protocol:   "https",
+			host:       "github.com",
+			capability: []string{"authtype"},
+		}
+
+		resp, err := handleSecretHeader([]byte("Bearer eyJhbGciOi\n"), payload)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assertFieldEquals(t, resp, keyAuthtype, "Bearer")
+		assertFieldEquals(t, resp, keyCredential, "eyJhbGciOi")
+	})
+
+	t.Run("malformed basic credential no colon", func(t *testing.T) {
+		// A Basic credential that decodes to a string without a colon
+		// is invalid per RFC 7617 and should be rejected.
+		payload := &gitPayload{
+			protocol: "https",
+			host:     "github.com",
+		}
+
+		cred := base64.StdEncoding.EncodeToString([]byte("nocolonhere"))
+		_, err := handleSecretHeader([]byte("Basic "+cred), payload)
+		if err == nil {
+			t.Fatal("expected error for basic credential without colon, got nil")
 		}
 	})
 }
