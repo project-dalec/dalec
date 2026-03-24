@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -142,10 +143,17 @@ func readPayload(r io.Reader) gitPayload {
 	var payload gitPayload
 	for sc.Scan() {
 		line := sc.Text()
-		k, v, ok := strings.Cut(line, "=")
 
+		// A blank line terminates the credential protocol input.
+		if line == "" {
+			break
+		}
+
+		k, v, ok := strings.Cut(line, "=")
 		if !ok {
-			exit1("improper payload from git")
+			// Per the git credential protocol, lines without '=' are malformed.
+			// Skip them gracefully rather than crashing.
+			continue
 		}
 
 		switch k {
@@ -180,7 +188,9 @@ func readPayload(r io.Reader) gitPayload {
 		case keyStateArr:
 			payload.state = append(payload.state, v)
 		default:
-			exit1(fmt.Sprintf("unknown key: %q", k))
+			// Per the git credential protocol spec, unrecognized
+			// attributes should be silently discarded.
+			continue
 		}
 	}
 
@@ -241,19 +251,41 @@ func handleSecretHeader(b []byte, payload *gitPayload) (string, error) {
 		return "", fmt.Errorf("improperly formatted auth header")
 	}
 
-	payload.authtype = authtype
-	payload.credential = credential
+	if slices.Contains(payload.capability, "authtype") {
+		payload.authtype = authtype
+		payload.credential = credential
+	} else if strings.EqualFold(authtype, authTypeBasic) {
+		// Pre-2.46 git does not support authtype/credential protocol fields.
+		// For Basic auth, we can decode the credential and use username/password.
+		decoded, err := base64.StdEncoding.DecodeString(credential)
+		if err != nil {
+			return "", fmt.Errorf("could not decode basic auth credential: %w", err)
+		}
+		user, pass, _ := strings.Cut(string(decoded), ":")
+		payload.username = user
+		payload.password = pass
+	} else {
+		// Non-basic auth (Bearer, etc.) requires git 2.46+ credential protocol v2.
+		return "", fmt.Errorf("header auth type %q requires git 2.46+ (capability authtype not announced by git)", authtype)
+	}
 
 	return printPayload(payload), nil
 }
 
 func handleSecretToken(token []byte, payload *gitPayload) (string, error) {
-	var buf bytes.Buffer
-	buf.WriteString("x-access-token:")
-	buf.Write(token)
+	if slices.Contains(payload.capability, "authtype") {
+		var buf bytes.Buffer
+		buf.WriteString("x-access-token:")
+		buf.Write(token)
 
-	payload.authtype = authTypeBasic
-	payload.credential = base64.StdEncoding.EncodeToString(buf.Bytes())
+		payload.authtype = authTypeBasic
+		payload.credential = base64.StdEncoding.EncodeToString(buf.Bytes())
+	} else {
+		// Pre-2.46 git does not support authtype/credential protocol fields.
+		// Fall back to username/password which maps to HTTP Basic auth.
+		payload.username = "x-access-token"
+		payload.password = string(token)
+	}
 
 	return printPayload(payload), nil
 }
