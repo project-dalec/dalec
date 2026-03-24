@@ -245,7 +245,7 @@ func generateResponse(payload *gitPayload, secret []byte, kind string) (string, 
 }
 
 func handleSecretHeader(b []byte, payload *gitPayload) (string, error) {
-	s := string(b)
+	s := strings.TrimRight(string(b), "\r\n")
 	authtype, credential, ok := strings.Cut(s, " ")
 	if !ok {
 		return "", fmt.Errorf("improperly formatted auth header")
@@ -261,7 +261,10 @@ func handleSecretHeader(b []byte, payload *gitPayload) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("could not decode basic auth credential: %w", err)
 		}
-		user, pass, _ := strings.Cut(string(decoded), ":")
+		user, pass, ok := strings.Cut(string(decoded), ":")
+		if !ok {
+			return "", fmt.Errorf("improperly formatted basic auth credential")
+		}
 		payload.username = user
 		payload.password = pass
 	} else {
@@ -284,7 +287,7 @@ func handleSecretToken(token []byte, payload *gitPayload) (string, error) {
 		// Pre-2.46 git does not support authtype/credential protocol fields.
 		// Fall back to username/password which maps to HTTP Basic auth.
 		payload.username = "x-access-token"
-		payload.password = string(token)
+		payload.password = strings.TrimRight(string(token), "\r\n")
 	}
 
 	return printPayload(payload), nil
