@@ -131,6 +131,10 @@ func (f ConstraintsOptFunc) SetGitOption(gi *llb.GitInfo) {
 	f(&gi.Constraints)
 }
 
+func (f ConstraintsOptFunc) SetImageBlobOption(ibi *llb.ImageBlobInfo) {
+	f(&ibi.Constraints)
+}
+
 func WithConstraints(ls ...llb.ConstraintsOpt) llb.ConstraintsOpt {
 	return ConstraintsOptFunc(func(c *llb.Constraints) {
 		for _, opt := range ls {
