@@ -44,3 +44,8 @@ updates:
       website-npm-all:
         patterns:
         - "*"
+
+  - package-ecosystem: docker
+    directory: /website
+    schedule:
+      interval: daily
