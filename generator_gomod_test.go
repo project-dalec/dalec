@@ -118,6 +118,60 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 			expectedArg: "github.com/stretchr/testify=github.com/stretchr/testify@v1.8.0",
 		},
 		{
+			name: "adds incompatible for v2+ module path without major suffix",
+			repl: GomodReplace{
+				Original: "github.com/docker/cli",
+				Update:   "github.com/docker/cli@v29.2.0",
+			},
+			expectErr:   false,
+			expectedArg: "github.com/docker/cli=github.com/docker/cli@v29.2.0+incompatible",
+		},
+		{
+			name: "keeps existing incompatible suffix",
+			repl: GomodReplace{
+				Original: "github.com/docker/cli",
+				Update:   "github.com/docker/cli@v29.2.0+incompatible",
+			},
+			expectErr:   false,
+			expectedArg: "github.com/docker/cli=github.com/docker/cli@v29.2.0+incompatible",
+		},
+		{
+			name: "does not add incompatible for proper /v2 path",
+			repl: GomodReplace{
+				Original: "example.com/mod/v2",
+				Update:   "example.com/mod/v2@v2.3.4",
+			},
+			expectErr:   false,
+			expectedArg: "example.com/mod/v2=example.com/mod/v2@v2.3.4",
+		},
+		{
+			name: "does not add incompatible for v1",
+			repl: GomodReplace{
+				Original: "github.com/stretchr/testify",
+				Update:   "github.com/stretchr/testify@v1.8.0",
+			},
+			expectErr:   false,
+			expectedArg: "github.com/stretchr/testify=github.com/stretchr/testify@v1.8.0",
+		},
+		{
+			name: "does not rewrite local path replacements",
+			repl: GomodReplace{
+				Original: "github.com/docker/cli",
+				Update:   "../docker-cli",
+			},
+			expectErr:   false,
+			expectedArg: "github.com/docker/cli=../docker-cli",
+		},
+		{
+			name: "does not add incompatible when other build metadata is present",
+			repl: GomodReplace{
+				Original: "example.com/mod",
+				Update:   "example.com/mod@v2.0.0+meta",
+			},
+			expectErr:   false,
+			expectedArg: "example.com/mod=example.com/mod@v2.0.0+meta",
+		},
+		{
 			name: "empty old",
 			repl: GomodReplace{
 				Original: "",
