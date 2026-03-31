@@ -12,6 +12,8 @@ import (
 	"github.com/goccy/go-yaml/parser"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/pkg/errors"
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 // Spec is the specification for a package build.
@@ -230,11 +232,45 @@ func (r GomodReplace) String() string {
 	return r.Original + " => " + r.Update
 }
 
+func normalizeGomodReplaceTarget(target string) string {
+	at := strings.LastIndex(target, "@")
+	if at <= 0 || at == len(target)-1 {
+		return target
+	}
+
+	path := target[:at]
+	version := target[at+1:]
+
+	if !semver.IsValid(version) {
+		return target
+	}
+
+	if strings.HasSuffix(version, "+incompatible") {
+		return target
+	}
+
+	if strings.Contains(version, "+") {
+		return target
+	}
+
+	_, pathMajor, ok := module.SplitPathVersion(path)
+	if !ok || pathMajor != "" {
+		return target
+	}
+
+	switch semver.Major(version) {
+	case "v0", "v1":
+		return target
+	default:
+		return path + "@" + version + "+incompatible"
+	}
+}
+
 func (r GomodReplace) goModEditArg() (string, error) {
 	if r.Original == "" || r.Update == "" {
 		return "", errors.Errorf("invalid gomod replace, old and new must be non-empty")
 	}
-	return r.Original + "=" + r.Update, nil
+	return r.Original + "=" + normalizeGomodReplaceTarget(r.Update), nil
 }
 
 func (r *GomodReplace) UnmarshalYAML(ctx context.Context, node ast.Node) error {
