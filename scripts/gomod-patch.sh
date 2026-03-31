@@ -110,7 +110,7 @@ EOF
       # Note: 'go work vendor' requires Go 1.22+
       if [ -f "$gowork_path" ]; then
         # Check if 'go work vendor' is available (Go 1.22+)
-        if go work vendor -h >/dev/null 2>&1; then
+        if go help work vendor >/dev/null 2>&1; then
           echo "  Running go work vendor to sync workspace vendor directory"
           go work vendor
         else
