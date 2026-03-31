@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -775,6 +776,210 @@ EOF
 		skip.If(t, testConfig.Target.MinimalContainer == "", "skipping test as it is not supported for this config")
 		t.Parallel()
 		testContainerTarget(ctx, t, testConfig, testConfig.Target.MinimalContainer)
+
+		t.Run("cleanup", func(t *testing.T) {
+			t.Parallel()
+			target := testConfig.Target.MinimalContainer
+
+			testLinuxSpec := func(t *testing.T, spec dalec.Spec) dalec.Spec {
+				spec = testLinuxSpec(t, spec)
+				spec.Dependencies.Runtime = map[string]dalec.PackageConstraints{}
+
+				return spec
+			}
+
+			t.Run("removes_package_manager_binaries_when_unused", func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					for _, bin := range []string{"/usr/bin/apt", "/usr/bin/apt-get", "/usr/bin/apt-cache", "/usr/bin/dpkg", "/usr/bin/tar"} {
+						_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: bin})
+						assert.ErrorContains(t, err, "no such file", "expected %q to be removed", bin)
+					}
+				})
+			})
+
+			t.Run("removes_orphan_directories", func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					// All directories that the cleanup script removes.
+					for _, dir := range []string{
+						"/etc/apt",
+						"/etc/systemd",
+						"/usr/lib/apt",
+						"/usr/share/bash-completion",
+						"/usr/share/bug",
+						"/usr/share/debconf",
+						"/usr/share/lintian",
+						"/usr/share/locale",
+						"/var/cache/apt",
+						"/var/cache/debconf",
+						"/var/lib/apt",
+						"/var/lib/pam",
+						"/var/lib/systemd",
+						"/var/log",
+					} {
+						_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: dir})
+						assert.ErrorContains(t, err, "no such file", "expected %s to be removed", dir)
+					}
+				})
+			})
+
+			t.Run("preserves_dpkg_status", func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/var/lib/dpkg/status"})
+					assert.NilError(t, err, "/var/lib/dpkg/status should be preserved for security scanners")
+				})
+			})
+
+			t.Run("removes_docs_without_doc_artifacts", func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				// No doc artifacts → docs should be cleaned up.
+				spec := testLinuxSpec(t, dalec.Spec{})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					for _, dir := range []string{"/usr/share/doc", "/usr/share/man", "/usr/share/info"} {
+						_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: dir})
+						assert.ErrorContains(t, err, "no such file", "expected %s to be removed when no doc artifacts", dir)
+					}
+				})
+			})
+
+			t.Run("preserves_docs_with_doc_artifacts", func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				const readmeContents = "hello docs"
+				spec := testLinuxSpec(t, dalec.Spec{
+					Sources: map[string]dalec.Source{
+						"README": {
+							Inline: &dalec.SourceInline{
+								File: &dalec.SourceInlineFile{
+									Contents: readmeContents,
+								},
+							},
+						},
+					},
+					Artifacts: dalec.Artifacts{
+						Docs: map[string]dalec.ArtifactConfig{
+							"README": {},
+						},
+					},
+				})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					// Verify the spec-declared doc artifact survives cleanup
+					// in its expected on-disk location with intact contents.
+					// A bare StatFile on /usr/share/doc would pass even if
+					// cleanup accidentally emptied the directory but left
+					// the mountpoint behind.
+					docPath := "/usr/share/doc/" + spec.Name + "/README"
+					got, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: docPath})
+					assert.NilError(t, err, "spec doc artifact must be present at %s after cleanup", docPath)
+					assert.Equal(t, string(got), readmeContents, "spec doc artifact contents must be intact at %s", docPath)
+				})
+			})
+
+			t.Run("keeps_runtime_dependencies_functional", func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				// Asserts that spec-declared runtime deps survive the
+				// cleanup pass as files on disk.
+				//
+				// End-to-end exec validation of a runtime dep is
+				// covered by the sibling
+				// virtual_package_runtime_dep_resolves test, which
+				// actually runs /usr/bin/awk after cleanup and checks
+				// its stdout. That test catches missing dynamic
+				// linkers, broken shared library closures, and other
+				// runtime-only regressions that a bare StatFile check
+				// would silently miss.
+				spec := testLinuxSpec(t, dalec.Spec{
+					Tests: []*dalec.TestSpec{
+						{
+							Name: "runtime dep binary works after cleanup",
+							Files: map[string]dalec.FileCheckOutput{
+								"/usr/bin/curl": {},
+								"/usr/bin/dpkg": {},
+							},
+						},
+					},
+				})
+
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"curl": {},
+						"dpkg": {},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+		})
+
+		t.Run("squash_produces_single_layer", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(ctx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(testConfig.Target.MinimalContainer))
+				res := solveT(ctx, t, gwc, sr)
+
+				dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+				assert.Assert(t, ok, "missing image config in result metadata")
+
+				var img dalec.DockerImageSpec
+				assert.NilError(t, json.Unmarshal(dt, &img))
+
+				assert.Check(t, len(img.RootFS.DiffIDs) <= 1,
+					"expected squashed image to have at most 1 layer, got %d", len(img.RootFS.DiffIDs))
+			})
+		})
 	})
 
 	t.Run("sysext", func(t *testing.T) {
@@ -1097,22 +1302,22 @@ echo "$BAR" > bar.txt
 					},
 					Steps: []dalec.TestStep{
 						{
-							Command: "/bin/sh -c 'cat /foo'",
+							Command: "/usr/bin/env bash -c 'cat /foo'",
 							Stdout:  dalec.CheckOutput{Equals: "hello world"},
 							Stderr:  dalec.CheckOutput{Empty: true},
 						},
 						{
-							Command: "/bin/sh -c 'cat /nested/foo'",
+							Command: "/usr/bin/env bash -c 'cat /nested/foo'",
 							Stdout:  dalec.CheckOutput{Equals: "hello world nested"},
 							Stderr:  dalec.CheckOutput{Empty: true},
 						},
 						{
-							Command: "/bin/sh -c 'cat /dir/foo'",
+							Command: "/usr/bin/env bash -c 'cat /dir/foo'",
 							Stdout:  dalec.CheckOutput{Equals: "hello from dir"},
 							Stderr:  dalec.CheckOutput{Empty: true},
 						},
 						{
-							Command: "/bin/sh -c 'cat /nested/dir/foo'",
+							Command: "/usr/bin/env bash -c 'cat /nested/dir/foo'",
 							Stdout:  dalec.CheckOutput{Equals: "hello from nested dir"},
 							Stderr:  dalec.CheckOutput{Empty: true},
 						},
@@ -1162,18 +1367,18 @@ echo "$BAR" > bar.txt
 				{
 					Name: "Artifact symlinks should have correct ownership",
 					Steps: []dalec.TestStep{
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link2'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link2)\" = \"/usr/bin/src2/file2\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link3'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link3)\" = \"/usr/bin/src1\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link4'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link4)\" = \"/usr/bin/src1\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd nobody | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link4); [ \"$LINK_OWNER\" = \"$NEED_UID:0\" ]'"},
+						{Command: "/usr/bin/env bash -exc 'test -L /bin/owned-link'"},
+						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /bin/owned-link)\" = \"/usr/bin/src3\"'"},
+						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/usr/bin/env bash -exc 'test -L /bin/owned-link2'"},
+						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /bin/owned-link2)\" = \"/usr/bin/src2/file2\"'"},
+						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/usr/bin/env bash -exc 'test -L /bin/owned-link3'"},
+						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /bin/owned-link3)\" = \"/usr/bin/src1\"'"},
+						{Command: "/usr/bin/env bash -exc 'NEED_UID=0; COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/usr/bin/env bash -exc 'test -L /bin/owned-link4'"},
+						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /bin/owned-link4)\" = \"/usr/bin/src1\"'"},
+						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^nobody /etc/passwd | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link4); [ \"$LINK_OWNER\" = \"$NEED_UID:0\" ]'"},
 					},
 				},
 			},
@@ -1203,7 +1408,7 @@ echo "$BAR" > bar.txt
 			spec.Tests = append(spec.Tests, &dalec.TestSpec{
 				Name: "Test framework should be executed",
 				Steps: []dalec.TestStep{
-					{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+					{Command: "/usr/bin/env bash -c 'echo this command should fail; exit 42'"},
 				},
 			})
 
@@ -2826,8 +3031,8 @@ func Value() string {
 				{
 					Name: "Check data directory ownership in post-install",
 					Steps: []dalec.TestStep{
-						{Command: "/bin/bash -exc 'ls -ld /usr/share/another_data_dir2 | grep -E \" myuser[[:space:]]+mygroup[[:space:]]\"'"},
-						{Command: "/bin/bash -exc 'ls -l /usr/share/another_data_dir2/another_nested_data_file2 | grep -E \" myuser[[:space:]]+mygroup[[:space:]]\"'"},
+						{Command: "/usr/bin/env bash -exc 'ls -ld /usr/share/another_data_dir2 | grep -E \" myuser[[:space:]]+mygroup[[:space:]]\"'"},
+						{Command: "/usr/bin/env bash -exc 'ls -l /usr/share/another_data_dir2/another_nested_data_file2 | grep -E \" myuser[[:space:]]+mygroup[[:space:]]\"'"},
 					},
 				},
 			},
@@ -5010,7 +5215,7 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 				"hello": {
 					Inline: &dalec.SourceInline{
 						File: &dalec.SourceInlineFile{
-							Contents:    "#!/bin/sh\necho 'Hello from pre-built package'",
+							Contents:    "#!/usr/bin/env bash\necho 'Hello from pre-built package'",
 							Permissions: 0o755,
 						},
 					},
@@ -5426,17 +5631,17 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 						"/non/existing/dir/src3": {},
 					},
 					Steps: []dalec.TestStep{
-						{Command: "/bin/bash -exc 'test -L /src1'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/usr/bin/env bash -exc 'test -L /src1'"},
+						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
+						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
 						{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
 
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir/src3'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir2/src3'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/usr/bin/env bash -exc 'test -L /non/existing/dir/src3'"},
+						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
+						{Command: "/usr/bin/env bash -exc 'test -L /non/existing/dir2/src3'"},
+						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
+						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
 						{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
 						{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
 					},
@@ -5502,7 +5707,7 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 				{
 					Name: "Test framework should be executed",
 					Steps: []dalec.TestStep{
-						{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+						{Command: "/usr/bin/env bash -c 'echo this command should fail; exit 42'"},
 					},
 				},
 			},
@@ -5718,7 +5923,7 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 [ ! -d debian ] && exit 0;
 
 # Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -f debian/postinst ] || (echo '#!/usr/bin/env bash' > debian/postinst; echo 'set -e' >> debian/postinst)
 [ -x debian/postinst ] || chmod +x debian/postinst
 cat >> debian/postinst << 'EOF'
 cat /etc/apt/sources.list.d/*
@@ -5755,7 +5960,7 @@ EOF
 [ ! -d debian ] && exit 0;
 
 # Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -f debian/postinst ] || (echo '#!/usr/bin/env bash' > debian/postinst; echo 'set -e' >> debian/postinst)
 [ -x debian/postinst ] || chmod +x debian/postinst
 cat >> debian/postinst << 'EOF'
 grep debug=2 /etc/dpkg/dpkg.cfg.d/99-dalec-debug
@@ -5807,7 +6012,7 @@ EOF
 [ ! -d debian ] && exit 0;
 
 # Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -f debian/postinst ] || (echo '#!/usr/bin/env bash' > debian/postinst; echo 'set -e' >> debian/postinst)
 [ -x debian/postinst ] || chmod +x debian/postinst
 cat >> debian/postinst << 'EOF'
 [ -s /etc/dpkg/dpkg.cfg.d/excludes ] && exit 1
@@ -5843,7 +6048,7 @@ EOF
 [ ! -d debian ] && exit 0;
 
 # Inject a custom postinst script to inspect the install environment
-[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -f debian/postinst ] || (echo '#!/usr/bin/env bash' > debian/postinst; echo 'set -e' >> debian/postinst)
 [ -x debian/postinst ] || chmod +x debian/postinst
 cat >> debian/postinst << 'EOF'
 set -x
@@ -5889,6 +6094,8 @@ func testLinuxSpec(t *testing.T, userSpec dalec.Spec) dalec.Spec {
 		Dependencies: &dalec.PackageDependencies{
 			Runtime: map[string]dalec.PackageConstraints{
 				"coreutils": {},
+				"bash":      {},
+				"grep":      {},
 			},
 		},
 	}

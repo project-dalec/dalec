@@ -2,6 +2,7 @@ package distro
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -182,7 +183,17 @@ apt update
 # We can't use ?essential since some distros we support have too old apt which does not support patterns.
 essential_packages=$(dpkg-query -Wf '${Package} ${Essential}\n' | awk '$2 == "yes" {print $1}')
 
-local_package_files=$(ls /base-packages/*.deb /spec-packages/*.deb)
+# Extra packages required to run user package maintainer scripts (postinst etc.)
+# during dpkg --install. These are not Essential but commonly assumed to exist
+# (e.g. useradd/groupadd from passwd). Cleanup will purge them later unless a
+# user package depends on them.
+
+# Extra packages, which would normally be in base packages list for each distro release. However, since
+# we want to be able to clean them up after installation and after e.g. creation of users and groups in
+# the container, we define them here.
+bootstrap_extra_packages="passwd"
+
+local_package_files=$(ls /spec-packages/*.deb)
 
 # Get names of local packages so we can exclude them from apt-get install.
 local_package_names=$(for f in ${local_package_files}; do dpkg-deb -f "${f}" Package 2>/dev/null; done | sort -u)
@@ -191,7 +202,7 @@ local_package_names=$(for f in ${local_package_files}; do dpkg-deb -f "${f}" Pac
 #
 # Spec packages may depend on base packages, so we need to filter to only download remaining packages, since downloading local packages
 # would fail.
-dependencies_to_download=$(for f in ${local_package_files}; do dpkg-deb -f "${f}" Depends 2>/dev/null; done | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g' | grep -v '^$' | sort -u | grep -vxF "${local_package_names}")
+dependencies_to_download=$(for f in ${local_package_files}; do dpkg-deb -f "${f}" Depends 2>/dev/null; done | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g' | grep -v '^$' | sort -u | grep -vxF "${local_package_names}" || true)
 
 # Get the exact filenames apt needs by using --print-uris with an empty cache dir.
 # This forces apt to report ALL needed packages (not just uncached ones), giving
@@ -200,7 +211,7 @@ dependencies_to_download=$(for f in ${local_package_files}; do dpkg-deb -f "${f}
 # We extract the second field (the filename).
 needed_filenames=$(apt-get -o Dir::State::status="${rootfs}/var/lib/dpkg/status" \
     -o Dir::Cache::Archives=/tmp \
-    --yes --print-uris install ${essential_packages} ${dependencies_to_download} \
+    --yes --print-uris install ${essential_packages} ${bootstrap_extra_packages} ${dependencies_to_download} \
     | grep '\.deb ' | awk '{print $2}')
 
 mkdir -p "${rootfs}${apt_archives}"/partial
@@ -219,7 +230,7 @@ done
 # apt skips packages already present, so only missing ones are fetched.
 apt-get -o Dir::State::status="${rootfs}/var/lib/dpkg/status" \
     -o Dir::Cache::Archives="${rootfs}${apt_archives}" \
-    --yes --download-only install ${essential_packages} ${dependencies_to_download}
+    --yes --download-only install ${essential_packages} ${bootstrap_extra_packages} ${dependencies_to_download}
 
 deb_files=$(ls "${rootfs}${apt_archives}"/*.deb)
 
@@ -275,7 +286,6 @@ done
 	baseImg = input.Worker.Run(
 		dalec.WithConstraints(opts...),
 		llb.AddMount("/tmp/install.sh", script, llb.SourcePath("install.sh")),
-		llb.AddMount("/base-packages", basePackages(ctx, input), llb.Readonly),
 		llb.AddMount("/spec-packages", input.SpecPackages, llb.Readonly),
 		extraRepos(input, opts...),
 		dalec.WithMountedAptCache(input.Config.AptCachePrefix, opts...),
@@ -304,6 +314,8 @@ done
 		}),
 	}))
 
+	result = cleanupBootstrapContainer(result, input, opts...)
+
 	// Squash all layers into one by copying the final filesystem into a fresh
 	// scratch state. Without this, files extracted in the bootstrap layer but
 	// removed during cleanup still occupy space in the earlier layer.
@@ -313,4 +325,312 @@ done
 		CreateDestPath:      true,
 		AllowWildcard:       true,
 	}), squashOpts...)
+}
+
+// cleanupBootstrapContainer removes package manager infrastructure, unnecessary
+// packages, and caches from the container image.
+func cleanupBootstrapContainer(st llb.State, input buildContainerInput, opts ...llb.ConstraintsOpt) llb.State {
+	cleanupOpts := append(opts, dalec.ProgressGroup("Cleanup Bootstrap Container"))
+
+	script := `#!/bin/sh
+
+set -x
+
+# Append /tmp to PATH so the no-op diff/tar stubs mounted there by the
+# Go caller (see stubSt below) are picked up by any maintainer script
+# that calls 'diff' or 'tar' without an absolute path AFTER the real
+# tools have been purged. These stubs need to be reachable for BOTH
+# purge passes (purge_first and purge_last) — the first pass purges
+# most of the system and frequently triggers prerm/postrm scripts
+# that exec diff or tar; if those tools have already been removed and
+# the stubs are not on PATH, the maintainer scripts crash and leave
+# packages in an inconsistent state.
+#
+# IMPORTANT: /tmp is APPENDED, not prepended. dpkg-deb internally
+# execs 'tar' to read .deb control archives, so prepending /tmp would
+# make every dpkg-deb invocation in this script (including the
+# keep_set seeding right below) fail with 'tar subprocess returned
+# error exit status 1' and leave us with an empty keep_set.
+PATH="${PATH}:/tmp"
+export PATH
+
+# Remove problematic maintainer scripts that cause infinite loops during purge.
+rm -f /var/lib/dpkg/info/libpam-runtime.prerm 2>/dev/null || true
+
+# Recursive dependency resolver: prints the transitive closure of installed
+# Depends/Pre-Depends starting from the given space-separated package list.
+resolve_deps() {
+    queue="$1"
+    resolved=""
+    while [ -n "${queue}" ]; do
+        pkg=$(echo "${queue}" | head -n1)
+        queue=$(echo "${queue}" | tail -n +2)
+
+        if [ -z "${pkg}" ] || echo "${resolved}" | grep -qw "${pkg}"; then continue; fi
+
+        resolved="${resolved} ${pkg}"
+
+        deps=$(dpkg-query -W -f='${Depends}\n${Pre-Depends}\n' "${pkg}" 2>/dev/null \
+            | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g; s/:.*//g' | grep -v '^$' | sort -u)
+
+        for dep in ${deps}; do
+            if ! dpkg -s "${dep}" 2>/dev/null | grep -q '^Status: install ok installed'; then
+                continue
+            fi
+            if echo "${resolved}" | grep -qw "${dep}"; then
+                continue
+            fi
+            queue=$(printf '%s\n%s' "${queue}" "${dep}")
+        done
+    done
+    echo "${resolved}"
+}
+
+# Packages from the user's spec — the starting point of the keep set.
+#
+# Seed with TWO sources, then take the transitive closure of both:
+#
+#   1. The spec package names themselves (read from each .deb's Package
+#      field). resolve_deps will walk their dpkg-query Depends and find
+#      everything they require post-install.
+#
+#   2. The Depends + Pre-Depends fields read directly from each spec
+#      .deb's control data. This is the critical safety net: if
+#      anything goes wrong with the spec package's installed state in
+#      dpkg's database (e.g. half-configured, missing entirely from
+#      the status DB, or dpkg-query returning empty Depends for any
+#      reason), resolve_deps walking only from the package name would
+#      drop the user's runtime deps from the keep set and they'd be
+#      purged. Reading Depends straight from the .deb sidesteps any
+#      installed-state pathologies.
+keep_set=""
+for f in $(ls /tmp/dalec-spec-packages/*.deb 2>/dev/null); do
+    keep_set="${keep_set} $(dpkg-deb -f "${f}" Package)"
+
+    # Pull the runtime Depends + Pre-Depends from the .deb control
+    # itself and normalize them the same way resolve_deps normalizes
+    # dpkg-query output (strip version constraints, arch restrictions,
+    # whitespace, multi-arch qualifiers; keep '|' alternatives so they
+    # are split into individual names below).
+    raw_deps=$(dpkg-deb -f "${f}" Depends Pre-Depends 2>/dev/null \
+        | sed 's/^[A-Za-z-]*: *//' \
+        | tr ',' '\n' \
+        | sed 's/([^)]*)//g; s/\[[^]]*\]//g; s/[[:space:]]//g; s/:[a-z0-9-]*//g' \
+        | grep -v '^$' | sort -u)
+    for dep_alt in ${raw_deps}; do
+        for dep in $(echo "${dep_alt}" | tr '|' ' '); do
+            [ -z "${dep}" ] && continue
+            keep_set="${keep_set} ${dep}"
+        done
+    done
+done
+
+# base-files is mandatory and must never be purged. On merged-usr
+# distros (Debian 12+/Ubuntu 24.04+) it owns the top-level /bin, /lib,
+# /lib64 and /sbin symlinks that point into /usr. Every dynamically
+# linked binary in the image resolves its ELF interpreter through one
+# of these (e.g. /lib64/ld-linux-x86-64.so.2 -> usr/lib64/...). If
+# base-files is purged, dpkg removes those symlinks and EVERY binary —
+# including the spec package's runtime deps — fails to exec with
+# "no such file or directory" (the kernel's ENOENT for a missing
+# interpreter), even though the binaries themselves are still present.
+#
+# It is not pulled in transitively by typical runtime deps, so seed it
+# explicitly here. resolve_deps will also pull in its dependencies.
+keep_set="${keep_set} base-files"
+
+# Full transitive closure of the seed set. Cleanup tools end up here
+# only if a spec package actually depends on them (directly or
+# transitively), in which case we keep them and their deps.
+keep_set=$(resolve_deps "$(echo ${keep_set} | tr ' ' '\n')")
+
+# purge_last: cleanup tools (+ their deps) not in the keep set. These
+# survive the main purge so they remain available for it, then get purged
+# at the very end.
+purge_last=""
+
+# Tools needed by the cleanup process itself (purging packages, running
+# maintainer scripts, etc.) but not necessarily wanted in the final image.
+# If a spec package transitively depends on any of these, it (and its full
+# dependency tree) stays in the keep set; otherwise it gets purged at the end.
+#
+# findutils provides /usr/bin/find and /usr/bin/xargs, which many
+# packages' prerm/postrm scripts shell out to during the first purge
+# pass (e.g. libstdc++6's prerm uses 'find … | xargs' to clear ld.so
+# cache entries). Purging findutils early causes those scripts to
+# exit 127 and leaves their owning packages in a half-removed state.
+#
+# base-files is intentionally NOT in this list: it is always kept (see
+# keep_set seeding above) because it owns the merged-usr root symlinks
+# required by every dynamically linked binary in the image.
+for pkg in dpkg dash coreutils libc-bin grep findutils; do
+    if echo "${keep_set}" | grep -qw "${pkg}"; then continue; fi
+
+    # dpkg can't purge itself from inside the container; signal the worker
+    # step to do it from outside instead.
+    if [ "${pkg}" = "dpkg" ]; then
+        echo > /var/lib/dpkg/.dalec-remove-dpkg
+        continue
+    fi
+
+    purge_last="${purge_last} ${pkg}"
+done
+for pkg in $(resolve_deps "$(echo ${purge_last} | tr ' ' '\n')"); do
+    if [ "${pkg}" = "dpkg" ]; then continue; fi
+    if echo " ${keep_set} " | grep -q " ${pkg} "; then continue; fi
+    if echo " ${purge_last} " | grep -q " ${pkg} "; then continue; fi
+    purge_last="${purge_last} ${pkg}"
+done
+
+# purge_first: everything not in the keep set, purge_last, or dpkg.
+# dpkg is kept around for the purge passes and removed by the worker step.
+purge_first=""
+# Strip :arch suffixes (e.g. libc6:amd64 -> libc6) so names match.
+for pkg in $(dpkg-query -W -f='${Package}\n' | sed 's/:.*//g'); do
+    if [ "${pkg}" = "dpkg" ]; then continue; fi
+    if echo "${keep_set}" | grep -qw "${pkg}"; then continue; fi
+    if echo "${purge_last}" | grep -qw "${pkg}"; then continue; fi
+    purge_first="${purge_first} ${pkg}"
+done
+
+if [ -n "${purge_first}" ]; then
+    # Strip prerm/postrm scripts of packages we're about to purge.
+    # Many of them (libpam-modules, libpam0g, anything debconf-aware)
+    # unconditionally exec helpers like /usr/share/debconf/frontend
+    # that may already have been purged earlier in this same pass —
+    # dpkg purges in alphabetical order, not dependency order, so
+    # debconf often goes away before its consumers. When that happens,
+    # the script returns exit 127, dpkg flags the package as failed,
+    # and the worker-side dpkg --audit reports the resulting
+    # 'config-files' state as inconsistent and fails the build.
+    #
+    # Skipping the *rm scripts is safe in this context:
+    #   - cleanup_dirs and the final layer squash wipe whatever state
+    #     a postrm would have unwound.
+    #   - The packages being purged are explicitly not in the final
+    #     image, so nothing depends on the unwind side-effects.
+    #
+    # Multi-arch packages have files named ${pkg}:${arch}.{pre,post}rm,
+    # which is why we use a shell glob in addition to the bare name.
+    for pkg in ${purge_first}; do
+        rm -f "/var/lib/dpkg/info/${pkg}.prerm" \
+              "/var/lib/dpkg/info/${pkg}.postrm" 2>/dev/null || true
+        for f in /var/lib/dpkg/info/${pkg}:*.prerm \
+                 /var/lib/dpkg/info/${pkg}:*.postrm; do
+            [ -e "${f}" ] && rm -f "${f}"
+        done
+    done
+
+    dpkg --purge --force-depends --force-remove-essential ${purge_first} || true
+fi
+
+# Remove leftover directories (after dpkg purge so maintainer scripts still work).
+cleanup_dirs="
+/etc/apt
+/etc/systemd
+/usr/lib/apt
+/usr/share/bash-completion
+/usr/share/bug
+/usr/share/debconf
+/usr/share/lintian
+/usr/share/locale
+/var/cache/apt
+/var/cache/debconf
+/var/lib/apt
+/var/lib/pam
+/var/lib/systemd
+/var/log
+"
+
+if [ "${DALEC_HAS_DOCS}" != "true" ]; then
+    cleanup_dirs="${cleanup_dirs}
+/usr/share/doc
+/usr/share/man
+/usr/share/info
+"
+fi
+
+for d in ${cleanup_dirs}; do
+    rm -rf "${d}"
+done
+
+# Final purge: strip all maintainer scripts first (prevents triggers from
+# firing after /bin/sh is gone), then purge the cleanup tools we kept around
+# for the main purge. dpkg itself is purged from outside via the worker.
+rm -f /var/lib/dpkg/info/*.prerm \
+      /var/lib/dpkg/info/*.postrm \
+      /var/lib/dpkg/info/*.preinst \
+      /var/lib/dpkg/info/*.postinst 2>/dev/null || true
+
+# --force-remove-protected was added in dpkg 1.20.6; older releases (e.g.
+# Debian buster, Ubuntu 18.04) don't recognize it and will error out.
+force_remove_protected=""
+if dpkg --force-help 2>/dev/null | grep -qw remove-protected; then
+    force_remove_protected="--force-remove-protected"
+fi
+
+if [ -n "${purge_last}" ]; then
+    dpkg --purge --force-depends --force-remove-essential ${force_remove_protected} ${purge_last} || true
+fi
+`
+
+	// Script that runs on the worker to remove dpkg from the target rootfs.
+	// Using --root= lets the worker's own dpkg binary operate on the mounted rootfs
+	// without needing dpkg to exist inside the target.
+	dpkgRemoveScript := `#!/bin/sh
+set -x
+
+# Only proceed if the cleanup script signalled that dpkg should be removed.
+if [ ! -f /target/var/lib/dpkg/.dalec-remove-dpkg ]; then
+    echo "dpkg is a runtime dependency, skipping removal"
+    exit 0
+fi
+rm -f /target/var/lib/dpkg/.dalec-remove-dpkg
+
+# --force-remove-protected was added in dpkg 1.20.6; older releases don't
+# recognize it. The worker's dpkg may differ from the target's, so probe it.
+force_remove_protected=""
+if dpkg --force-help 2>/dev/null | grep -qw remove-protected; then
+    force_remove_protected="--force-remove-protected"
+fi
+
+# Remove dpkg and any leftover packages from the target rootfs using the
+# worker's dpkg binary. Use --purge to clean config-files entries too.
+# /var/lib/dpkg/status is preserved because dpkg only removes files it owns,
+# not the status database itself.
+for pkg in $(dpkg --root=/target -l 2>/dev/null | awk '/^[irpu]/ && !/^ii/ {print $2}' || true); do
+    dpkg --root=/target --purge --force-depends --force-remove-essential ${force_remove_protected} "${pkg}" 2>/dev/null || true
+done
+if dpkg --root=/target -s dpkg 2>/dev/null | grep -q '^Status:.*installed'; then
+    dpkg --root=/target --purge --force-depends --force-remove-essential dpkg || true
+fi
+`
+
+	scriptSt := llb.Scratch().File(llb.Mkfile("cleanup.sh", 0o755, []byte(script)), cleanupOpts...)
+	dpkgRemoveScriptSt := llb.Scratch().File(llb.Mkfile("dpkg-remove.sh", 0o755, []byte(dpkgRemoveScript)), cleanupOpts...)
+
+	// No-op stub mounted at /tmp/diff and /tmp/tar so dpkg's maintainer scripts
+	// find the binaries they expect (diff, tar) without writing to the rootfs.
+	stubSt := llb.Scratch().File(llb.Mkfile("stub", 0o755, []byte("#!/bin/sh\nexit 1\n")), cleanupOpts...)
+
+	// Run the main cleanup inside the container (purges everything except dpkg).
+	st = st.Run(
+		dalec.WithConstraints(cleanupOpts...),
+		llb.AddMount("/tmp/dalec-cleanup.sh", scriptSt, llb.SourcePath("cleanup.sh"), llb.Readonly),
+		llb.AddMount("/tmp/dalec-spec-packages", input.SpecPackages, llb.Readonly),
+		llb.AddMount("/tmp/diff", stubSt, llb.SourcePath("stub"), llb.Readonly),
+		llb.AddMount("/tmp/tar", stubSt, llb.SourcePath("stub"), llb.Readonly),
+		llb.AddEnv("DALEC_HAS_DOCS", strconv.FormatBool(input.Spec.GetArtifacts(input.Target).HasDocs())),
+		llb.Args([]string{"/usr/bin/sh", "/tmp/dalec-cleanup.sh"}),
+	).Root()
+
+	// Use the worker's dpkg to remove dpkg from the target rootfs via --root=.
+	// This avoids the chicken-and-egg problem of dpkg removing itself.
+	st = input.Worker.Run(
+		dalec.WithConstraints(cleanupOpts...),
+		llb.AddMount("/tmp/dpkg-remove.sh", dpkgRemoveScriptSt, llb.SourcePath("dpkg-remove.sh"), llb.Readonly),
+		llb.Args([]string{"/bin/sh", "/tmp/dpkg-remove.sh"}),
+	).AddMount("/target", st)
+
+	return st
 }
