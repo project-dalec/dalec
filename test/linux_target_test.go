@@ -2199,6 +2199,67 @@ func main() {
 		})
 	})
 
+	t.Run("gomod replace directive incompatible version", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-replace-incompatible",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod replace directive with in-compatible version",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: "module example.com/test\n\ngo 1.18\n\nrequire github.com/docker/cli v29.2.1+incompatible\n"},
+								"main.go": {Contents: `package main
+
+import _ "github.com/docker/cli/pkg/kvfile"
+
+func main() {}
+`},
+							},
+						},
+					},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/docker/cli", Update: "github.com/docker/cli@v29.2.1"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/docker/cli => github.com/docker/cli v29.2.1+incompatible' ./src/go.mod"},
+					{Command: "[ -d \"${GOMODCACHE}/github.com/docker/cli@v29.2.1+incompatible\" ]"},
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("gomod multi-module with paths", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
