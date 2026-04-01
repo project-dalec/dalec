@@ -2283,16 +2283,16 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		contextSt := llb.Scratch().
 			// Root module — does NOT directly import testify, only sub does
 			File(llb.Mkfile("/go.mod", 0644, []byte(
-				"module example.com/root\n\ngo 1.22\n\nrequire example.com/sub v0.0.0\n\nreplace example.com/sub => ./sub\n",
+				"module example.com/root\n\ngo 1.18\n\nrequire example.com/sub v0.0.0\n\nreplace example.com/sub => ./sub\n",
 			)), pg).
-			File(llb.Mkfile("/go.work", 0644, []byte("go 1.22\n\nuse .\nuse ./sub\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\nuse ./sub\n")), pg).
 			File(llb.Mkfile("/main.go", 0644, []byte(`package main
 func main() {}
 `)), pg).
 			// Sub-module — imports testify (a workspace-only transitive dep)
 			File(llb.Mkdir("/sub", 0755), pg).
 			File(llb.Mkfile("/sub/go.mod", 0644, []byte(
-				"module example.com/sub\n\ngo 1.22\n\nrequire github.com/stretchr/testify v1.9.0\n",
+				"module example.com/sub\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n",
 			)), pg).
 			File(llb.Mkfile("/sub/sub.go", 0644, []byte(`package sub
 import _ "github.com/stretchr/testify/assert"
