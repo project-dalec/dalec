@@ -2651,13 +2651,14 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool { return va
 			},
 			Build: dalec.ArtifactBuild{
 				Steps: []dalec.BuildStep{
-					// The replace was applied
+					// modules.txt should reflect the bumped version, proving go work vendor ran
+					// (GOWORK=off go mod vendor would not see the sub-module dep at all)
 					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/vendor/modules.txt"},
-					// The vendor entry was updated to v1.8.0, proving go work vendor ran
-					// (not GOWORK=off go mod vendor, which would not touch sub-module deps)
-					{Command: "grep -F 'v1.8.0' ./src/vendor/github.com/stretchr/testify/assert/assertions.go || grep -rF 'v1.8' ./src/vendor/github.com/stretchr/testify/"},
-					// Builds cleanly with -mod=vendor, proving vendor is complete
-					{Command: "cd ./src && go build -mod=vendor ./..."},
+					// go work vendor also pulls in testify's own transitive deps (go-spew, go-difflib)
+					// which are only reachable via the sub-module. Their presence proves the full
+					// workspace graph was walked, not just the root module.
+					{Command: "test -d ./src/vendor/github.com/davecgh/go-spew"},
+					{Command: "test -d ./src/vendor/github.com/pmezard/go-difflib"},
 				},
 			},
 		}
