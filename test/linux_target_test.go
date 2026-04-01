@@ -2578,6 +2578,96 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		})
 	})
 
+	t.Run("gomod replace with go work and vendor syncs workspace transitive deps", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// This test specifically covers the case where a replace directive introduces
+		// a transitive dependency that is only reachable through a workspace sub-module,
+		// not the root module. With the correct 'go work vendor' behaviour, the dep
+		// must appear in vendor/. With the broken 'GOWORK=off go mod vendor' fallback
+		// it will be missing, causing a GOPROXY=off build failure.
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			// Root module — does NOT directly import testify, only sub does
+			File(llb.Mkfile("/go.mod", 0644, []byte(
+				"module example.com/root\n\ngo 1.22\n\nrequire example.com/sub v0.0.0\n\nreplace example.com/sub => ./sub\n",
+			)), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.22\n\nuse .\nuse ./sub\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+func main() {}
+`)), pg).
+			// Sub-module — imports testify (a workspace-only transitive dep)
+			File(llb.Mkdir("/sub", 0755), pg).
+			File(llb.Mkfile("/sub/go.mod", 0644, []byte(
+				"module example.com/sub\n\ngo 1.22\n\nrequire github.com/stretchr/testify v1.9.0\n",
+			)), pg).
+			File(llb.Mkfile("/sub/sub.go", 0644, []byte(`package sub
+import _ "github.com/stretchr/testify/assert"
+`)), pg).
+			// Minimal vendor dir — testify v1.9.0 stub
+			File(llb.Mkdir("/vendor/github.com/stretchr/testify/assert", 0755, llb.WithParents(true)), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte(`## workspace
+# github.com/stretchr/testify v1.9.0
+## explicit; go 1.17
+github.com/stretchr/testify/assert
+`)), pg).
+			File(llb.Mkfile("/vendor/github.com/stretchr/testify/assert/assertions.go", 0644, []byte(`package assert
+func True(t interface{}, value bool, msgAndArgs ...interface{}) bool { return value }
+`)), pg)
+
+		const contextName = "gowork-vendor-transitive-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork-vendor-transitive",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing that go work vendor syncs workspace sub-module transitive deps",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										// Bump testify — this is only a dep of the sub-module,
+										// not the root. GOWORK=off go mod vendor would miss it.
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// The replace was applied
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/vendor/modules.txt"},
+					// The vendor entry was updated to v1.8.0, proving go work vendor ran
+					// (not GOWORK=off go mod vendor, which would not touch sub-module deps)
+					{Command: "grep -F 'v1.8.0' ./src/vendor/github.com/stretchr/testify/assert/assertions.go || grep -rF 'v1.8' ./src/vendor/github.com/stretchr/testify/"},
+					// Builds cleanly with -mod=vendor, proving vendor is complete
+					{Command: "cd ./src && go build -mod=vendor ./..."},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("gomod go work version sync", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
