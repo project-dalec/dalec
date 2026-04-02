@@ -2582,6 +2582,12 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 
+		// 'go work vendor' requires Go 1.22+. On older distros the script falls back
+		// to 'GOWORK=off go mod vendor', which does not walk workspace sub-modules.
+		// Skip rather than fail on those targets.
+		skip.If(t, !testConfig.SupportsGomodVersionUpdate,
+			"Test requires Go 1.22+ for 'go work vendor' support")
+
 		// This test specifically covers the case where a replace directive introduces
 		// a transitive dependency that is only reachable through a workspace sub-module,
 		// not the root module. With the correct 'go work vendor' behaviour, the dep
@@ -2589,15 +2595,15 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		// it will be missing, causing a GOPROXY=off build failure.
 		pg := dalec.ProgressGroup("Setup test context")
 		contextSt := llb.Scratch().
-			// Root module — does NOT directly import testify, only sub does
-			File(llb.Mkfile("/go.mod", 0644, []byte(
-				"module example.com/root\n\ngo 1.18\n\nrequire example.com/sub v0.0.0\n\nreplace example.com/sub => ./sub\n",
-			)), pg).
+			// Root module — no dependencies at all. This is critical: with GOWORK=off
+			// go mod vendor, the root has nothing to vendor so testify would be absent.
+			// Only 'go work vendor' walks the full workspace and vendors sub-module deps.
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/root\n\ngo 1.18\n")), pg).
 			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\nuse ./sub\n")), pg).
 			File(llb.Mkfile("/main.go", 0644, []byte(`package main
 func main() {}
 `)), pg).
-			// Sub-module — imports testify (a workspace-only transitive dep)
+			// Sub-module — requires testify. Only reachable via go.work, not via root go.mod.
 			File(llb.Mkdir("/sub", 0755), pg).
 			File(llb.Mkfile("/sub/go.mod", 0644, []byte(
 				"module example.com/sub\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n",
@@ -2605,16 +2611,14 @@ func main() {}
 			File(llb.Mkfile("/sub/sub.go", 0644, []byte(`package sub
 import _ "github.com/stretchr/testify/assert"
 `)), pg).
-			// Minimal vendor dir — testify v1.9.0 stub
-			File(llb.Mkdir("/vendor/github.com/stretchr/testify/assert", 0755, llb.WithParents(true)), pg).
-			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte(`## workspace
-# github.com/stretchr/testify v1.9.0
-## explicit; go 1.17
-github.com/stretchr/testify/assert
-`)), pg).
-			File(llb.Mkfile("/vendor/github.com/stretchr/testify/assert/assertions.go", 0644, []byte(`package assert
-func True(t interface{}, value bool, msgAndArgs ...interface{}) bool { return value }
-`)), pg)
+			// Minimal vendor dir — just a marker file so gomod-patch.sh knows to run
+			// 'go work vendor'. Contains NO pre-existing testify files, so if testify
+			// appears in vendor after patching it proves 'go work vendor' ran (not
+			// 'GOWORK=off go mod vendor', which would produce an empty vendor for a
+			// root module with no dependencies). Adding files via patch is safe from
+			// the dpkg-source --include-removal issue; only deletions are skipped.
+			File(llb.Mkdir("/vendor", 0755), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte("## workspace\n")), pg)
 
 		const contextName = "gowork-vendor-transitive-test"
 		spec := &dalec.Spec{
