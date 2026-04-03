@@ -290,15 +290,14 @@ func TestTemplate_Artifacts(t *testing.T) {
 
 		assert.Equal(t, w.Post().String(),
 			`%post
-
 if [ $1 -eq 1 ]; then
-    # initial installation
-    systemctl enable test2.service
+    systemctl enable test2.service || :
 fi
-
 if [ $1 -eq 1 ]; then
-    # initial installation
-    systemctl enable --now test3.service
+    systemctl enable test3.service || :
+fi
+if [ $1 -eq 1 ] && [ -d /run/systemd/system ]; then
+    systemctl start test3.service || :
 fi
 
 `)
@@ -339,16 +338,8 @@ fi
 
 		assert.Equal(t, w.PreUn().String(),
 			`%preun
-
-if [ $1 -eq 0 ]; then
-    # complete uninstallation
-    systemctl disable --now test2.service
-fi
-
-if [ $1 -eq 0 ]; then
-    # complete uninstallation
-    systemctl disable --now test3.service
-fi
+%systemd_preun test2.service
+%systemd_preun test3.service
 `)
 	})
 
