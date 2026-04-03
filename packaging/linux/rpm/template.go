@@ -460,20 +460,11 @@ func (w *specWrapper) BuildSteps() fmt.Stringer {
 }
 
 func systemdPreUnScript(unitName string, cfg dalec.SystemdUnitConfig) string {
-	// if service isn't explicitly specified as enabled in the spec,
-	// then we don't need to do anything in the preun script
 	if !cfg.Enable {
 		return ""
 	}
 
-	// should be equivalent to the systemd_preun scriptlet in the rpm spec,
-	// but without the use of a .preset file
-	return fmt.Sprintf(`
-if [ $1 -eq 0 ]; then
-    # complete uninstallation
-    systemctl disable --now %s
-fi
-`, unitName)
+	return fmt.Sprintf("%%systemd_preun %s\n", unitName)
 }
 
 func (w *specWrapper) PreUn() fmt.Stringer {
@@ -497,30 +488,35 @@ func (w *specWrapper) PreUn() fmt.Stringer {
 }
 
 func systemdPostScript(unitName string, cfg dalec.SystemdUnitConfig) string {
-	// if service isn't explicitly specified as enabled in the spec,
-	// then we don't need to do anything in the post script
 	if !cfg.Enable {
 		return ""
 	}
 
-	// should be equivalent to the systemd_post scriptlet in the rpm spec,
-	// but without the use of a .preset file
-	s := `
-if [ $1 -eq 1 ]; then
-    # initial installation`
-
-	// Enable/start service when package is installed
-	if cfg.Start {
-		s = s + fmt.Sprintf(`
-    systemctl enable --now %s`, unitName)
-	} else {
-		s = s + fmt.Sprintf(`
-    systemctl enable %s`, unitName)
-	}
-
-	s = s + `
+	// Use systemctl enable directly instead of %systemd_post because
+	// %systemd_post calls "systemctl preset" which defers to system preset
+	// policy. All RPM distros have "disable *" as a catch-all in their preset
+	// files, so third-party services would never be enabled via preset.
+	// This behavior may change in the future to respect system presets instead.
+	// See https://github.com/project-dalec/dalec/issues/1017#issuecomment-4181051908
+	//
+	// The "|| :" ensures a non-zero exit (e.g. systemd not running in a
+	// chroot/Kickstart/container) does not abort the scriptlet.
+	// Only enable on initial install ($1 == 1), not upgrades.
+	s := fmt.Sprintf(`if [ $1 -eq 1 ]; then
+    systemctl enable %s || :
 fi
-`
+`, unitName)
+
+	if cfg.Start {
+		// Only start on initial install ($1 == 1), not upgrades, to avoid
+		// restarting a service the user intentionally stopped.
+		// Guard behind a check for a running systemd so this is safe
+		// in chroot/Kickstart/container environments.
+		s += fmt.Sprintf(`if [ $1 -eq 1 ] && [ -d /run/systemd/system ]; then
+    systemctl start %s || :
+fi
+`, unitName)
+	}
 
 	return s
 }
