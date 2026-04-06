@@ -2578,6 +2578,100 @@ func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
 		})
 	})
 
+	t.Run("gomod replace with go work and vendor syncs workspace transitive deps", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// 'go work vendor' requires Go 1.22+. On older distros the script falls back
+		// to 'GOWORK=off go mod vendor', which does not walk workspace sub-modules.
+		// Skip rather than fail on those targets.
+		skip.If(t, !testConfig.SupportsGomodVersionUpdate,
+			"Test requires Go 1.22+ for 'go work vendor' support")
+
+		// This test specifically covers the case where a replace directive introduces
+		// a transitive dependency that is only reachable through a workspace sub-module,
+		// not the root module. With the correct 'go work vendor' behaviour, the dep
+		// must appear in vendor/. With the broken 'GOWORK=off go mod vendor' fallback
+		// it will be missing, causing a GOPROXY=off build failure.
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			// Root module — no dependencies at all. This is critical: with GOWORK=off
+			// go mod vendor, the root has nothing to vendor so testify would be absent.
+			// Only 'go work vendor' walks the full workspace and vendors sub-module deps.
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/root\n\ngo 1.18\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\nuse ./sub\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+func main() {}
+`)), pg).
+			// Sub-module — requires testify. Only reachable via go.work, not via root go.mod.
+			File(llb.Mkdir("/sub", 0755), pg).
+			File(llb.Mkfile("/sub/go.mod", 0644, []byte(
+				"module example.com/sub\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n",
+			)), pg).
+			File(llb.Mkfile("/sub/sub.go", 0644, []byte(`package sub
+import _ "github.com/stretchr/testify/assert"
+`)), pg).
+			// Minimal vendor dir — just a marker file so gomod-patch.sh knows to run
+			// 'go work vendor'. Contains NO pre-existing testify files, so if testify
+			// appears in vendor after patching it proves 'go work vendor' ran (not
+			// 'GOWORK=off go mod vendor', which would produce an empty vendor for a
+			// root module with no dependencies). Adding files via patch is safe from
+			// the dpkg-source --include-removal issue; only deletions are skipped.
+			File(llb.Mkdir("/vendor", 0755), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte("## workspace\n")), pg)
+
+		const contextName = "gowork-vendor-transitive-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork-vendor-transitive",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing that go work vendor syncs workspace sub-module transitive deps",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										// Bump testify — this is only a dep of the sub-module,
+										// not the root. GOWORK=off go mod vendor would miss it.
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// testify/assert must be present in the vendor directory.
+					// This is only possible if 'go work vendor' walked the full workspace
+					// graph and included the sub-module's dependencies. If the broken
+					// 'GOWORK=off go mod vendor' fallback ran instead, only the root module's
+					// dependencies would be vendored — and the root module doesn't require
+					// testify, so it would be absent.
+					{Command: "test -d ./src/vendor/github.com/stretchr/testify/assert"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("gomod go work version sync", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
