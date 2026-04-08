@@ -265,6 +265,13 @@ jobs:
           echo "================ CLEANUP COMPLETE ================"
       - name: Use azure ubuntu archive
         uses: ./.github/actions/dns-spoof-ubuntu-archive
+      - name: Start OOM monitor
+        run: |
+          sudo dmesg --clear || true
+          setsid sh -c 'sudo dmesg --follow 2>/dev/null | \
+            grep --line-buffered -iE "oom|out of memory|killed process|invoked oom" \
+            > /tmp/oom-monitor.log 2>&1' &
+          echo "OOM_MONITOR_PID=$!" >> "$GITHUB_ENV"
       - name: Pre-build base images
         run: |
           set -eu
@@ -296,6 +303,22 @@ jobs:
         env:
           TEST_SUITE: ${{ matrix.suite }}
           TEST_SKIP: ${{ matrix.skip }}
+      - name: Check for OOM kills
+        if: always()
+        run: |
+          kill -- -"${OOM_MONITOR_PID}" 2>/dev/null || true
+          mkdir -p /tmp/reports
+
+          if [ -s /tmp/oom-monitor.log ]; then
+            echo "::warning::OOM kills detected during test run"
+            cat /tmp/oom-monitor.log
+            cp /tmp/oom-monitor.log /tmp/reports/oom-monitor.log
+          else
+            echo "No OOM kills detected"
+          fi
+
+          # Capture recent dmesg for context on any failures
+          sudo dmesg -T 2>/dev/null | tail -200 > /tmp/reports/dmesg-tail.log || true
       - name: Get traces
         if: always()
         run: |
