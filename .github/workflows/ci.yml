@@ -88,7 +88,7 @@ jobs:
           fi
 
   integration:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.suite == 'other' && 'ubuntu-22.04' || 'ubuntu-latest-4-cores' }}
     strategy:
       fail-fast: false
       matrix:
