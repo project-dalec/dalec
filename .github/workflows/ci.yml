@@ -137,6 +137,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Docker info
+        run: |
+          docker info
+          docker version
       - name: Setup otel-collector
         run: |
           set -e
@@ -163,16 +167,27 @@ jobs:
           sudo cp "${tmp}" /etc/systemd/system/docker.service.d/otlp.conf
           sudo cp "${tmp}" /etc/systemd/system/containerd.service.d/otlp.conf
 
+          sudo systemctl stop docker.service docker.socket
+          sudo systemctl stop containerd
+
           if ! sudo systemctl daemon-reload; then
             echo "::warning::Failed to reload systemd daemon for tracing configuration"
           fi
-          if ! sudo systemctl restart containerd; then
-            echo "::warning::Failed to restart containerd with tracing configuration"
-          fi
-          if ! sudo systemctl restart docker; then
-            echo "::warning::Failed to restart docker with tracing configuration"
-          fi
 
+          if ! sudo systemctl start containerd; then
+            echo "::error::Failed to restart containerd with tracing configuration"
+            journalctl -u containerd
+            exit 1
+          fi
+          if ! sudo systemctl start docker; then
+            sudo systemctl reset-failed docker
+            if ! sudo systemctl start docker; then
+              echo "::error::Failed to restart docker with tracing configuration"
+              journalctl -u docker
+              ps aux | grep dockerd
+              exit 1
+            fi
+          fi
       - name: download deps
         run: go mod download
       - name: Setup QEMU

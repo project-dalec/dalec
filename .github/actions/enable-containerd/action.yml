@@ -20,4 +20,10 @@ runs:
           sudo cp "${tmp}" /etc/docker/daemon.json
           rm "${tmp}"
 
-          sudo systemctl restart docker
+          sudo systemctl stop docker
+          if ! sudo systemctl start docker; then
+            echo "::error::error restarting dockerd with containerd enabled"
+            journalctl -u docker
+            ps aux | grep docker
+            exit 1
+          fi
