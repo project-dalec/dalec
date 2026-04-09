@@ -49,6 +49,14 @@ runs:
         sudo mkdir -p /etc/docker
         jq --arg dns "${DNSMASQ_IP}" '.dns = [$dns]' "${tmp}" | sudo tee /etc/docker/daemon.json
 
-        sudo systemctl restart docker
+        sudo systemctl stop docker
+        if ! sudo systemctl start docker; then
+          sudo systemctl reset-failed docker
+          if ! sudo systemctl start docker; then
+            echo "::error::error restarting dockerd with custom DNS"
+            journalctl -u docker
+            exit 1
+          fi
+        fi
       env:
         DNSMASQ_IP: ${{ steps.dnsmasq-config.outputs.DNSMASQ_IP }}
