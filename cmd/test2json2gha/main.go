@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"os"
 	"runtime/debug"
@@ -73,6 +74,7 @@ func do(in io.Reader, out io.Writer, cfg config) (bool, error) {
 		var wg waitGroup
 
 		results.markUnfinishedAsTimeout()
+		signalTimeout(results.Results())
 
 		wg.Go(func() {
 			var rf ResultsFormatter
@@ -133,6 +135,30 @@ func do(in io.Reader, out io.Writer, cfg config) (bool, error) {
 	}
 
 	return bool(anyFailed), nil
+}
+
+// signalTimeout writes test_timeout=true to GITHUB_OUTPUT if any test timed out.
+// This allows subsequent CI steps to detect that a timeout occurred.
+func signalTimeout(results iter.Seq[*TestResult]) {
+	ghOutput := os.Getenv("GITHUB_OUTPUT")
+	if ghOutput == "" {
+		return
+	}
+
+	for r := range results {
+		if r.timeout {
+			f, err := os.OpenFile(ghOutput, os.O_WRONLY|os.O_APPEND, 0)
+			if err != nil {
+				slog.Error("Error opening GITHUB_OUTPUT", "error", err)
+				return
+			}
+			if _, err := fmt.Fprintln(f, "test_timeout=true"); err != nil {
+				slog.Error("Error writing timeout status to GITHUB_OUTPUT", "error", err)
+			}
+			f.Close()
+			return
+		}
+	}
 }
 
 type waitGroup struct {
