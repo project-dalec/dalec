@@ -67,7 +67,18 @@ func looksTodo(s string) bool {
 	return s == "" || s == "todo" || strings.Contains(s, "todo:")
 }
 
+// selectStrategy is the canonical single source of truth for choosing a build
+// strategy from repo facts. chooseBuildStyle in plan_deterministic.go delegates
+// here rather than duplicating this switch.
 func selectStrategy(f *RepoFacts, a *Analysis) string {
+	// Container-only: dockerfile/containerfile present but no recognised language
+	// project — treat as a pure container assembly, not a compiled package.
+	hasLanguageProject := f.HasGoMod || f.HasCargoToml || f.HasPackageJSON ||
+		f.HasPyProject || f.HasRequirements || f.HasSetupPy
+	if (f.HasDockerfile || f.HasContainerfile) && !hasLanguageProject {
+		return "container-assembly"
+	}
+
 	switch {
 	case f.HasGoMod && f.HasMakefile:
 		if len(f.GoMainCandidates) > 1 {

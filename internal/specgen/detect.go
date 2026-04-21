@@ -17,6 +17,9 @@ type RepoFacts struct {
 
 	TypeCandidates []string
 
+	GitCommit    string
+	GitRemoteURL string
+
 	Name        string
 	Description string
 	Website     string
@@ -43,10 +46,12 @@ type RepoFacts struct {
 	GoMainRel        string
 	GoMainCandidates []string
 
-	NodeHasBuild       bool
-	NodeMain           string
-	NodeBinName        string
-	NodePackageManager string
+	NodeHasBuild        bool
+	NodeMain            string
+	NodeBinName         string
+	NodeBinPath         string
+	NodeScriptUsesCargo bool
+	NodePackageManager  string
 
 	CargoPackageName string
 	CargoBinName     string
@@ -60,6 +65,9 @@ type RepoFacts struct {
 	GoModuleDirective              string
 	GoModuleToolchain              string
 	GoModuleHasToolBlock           bool
+	GoVersionNormalized            string
+	GoManagedToolchainVersion      string
+	GoNeedsManagedToolchain        bool
 
 	BuildHints    []CommandHint
 	TestHints     []CommandHint
@@ -70,6 +78,13 @@ type RepoFacts struct {
 	ManpagePaths  []string
 	ConfigPaths   []string
 	Services      []ServiceHint
+}
+
+func looksInstallScriptURL(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.HasSuffix(s, ".sh") ||
+		strings.Contains(s, "/install.sh") ||
+		strings.Contains(s, "/install")
 }
 
 func normalizeManifestDescription(s string) string {
@@ -115,21 +130,21 @@ func DetectRepo(repoDir string, forcedType string) (*RepoFacts, []string, error)
 	f.HasYarnLock = exists("yarn.lock")
 
 	if readmePath, readmeText, ok := firstExistingTextFile(
-                repoDir,
-                []string{"README.md", "README", "README.rst", "README.txt"},
-                64*1024,
-        ); ok {
-                f.ReadmePath = readmePath
-                if desc := firstReadmeSentence(readmeText); desc != "" {
-                        f.Description = desc
-                }
-                // website set here only as last resort; go.mod URL takes priority below
-                if f.Website == "" {
-                        if site := firstUsefulReadmeURL(readmeText); site != "" {
-                                f.Website = normalizeRepoURL(site)
-                        }
-                }
-        }
+		repoDir,
+		[]string{"README.md", "README", "README.rst", "README.txt"},
+		64*1024,
+	); ok {
+		f.ReadmePath = readmePath
+		if desc := firstReadmeSentence(readmeText); desc != "" {
+			f.Description = desc
+		}
+		// website set here only as last resort; go.mod URL takes priority below
+		if f.Website == "" {
+			if site := firstUsefulReadmeURL(readmeText); site != "" {
+				f.Website = normalizeRepoURL(site)
+			}
+		}
+	}
 
 	if licensePath, licenseText, ok := firstExistingTextFile(
 		repoDir,
@@ -142,19 +157,17 @@ func DetectRepo(repoDir string, forcedType string) (*RepoFacts, []string, error)
 		}
 	}
 
-	// In DetectRepo, change this block:
 	if f.HasGoMod {
-                if modPath := parseGoModulePath(repoDir); modPath != "" {
-                        if modName := moduleLeafName(modPath); modName != "" && f.Name == sanitizeName(filepath.Base(repoDir)) {
-                                f.Name = modName
-                        }
-                        // go.mod URL is more reliable than README URL — always prefer it
-                        if u := modulePathToRepoURL(modPath); u != "" {
-                                f.Website = u
-                        }
-                }
-        }
-
+		if modPath := parseGoModulePath(repoDir); modPath != "" {
+			if modName := moduleLeafName(modPath); modName != "" && f.Name == sanitizeName(filepath.Base(repoDir)) {
+				f.Name = modName
+			}
+			// go.mod URL is more reliable than README URL — always prefer it
+			if u := modulePathToRepoURL(modPath); u != "" {
+				f.Website = u
+			}
+		}
+	}
 
 	if f.HasPackageJSON {
 		before := f.Description
@@ -244,12 +257,49 @@ func DetectRepo(repoDir string, forcedType string) (*RepoFacts, []string, error)
 		f.Version = detectVersionHint(repoDir)
 	}
 
+	detectGitMetadata(repoDir, f)
+
 	if !descriptionFromManifest {
 		f.Description = normalizeDetectedDescription(f.Description)
 	}
 	f.Website = normalizeRepoURL(f.Website)
+	f.GitRemoteURL = normalizeRepoURL(f.GitRemoteURL)
 
 	return f, warnings, nil
+}
+
+func detectGitMetadata(repoDir string, f *RepoFacts) {
+	if f == nil {
+		return
+	}
+
+	if commit := gitOutput(repoDir, "rev-parse", "HEAD"); commit != "" {
+		f.GitCommit = commit
+	}
+
+	if remote := gitOutput(repoDir, "config", "--get", "remote.origin.url"); remote != "" {
+		f.GitRemoteURL = normalizeRepoURL(remote)
+		return
+	}
+
+	if remote := gitOutput(repoDir, "remote", "get-url", "origin"); remote != "" {
+		f.GitRemoteURL = normalizeRepoURL(remote)
+		return
+	}
+
+	if strings.TrimSpace(f.Website) != "" {
+		f.GitRemoteURL = normalizeRepoURL(f.Website)
+	}
+}
+
+func gitOutput(repoDir string, args ...string) string {
+	cmdArgs := append([]string{"-C", repoDir}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func detectPrimaryTypeAndCandidates(f *RepoFacts) (string, []string) {
@@ -277,6 +327,11 @@ func detectPrimaryTypeAndCandidates(f *RepoFacts) (string, []string) {
 	}
 	if f.CargoBinName != "" {
 		rustScore += 3
+	} else if f.CargoPackageName != "" {
+		rustScore += 2
+	}
+	if prefersRustForNodeWrapperRepo(f) {
+		rustScore += 6
 	}
 	if rustScore > 0 {
 		items = append(items, scoreItem{name: "rust", score: rustScore})
@@ -294,6 +349,9 @@ func detectPrimaryTypeAndCandidates(f *RepoFacts) (string, []string) {
 	}
 	if f.NodeHasBuild {
 		nodeScore += 2
+	}
+	if prefersRustForNodeWrapperRepo(f) {
+		nodeScore -= 3
 	}
 	if nodeScore > 0 {
 		items = append(items, scoreItem{name: "node", score: nodeScore})
@@ -672,20 +730,27 @@ func collectServiceHints(repoDir string) []ServiceHint {
 	return dedupeServiceHints(out)
 }
 
-// internalToolName returns true for cmd/ subdirectory names that are
-// build-time codegen or internal tooling, not installable package artifacts.
+// internalToolName returns true for directory names that are build-time
+// codegen helpers or internal tooling, not installable package artifacts.
+// Used to filter subdirs when scanning cmd/, app/, and bin/ for main packages.
 func internalToolName(name string) bool {
-        internal := []string{
-                "gen-", "protoc-", "go-build", "go-plugin",
-                "mockgen", "stringer", "wire",
-        }
-        low := strings.ToLower(strings.TrimSpace(name))
-        for _, prefix := range internal {
-                if strings.HasPrefix(low, prefix) {
-                        return true
-                }
-        }
-        return false
+	prefixes := []string{
+		"gen-", "protoc-", "go-build", "go-plugin",
+		"mockgen", "stringer", "wire", "inject",
+		"mage", "task",
+	}
+	low := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(low, prefix) {
+			return true
+		}
+	}
+	// Exact matches for directories that are always tooling, never artifacts.
+	switch low {
+	case "gen", "tools", "hack", "scripts", "internal":
+		return true
+	}
+	return false
 }
 
 func collectComponentHints(f *RepoFacts) []ComponentHint {
@@ -847,25 +912,31 @@ func enrichFromPackageJSON(repoDir string, f *RepoFacts) {
 		f.Website = normalizeRepoURL(p.Homepage)
 	}
 
+	repoURL := ""
 	switch r := p.Repository.(type) {
 	case string:
-		if f.Website == "" {
-			f.Website = normalizeRepoURL(r)
-		}
+		repoURL = normalizeRepoURL(r)
 	case map[string]any:
-		if f.Website == "" {
-			if u, ok := r["url"].(string); ok && u != "" {
-				f.Website = normalizeRepoURL(u)
-			}
+		if u, ok := r["url"].(string); ok && u != "" {
+			repoURL = normalizeRepoURL(u)
 		}
 	case repoField:
-		if f.Website == "" && r.URL != "" {
-			f.Website = normalizeRepoURL(r.URL)
+		if r.URL != "" {
+			repoURL = normalizeRepoURL(r.URL)
 		}
+	}
+	if repoURL != "" && (f.Website == "" || looksInstallScriptURL(f.Website)) {
+		f.Website = repoURL
 	}
 
 	if _, ok := p.Scripts["build"]; ok {
 		f.NodeHasBuild = true
+	}
+	for _, cmd := range p.Scripts {
+		low := strings.ToLower(strings.TrimSpace(cmd))
+		if strings.Contains(low, "cargo ") || strings.Contains(low, "cargo-") {
+			f.NodeScriptUsesCargo = true
+		}
 	}
 	if p.Main != "" {
 		f.NodeMain = p.Main
@@ -873,16 +944,60 @@ func enrichFromPackageJSON(repoDir string, f *RepoFacts) {
 	switch b := p.Bin.(type) {
 	case string:
 		f.NodeBinName = sanitizeName(f.Name)
+		f.NodeBinPath = filepath.ToSlash(strings.TrimSpace(b))
 	case map[string]any:
-		var names []string
-		for k := range b {
-			names = append(names, sanitizeName(k))
+		type nodeBinEntry struct {
+			name string
+			path string
 		}
-		sort.Strings(names)
-		if len(names) > 0 {
-			f.NodeBinName = names[0]
+		var entries []nodeBinEntry
+		for k, raw := range b {
+			path, _ := raw.(string)
+			entries = append(entries, nodeBinEntry{
+				name: sanitizeName(k),
+				path: filepath.ToSlash(strings.TrimSpace(path)),
+			})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].name < entries[j].name
+		})
+		if len(entries) > 0 {
+			f.NodeBinName = entries[0].name
+			f.NodeBinPath = entries[0].path
 		}
 	}
+}
+
+func prefersRustForNodeWrapperRepo(f *RepoFacts) bool {
+	if f == nil || !f.HasCargoToml || !f.HasPackageJSON {
+		return false
+	}
+	cargoBin := sanitizeName(f.CargoBinName)
+	if cargoBin == "" {
+		cargoBin = sanitizeName(f.CargoPackageName)
+	}
+	if cargoBin == "" {
+		return false
+	}
+	if f.NodeScriptUsesCargo {
+		return true
+	}
+	nodeBin := sanitizeName(f.NodeBinName)
+	if nodeBin == "" || cargoBin == "" || nodeBin != cargoBin {
+		return false
+	}
+	path := strings.ToLower(filepath.ToSlash(strings.TrimSpace(f.NodeBinPath)))
+	if path == "" {
+		path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(f.NodeMain)))
+	}
+	if path == "" {
+		return false
+	}
+	return strings.HasPrefix(path, "bin/") ||
+		strings.HasPrefix(path, "scripts/") ||
+		strings.HasSuffix(path, ".js") ||
+		strings.HasSuffix(path, ".mjs") ||
+		strings.HasSuffix(path, ".cjs")
 }
 
 func enrichFromCargoToml(repoDir string, f *RepoFacts) {
@@ -917,9 +1032,14 @@ func enrichFromCargoToml(repoDir string, f *RepoFacts) {
 				f.Description = normalizeManifestDescription(val)
 			case "license":
 				f.License = val
-			case "homepage", "repository":
+			case "homepage":
 				if f.Website == "" {
 					f.Website = normalizeRepoURL(val)
+				}
+			case "repository":
+				repoURL := normalizeRepoURL(val)
+				if repoURL != "" && (f.Website == "" || looksInstallScriptURL(f.Website)) {
+					f.Website = repoURL
 				}
 			}
 		case "[[bin]]":
@@ -969,8 +1089,11 @@ func enrichFromPyProject(repoDir string, f *RepoFacts) {
 			if strings.EqualFold(key, "homepage") && f.Website == "" {
 				f.Website = normalizeRepoURL(val)
 			}
-			if strings.EqualFold(key, "repository") && f.Website == "" {
-				f.Website = normalizeRepoURL(val)
+			if strings.EqualFold(key, "repository") {
+				repoURL := normalizeRepoURL(val)
+				if repoURL != "" && (f.Website == "" || looksInstallScriptURL(f.Website)) {
+					f.Website = repoURL
+				}
 			}
 		case "[project.scripts]":
 			if f.PythonConsoleScript == "" && key != "" {
@@ -1012,6 +1135,10 @@ func determineSuggestedSourceGenerator(repoDir string, f *RepoFacts) {
 func inspectGoModuleForBaseline(repoDir string, f *RepoFacts) {
 	f.SuggestedSourceGenerator = "gomod"
 	f.SuggestedSourceGeneratorSafe = false
+	f.SuggestedSourceGeneratorReason = ""
+	f.GoModuleDirective = ""
+	f.GoModuleToolchain = ""
+	f.GoModuleHasToolBlock = false
 
 	b, err := os.ReadFile(filepath.Join(repoDir, "go.mod"))
 	if err != nil {
@@ -1038,16 +1165,61 @@ func inspectGoModuleForBaseline(repoDir string, f *RepoFacts) {
 					f.SuggestedSourceGeneratorReason = fmt.Sprintf("go.mod uses non-conservative go directive %q", f.GoModuleDirective)
 				}
 			}
+
 		case strings.HasPrefix(line, "toolchain "):
 			f.GoModuleToolchain = strings.TrimSpace(strings.TrimPrefix(line, "toolchain "))
 			f.SuggestedSourceGeneratorSafe = false
 			f.SuggestedSourceGeneratorReason = "go.mod uses a toolchain directive"
+
 		case line == "tool (" || strings.HasPrefix(line, "tool ("):
 			f.GoModuleHasToolBlock = true
 			f.SuggestedSourceGeneratorSafe = false
 			f.SuggestedSourceGeneratorReason = "go.mod uses a tool block"
 		}
 	}
+}
+
+func normalizeGoDirectiveVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+
+	parts := strings.Split(v, ".")
+	if len(parts) >= 2 {
+		return parts[0] + "." + parts[1]
+	}
+	return v
+}
+
+func hasPatchGoDirective(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	return len(strings.Split(v, ".")) >= 3
+}
+
+func normalizeGoToolchainVersion(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "go")
+	return v
+}
+
+func chooseManagedGoToolchainVersion(f *RepoFacts) string {
+	if f == nil {
+		return ""
+	}
+
+	if v := normalizeGoToolchainVersion(f.GoModuleToolchain); v != "" {
+		return v
+	}
+
+	if v := normalizeGoDirectiveVersion(f.GoModuleDirective); v != "" {
+		return v + ".0"
+	}
+
+	return ""
 }
 
 func isConservativeGoLanguageVersion(v string) bool {
@@ -1103,6 +1275,18 @@ func modulePathToRepoURL(modPath string) string {
 	}
 }
 
+// detectGoMainCandidates scans the repository for Go main packages.
+//
+// It checks the repository root (.) plus the following subdirectory layouts
+// that are common in real-world Go projects:
+//
+//	cmd/<name>/   — standard multi-binary layout
+//	app/<name>/   — alternative multi-binary layout used by some projects
+//	bin/<name>/   — less common but found in several OSS projects
+//
+// Directories whose names match internalToolName are excluded — they are
+// typically build helpers (gen-*, protoc-gen-*, stringer, wire, etc.) and
+// should not appear as installable binaries in the dalec spec.
 func detectGoMainCandidates(repoDir string) []string {
 	var candidates []string
 
@@ -1141,26 +1325,112 @@ func detectGoMainCandidates(repoDir string) []string {
 		return sawPackageMain && sawFuncMain
 	}
 
+	// Check root first.
 	if hasMainPackage(repoDir) {
 		candidates = append(candidates, ".")
 	}
 
-	cmdDir := filepath.Join(repoDir, "cmd")
-	entries, err := os.ReadDir(cmdDir)
-	if err == nil {
+	// Scan common multi-binary parent directories.
+	for _, cmdParent := range []string{"cmd", "app", "bin"} {
+		parent := filepath.Join(repoDir, cmdParent)
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			continue
+		}
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
 			}
-			subdir := filepath.Join(cmdDir, e.Name())
+			// Skip known build-time tool directories — they are not installable
+			// package artifacts and should not appear in the dalec spec.
+			if internalToolName(e.Name()) {
+				continue
+			}
+			subdir := filepath.Join(parent, e.Name())
 			if hasMainPackage(subdir) {
-				candidates = append(candidates, filepath.ToSlash(filepath.Join("cmd", e.Name())))
+				candidates = append(candidates, filepath.ToSlash(filepath.Join(cmdParent, e.Name())))
 			}
 		}
 	}
 
 	sort.Strings(candidates)
 	return candidates
+}
+
+// detectGoVersionVarPath attempts to locate the Go variable used to hold the
+// version string so it can be injected at link time via -ldflags.
+//
+// It inspects common patterns:
+//
+//	version/version.go     — dedicated version package
+//	internal/version/*.go  — internal version package
+//	pkg/version/*.go       — public version package
+//	cmd/<name>/version.go  — per-binary version file
+//	<root>/*.go            — version var in root package
+//
+// Returns a fully-qualified path like "github.com/foo/bar/version.Version" or
+// "main.version", or "" if nothing was found.
+func detectGoVersionVarPath(repoDir string, modulePath string) string {
+	type candidate struct {
+		relDir string
+		pkg    string // last element used to build the import path
+	}
+
+	candidates := []candidate{
+		{"version", "version"},
+		{"internal/version", "version"},
+		{"pkg/version", "version"},
+		{"", ""}, // root package — uses "main"
+	}
+
+	// Also check cmd/<name>/ for per-binary version files.
+	cmdDir := filepath.Join(repoDir, "cmd")
+	if entries, err := os.ReadDir(cmdDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				candidates = append(candidates, candidate{
+					relDir: filepath.ToSlash(filepath.Join("cmd", e.Name())),
+					pkg:    "main",
+				})
+			}
+		}
+	}
+
+	for _, c := range candidates {
+		dir := repoDir
+		if c.relDir != "" {
+			dir = filepath.Join(repoDir, c.relDir)
+		}
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				continue
+			}
+			s := string(b)
+
+			// Look for exported or unexported version variable declarations.
+			for _, varName := range []string{"Version", "version", "AppVersion"} {
+				if strings.Contains(s, "var "+varName+" ") || strings.Contains(s, "var "+varName+"=") {
+					if c.relDir == "" || c.pkg == "main" {
+						return "main." + varName
+					}
+					importPath := modulePath + "/" + c.relDir
+					return importPath + "." + varName
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 func firstExistingTextFile(repoDir string, names []string, maxBytes int) (string, string, bool) {
@@ -1204,31 +1474,31 @@ func isBadgeLikeReadmeLine(line string) bool {
 }
 
 func firstReadmeSentence(s string) string {
-        inCodeFence := false
-        for _, raw := range strings.Split(s, "\n") {
-                line := strings.TrimSpace(raw)
+	inCodeFence := false
+	for _, raw := range strings.Split(s, "\n") {
+		line := strings.TrimSpace(raw)
 
-                if strings.HasPrefix(line, "```") {
-                        inCodeFence = !inCodeFence
-                        continue
-                }
-                if inCodeFence {
-                        continue
-                }
+		if strings.HasPrefix(line, "```") {
+			inCodeFence = !inCodeFence
+			continue
+		}
+		if inCodeFence {
+			continue
+		}
 
-                if line == "" || strings.HasPrefix(line, "#") {
-                        continue
-                }
-                if isBadgeLikeReadmeLine(line) {
-                        continue
-                }
-                if strings.HasPrefix(line, "|") || strings.HasPrefix(line, "---") {
-                        continue
-                }
-                // skip HTML tags
-                if strings.HasPrefix(line, "<") {
-                        continue
-                }
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if isBadgeLikeReadmeLine(line) {
+			continue
+		}
+		if strings.HasPrefix(line, "|") || strings.HasPrefix(line, "---") {
+			continue
+		}
+		// skip HTML tags
+		if strings.HasPrefix(line, "<") {
+			continue
+		}
 		line = normalizeReadmeLine(line)
 		if line == "" {
 			continue
@@ -1278,34 +1548,34 @@ func allURLs(s string) []string {
 }
 
 func isUsefulProjectURL(u string) bool {
-        lu := strings.ToLower(strings.TrimSpace(u))
-        if lu == "" {
-                return false
-        }
+	lu := strings.ToLower(strings.TrimSpace(u))
+	if lu == "" {
+		return false
+	}
 
-        bad := []string{
-                "shields.io",
-                "img.shields.io",
-                "goreportcard.com",
-                "/actions/workflows/",
-                "/actions/runs/",
-                "badge.svg",
-                ".svg",
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".gif",
-                "macports",
-                "homebrew",
-                "chocolatey",
-                "winget",
-                "pkg.go.dev",
-                "godoc.org",
-                "msys2.org",
-                "repology.org",
-                "snapcraft.io",
-                "/blob/",
-        }
+	bad := []string{
+		"shields.io",
+		"img.shields.io",
+		"goreportcard.com",
+		"/actions/workflows/",
+		"/actions/runs/",
+		"badge.svg",
+		".svg",
+		".png",
+		".jpg",
+		".jpeg",
+		".gif",
+		"macports",
+		"homebrew",
+		"chocolatey",
+		"winget",
+		"pkg.go.dev",
+		"godoc.org",
+		"msys2.org",
+		"repology.org",
+		"snapcraft.io",
+		"/blob/",
+	}
 	for _, x := range bad {
 		if strings.Contains(lu, x) {
 			return false

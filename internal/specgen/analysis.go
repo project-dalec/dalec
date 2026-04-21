@@ -146,24 +146,11 @@ func AnalyzeRepo(f *RepoFacts) (*Analysis, []string) {
 	a.CICommands = discoverCICommands(f)
 	a.InstallHints = discoverInstallHints(f)
 	a.BuildHints, a.TestHints, a.InstallHints2, a.DocHints, a.MakeTargets, a.Components = deriveStructuredHints(f, a)
-
-	// Normalize legacy string install hints from structured hints.
-	if len(a.InstallHints2) > 0 {
-		a.InstallHints = commandHintsToStrings(a.InstallHints2)
-	}
-
-	// Conservative generated-manpage hinting when manpages are built but not present in-tree.
-	if len(a.ManpagePaths) == 0 {
-		for _, h := range a.DocHints {
-			low := strings.ToLower(strings.TrimSpace(h.Command))
-			if strings.Contains(low, "go-md2man") || strings.Contains(low, "md2man") || strings.Contains(low, "make man") {
-				a.ManpagePaths = append(a.ManpagePaths, "man/*.8")
-				addEvidence("heuristic", h.Source, "generated manpage pattern inferred from doc/build hints", "low")
-				break
-			}
-		}
-		a.ManpagePaths = dedupeStrings(a.ManpagePaths)
-	}
+	
+	        // Normalize legacy string install hints from structured hints.
+        if len(a.InstallHints2) > 0 {
+                a.InstallHints = commandHintsToStrings(a.InstallHints2)
+        }
 
 	a.RepoShape = inferRepoShape(f)
 	a.SelectedStrategy = selectStrategy(f, a)
@@ -590,6 +577,31 @@ func deriveAnalysisUnresolved(f *RepoFacts, a *Analysis) []UnresolvedItem {
 			},
 		})
 	}
+	
+	if f.PrimaryType == "go" && f.GoNeedsManagedToolchain {
+	if strings.TrimSpace(f.GoManagedToolchainVersion) == "" {
+		out = append(out, UnresolvedItem{
+			Code:     "build.go_toolchain_version_unknown",
+			Message:  "repo requires an explicit Go toolchain, but the required version could not be derived from go.mod",
+			Severity: "high",
+			Suggestions: []string{
+				"inspect go.mod go/toolchain directives",
+				"set an explicit managed Go version in planning",
+			},
+		})
+	} else {
+		out = append(out, UnresolvedItem{
+			Code:     "build.go_toolchain_managed",
+			Message:  "repo requires an explicit Go toolchain; baseline will select it automatically",
+			Severity: "low",
+			Suggestions: []string{
+				"emit a managed Go toolchain in the deterministic build plan",
+			},
+		})
+	}
+}
+
+
 
 	if f.PrimaryType == "go" && f.HasGoMod && !f.SuggestedSourceGeneratorSafe && strings.TrimSpace(f.SuggestedSourceGeneratorReason) != "" {
 		out = append(out, UnresolvedItem{
@@ -842,28 +854,64 @@ func discoverConfigPaths(f *RepoFacts) []string {
 	}
 
 	var out []string
-	roots := []string{"config", "configs", "deploy", "packaging", "etc"}
+	roots := []string{"etc", "packaging", "dist", "contrib"}
+
 	for _, root := range roots {
 		full := filepath.Join(f.RepoDir, root)
 		_ = filepath.Walk(full, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info == nil || info.IsDir() {
 				return nil
 			}
-			name := strings.ToLower(info.Name())
-			if strings.HasSuffix(name, ".yaml") ||
-				strings.HasSuffix(name, ".yml") ||
-				strings.HasSuffix(name, ".json") ||
-				strings.HasSuffix(name, ".toml") ||
-				strings.HasSuffix(name, ".conf") {
-				if rel, err := filepath.Rel(f.RepoDir, path); err == nil {
-					out = append(out, filepath.ToSlash(rel))
-				}
+
+			rel, err := filepath.Rel(f.RepoDir, path)
+			if err != nil {
+				return nil
 			}
+			rel = filepath.ToSlash(rel)
+
+			if !looksInstallableConfigPath(rel) {
+				return nil
+			}
+
+			out = append(out, rel)
 			return nil
 		})
 	}
+
 	sort.Strings(out)
 	return dedupeStrings(out)
+}
+
+func looksInstallableConfigPath(rel string) bool {
+	low := strings.ToLower(strings.TrimSpace(filepath.ToSlash(rel)))
+	if low == "" {
+		return false
+	}
+
+	if strings.HasPrefix(low, "config/") ||
+		strings.HasPrefix(low, "configs/") ||
+		strings.HasPrefix(low, "deploy/") ||
+		strings.Contains(low, "/samples/") ||
+		strings.Contains(low, "/crd/") ||
+		strings.Contains(low, "/grafana/") ||
+		strings.Contains(low, "kustomization.yaml") {
+		return false
+	}
+
+	if strings.HasPrefix(low, "etc/") ||
+		strings.Contains(low, "/etc/") ||
+		strings.HasPrefix(low, "packaging/") {
+		return strings.HasSuffix(low, ".conf") ||
+			strings.HasSuffix(low, ".ini") ||
+			strings.HasSuffix(low, ".toml") ||
+			strings.HasSuffix(low, ".yaml") ||
+			strings.HasSuffix(low, ".yml") ||
+			strings.HasSuffix(low, ".json")
+	}
+
+	return strings.HasSuffix(low, ".conf") ||
+		strings.HasSuffix(low, ".ini") ||
+		strings.HasSuffix(low, ".toml")
 }
 
 func discoverCICommands(f *RepoFacts) []string {
@@ -1055,17 +1103,6 @@ func deriveInstallLayout(f *RepoFacts, a *Analysis) InstallLayout {
 			})
 		}
 	}
-	for _, dir := range []string{"scripts", "hack", "tools"} {
-		if hasDir(filepath.Join(f.RepoDir, dir)) {
-			add(&layout.Libexec, PathEvidence{
-				Path:       filepath.ToSlash(dir),
-				Kind:       "libexec",
-				Source:     "analysis.libexec",
-				Confidence: "low",
-				Reason:     "executable helper/tool directory discovered in repository",
-			})
-		}
-	}
 
 	return layout
 }
@@ -1129,6 +1166,15 @@ func scoreComponentChoices(f *RepoFacts, a *Analysis) []ScoredChoice {
 			}
 		}
 	}
+
+	if preferred := preferredGoPrimaryComponent(f, a); preferred != "" {
+	add(preferred, 40, "primary Go binary heuristic", "multi-binary Go repo primary-binary heuristic")
+}
+for _, c := range a.CandidateComponents {
+	if isAuxiliaryGoBinary(c) {
+		add(c, -20, "auxiliary binary heuristic", "likely helper or secondary binary for package baselines")
+	}
+}
 
 	var out []ScoredChoice
 	for name, cur := range m {
