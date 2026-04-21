@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/project-dalec/dalec"
@@ -47,6 +48,12 @@ func BuildSpec(ctx context.Context, a *Analysis, plan *SpecPlan, sourceMode stri
 	applyPlannedTests(spec, emissionPlan, &warnings)
 
 	buildByPlan(spec, a, emissionPlan, &warnings)
+
+	if strings.TrimSpace(emissionPlan.NetworkMode) != "" && len(spec.Build.Steps) > 0 {
+		spec.Build.NetworkMode = emissionPlan.NetworkMode
+	}
+
+	applyPlannedTargets(spec, emissionPlan, &warnings)
 
 	return spec, dedupeWarnings(warnings), nil
 }
@@ -98,8 +105,6 @@ func applyPlanArgs(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]st
 		return
 	}
 
-	// Assumes dalec.Spec.Args is map[string]string in your tree.
-	// If your repo uses a slightly different type, only this helper should need adjustment.
 	if spec.Args == nil {
 		spec.Args = map[string]string{}
 	}
@@ -144,8 +149,22 @@ func newSourceFromPlan(sourceMode string, a *Analysis, plan *SpecPlan) (dalec.So
 	case "", "context":
 		return src, warnings
 	case "git":
-		warnings = append(warnings, "source=git requested, but baseline currently emits a context source until git-backed source emission is wired to verified repo URL/commit metadata")
-		return src, warnings
+		f := analysisFacts(a)
+		if f == nil {
+			warnings = append(warnings, "source=git requested, but repo facts were unavailable; falling back to context source")
+			return src, warnings
+		}
+		if strings.TrimSpace(f.GitRemoteURL) == "" || strings.TrimSpace(f.GitCommit) == "" {
+			warnings = append(warnings, "source=git requested, but verified git remote/commit metadata was incomplete; falling back to context source")
+			return src, warnings
+		}
+		return dalec.Source{
+			Git: &dalec.SourceGit{
+				URL:    strings.TrimSpace(f.GitRemoteURL),
+				Commit: strings.TrimSpace(f.GitCommit),
+			},
+			Path: ".",
+		}, warnings
 	default:
 		warnings = append(warnings, fmt.Sprintf("unknown --source=%q, defaulting to context", sourceMode))
 		return src, warnings
@@ -211,6 +230,13 @@ func filterPlannedArtifactsForBaselineBuild(a *Analysis, plan *SpecPlan, warning
 		case "config":
 			if strings.Contains(path, "*") {
 				*warnings = append(*warnings, fmt.Sprintf("dropping wildcard config artifact %q from baseline", path))
+				continue
+			}
+			out = append(out, item)
+
+		case "license":
+			if strings.Contains(path, "*") {
+				*warnings = append(*warnings, fmt.Sprintf("dropping wildcard license artifact %q from baseline", path))
 				continue
 			}
 			out = append(out, item)
@@ -438,32 +464,119 @@ func buildByPlan(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]stri
 	}
 }
 
+type goBuildOutput struct {
+	Name    string
+	Target  string
+	OutPath string
+}
+
+func plannedGoBuildOutputs(plan *SpecPlan, f *RepoFacts) []goBuildOutput {
+	var out []goBuildOutput
+
+	if plan != nil {
+		for _, art := range plan.Artifacts {
+			if strings.TrimSpace(art.Kind) != "binary" {
+				continue
+			}
+
+			name := artifactInstalledName(art, sanitizeName(plan.PrimaryBinaryName))
+			if name == "" || name == "unknown" {
+				continue
+			}
+
+			target := strings.TrimSpace(art.BuildTarget)
+			if target == "" {
+				target = strings.TrimSpace(plan.PrimaryBuildTarget)
+			}
+			if target == "" {
+				target = chooseGoBuildTarget(f, sanitizeName(plan.MainComponent))
+			}
+
+			outPath := binaryOutputPathFromArtifact(art, name)
+
+			out = append(out, goBuildOutput{
+				Name:    name,
+				Target:  target,
+				OutPath: outPath,
+			})
+		}
+	}
+
+	if len(out) == 0 {
+		name := "app"
+		if plan != nil {
+			if s := sanitizeName(plan.PrimaryBinaryName); s != "" && s != "unknown" {
+				name = s
+			} else if s := sanitizeName(plan.MainComponent); s != "" && s != "unknown" {
+				name = s
+			}
+		}
+
+		out = append(out, goBuildOutput{
+			Name:    name,
+			Target:  chooseGoBuildTarget(f, sanitizeName(plan.MainComponent)),
+			OutPath: nativeBinaryBuildRelPath(name),
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func binaryOutputPathFromArtifact(art PlannedArtifact, fallback string) string {
+	p := normalizeArtifactPath(art.Path)
+	if strings.HasPrefix(p, "src/") {
+		p = strings.TrimPrefix(p, "src/")
+	}
+	if strings.TrimSpace(p) != "" {
+		return p
+	}
+	return nativeBinaryBuildRelPath(strings.TrimSuffix(fallback, ".exe"))
+}
+
 func buildGoByPlan(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]string, env map[string]string) string {
 	f := a.Facts
 
 	env["GOFLAGS"] = "-trimpath"
 
-	if plan.Intent == IntentWindowsCross || plan.TargetFamily == TargetFamilyWindows {
+	cgoVal := "0"
+	if plan.CGOEnabled != nil && *plan.CGOEnabled {
+		cgoVal = "1"
+	}
+	env["CGO_ENABLED"] = cgoVal
+
+	isWindows := plan.Intent == IntentWindowsCross || plan.TargetFamily == TargetFamilyWindows
+	if isWindows {
 		env["GOOS"] = "windows"
 	}
 
-	out := sanitizeName(plan.MainComponent)
-	if out == "" || out == "unknown" {
-		out = sanitizeName(spec.Name)
+	outputs := plannedGoBuildOutputs(plan, f)
+	primary := outputs[0].Name
+	if primary == "" || primary == "unknown" {
+		primary = sanitizeName(plan.MainComponent)
 	}
-	if out == "" || out == "unknown" {
-		out = "app"
+	if primary == "" || primary == "unknown" {
+		primary = sanitizeName(spec.Name)
+	}
+	if primary == "" || primary == "unknown" {
+		primary = "app"
 	}
 
-	target := chooseGoBuildTarget(f, out)
 	useMake := shouldUseMakeForGoBuild(a, plan)
+
+	ldflags := "-s -w"
+	if strings.TrimSpace(plan.LDFlagsVarPath) != "" {
+		if _, hasVersion := plan.Args["VERSION"]; hasVersion {
+			ldflags += fmt.Sprintf(" -X %s=${VERSION}", strings.TrimSpace(plan.LDFlagsVarPath))
+		}
+	}
 
 	if useMake {
 		ensureGoBuildDeps(spec, true)
-		ensureGoImage(spec, out, plan)
+		ensureGoImage(spec, primary, plan)
 		if len(spec.Artifacts.Binaries) == 0 {
-			path := nativeBinaryArtifactPath(out)
-			if plan.Intent == IntentWindowsCross || plan.TargetFamily == TargetFamilyWindows {
+			path := nativeBinaryArtifactPath(primary)
+			if isWindows {
 				path += ".exe"
 			}
 			spec.Artifacts.Binaries = map[string]dalec.ArtifactConfig{
@@ -475,8 +588,8 @@ func buildGoByPlan(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]st
 	}
 
 	ensureGoBuildDeps(spec, false)
-	ensureGoNativeArtifacts(spec, out, plan)
-	ensureGoImage(spec, out, plan)
+	ensureGoNativeArtifacts(spec, primary, plan)
+	ensureGoImage(spec, primary, plan)
 
 	if f.HasMakefile {
 		if makeLooksCrossRelease(a) {
@@ -485,16 +598,27 @@ func buildGoByPlan(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]st
 		*warnings = append(*warnings, "go make-driven repo detected; using conservative native go build output until refinement")
 	}
 
-	outPath := nativeBinaryBuildRelPath(out)
-	if plan.Intent == IntentWindowsCross || plan.TargetFamily == TargetFamilyWindows {
-		outPath += ".exe"
+	var b strings.Builder
+	b.WriteString("cd src\n")
+	b.WriteString("mkdir -p bin\n")
+
+	for _, out := range outputs {
+		outPath := out.OutPath
+		if isWindows && !strings.HasSuffix(strings.ToLower(outPath), ".exe") {
+			outPath += ".exe"
+		}
+		if ldflags == "-s -w" {
+			fmt.Fprintf(&b, "go build -trimpath -o %s %s\n", outPath, out.Target)
+			continue
+		}
+		fmt.Fprintf(&b, "go build -trimpath -ldflags %q -o %s %s\n", ldflags, outPath, out.Target)
 	}
 
-	return fmt.Sprintf("cd src\nmkdir -p bin\ngo build -trimpath -o %s %s\n", outPath, target)
+	return b.String()
 }
 
 func buildRustByPlan(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]string, env map[string]string) string {
-	out := sanitizeName(plan.MainComponent)
+	out := sanitizeName(plan.PrimaryBinaryName)
 	if out == "" || out == "unknown" {
 		out = sanitizeName(spec.Name)
 	}
@@ -527,7 +651,7 @@ func buildRustByPlan(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]
 		spec.Image.Cmd = "--help"
 	}
 
-	return "cd src\ncargo build --release\n"
+	return "cd src\ncargo build --release --locked\n"
 }
 
 func buildNodeByPlan(spec *dalec.Spec, a *Analysis, plan *SpecPlan, warnings *[]string, env map[string]string) string {
@@ -731,8 +855,6 @@ func buildNodeCommand(f *RepoFacts) string {
 		}
 		if f.NodeHasBuild {
 			b.WriteString("npm run build\n")
-		} else {
-			b.WriteString("npm run build --if-present\n")
 		}
 	}
 
@@ -829,6 +951,12 @@ func applyPlannedArtifacts(spec *dalec.Spec, plan *SpecPlan, warnings *[]string)
 				spec.Artifacts.ConfigFiles = map[string]dalec.ArtifactConfig{}
 			}
 			spec.Artifacts.ConfigFiles[path] = cfg
+
+		case "license":
+			if spec.Artifacts.Licenses == nil {
+				spec.Artifacts.Licenses = map[string]dalec.ArtifactConfig{}
+			}
+			spec.Artifacts.Licenses[path] = cfg
 
 		case "data_dir":
 			if spec.Artifacts.DataDirs == nil {
@@ -955,6 +1083,45 @@ func applyPlannedTests(spec *dalec.Spec, plan *SpecPlan, warnings *[]string) {
 			test.Files = files
 		}
 		spec.Tests = append(spec.Tests, test)
+	}
+}
+
+func applyPlannedTargets(spec *dalec.Spec, plan *SpecPlan, warnings *[]string) {
+	if spec == nil || plan == nil || !plan.UseTargets {
+		return
+	}
+	if len(plan.Routes) == 0 {
+		return
+	}
+
+	if spec.Targets == nil {
+		spec.Targets = map[string]dalec.Target{}
+	}
+
+	for _, route := range plan.Routes {
+		targetName := strings.TrimSpace(route.Name)
+		if targetName == "" {
+			continue
+		}
+
+		t := dalec.Target{}
+
+		isContainerRoute := route.Subtarget == "container" ||
+			plan.Intent == IntentPackageContainer ||
+			plan.Intent == IntentContainerOnly
+
+		if isContainerRoute && strings.TrimSpace(plan.Entrypoint) != "" {
+			t.Image = &dalec.ImageConfig{
+				Entrypoint: strings.TrimSpace(plan.Entrypoint),
+				Cmd:        strings.TrimSpace(plan.Cmd),
+			}
+		}
+
+		spec.Targets[targetName] = t
+	}
+
+	if len(spec.Targets) == 0 {
+		spec.Targets = nil
 	}
 }
 

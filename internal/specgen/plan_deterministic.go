@@ -26,6 +26,7 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 		UseTargets:    opts.EmitTargets,
 		GenerateTests: false,
 		Args:          defaultPlanArgs(opts, facts, analysis),
+		UserIntent:    buildUserIntentPlan(opts),
 	}
 
 	if plan.Intent == "" || plan.Intent == IntentAuto {
@@ -40,16 +41,43 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 		plan.Alternatives = analysis.Alternatives
 	}
 
-	plan.MainComponent = chooseDefaultComponent(facts, analysis, opts.MainComponent)
-	plan.PackageName = chooseDeterministicPackageName(facts, analysis, plan.MainComponent)
+	plan.MainComponent = chooseDefaultComponent(facts, analysis, requestedMainComponent(opts))
+	plan.PackageName = chooseDeterministicPackageName(facts, analysis, plan.MainComponent, strings.TrimSpace(opts.PackageName))
+	plan.PrimaryBinaryName = choosePrimaryBinaryName(opts, plan.MainComponent, plan.PackageName)
+	plan.PrimaryBuildTarget = choosePrimaryBuildTarget(opts, facts, plan.MainComponent)
 	plan.Description = firstNonEmpty(metadataDescription(facts, analysis), "TODO: describe this package")
 	plan.License = firstNonEmpty(metadataLicense(facts, analysis), "TODO")
 	plan.Website = metadataWebsite(facts, analysis)
-	plan.BuildStyle = chooseBuildStyle(facts, analysis)
+	plan.BuildStyle = chooseBuildStyle(facts, analysis, strings.TrimSpace(opts.BuildStyle))
+	if plan.Intent == IntentWindowsCross && looksLikeGoMultiPlatformMatrix(analysis) {
+		plan.Intent = IntentPackage
+		plan.TargetFamily = chooseTargetFamily(plan.Intent)
+	}
+	plan.NetworkMode = chooseNetworkMode(facts, plan.BuildStyle)
+
+	// Apply explicit user overrides before runtime/routes/artifacts/tests are
+	// derived so emitted image/tests follow the requested primary binary.
+	applyExplicitPlanOverrides(opts, facts, analysis, plan)
+
 	plan.Entrypoint, plan.Cmd = chooseRuntimeDefaults(facts, analysis, plan.MainComponent)
+	applyExplicitRuntimeOverrides(opts, plan)
 	plan.Routes = defaultRoutesForPlan(plan, facts, analysis)
 	plan.Artifacts = deterministicArtifacts(facts, analysis, plan)
+
+	// If the user explicitly requested binaries, filter down to that set.
+	if len(opts.BinaryNames) > 0 {
+		plan.Artifacts = filterArtifactsForRequestedBinaries(plan.Artifacts, opts.BinaryNames)
+		if len(plan.Artifacts) == 0 && facts != nil && facts.PrimaryType == "go" {
+			plan.Artifacts = plannedGoBinaryArtifacts(opts.BinaryNames)
+		}
+	}
+
+	// Merge user override deps with scored deps.
+	userDeps := append([]PlannedDependency(nil), plan.Dependencies...)
 	plan.Dependencies = deterministicDependencies(facts, analysis, plan)
+	plan.Dependencies = append(plan.Dependencies, userDeps...)
+	plan.Dependencies = dedupePlannedDeps(plan.Dependencies)
+
 	plan.GenerateTests = defaultGenerateTests(opts.TestMode, facts, analysis, plan)
 	if plan.GenerateTests {
 		plan.Tests = deterministicTests(facts, analysis, plan)
@@ -71,22 +99,22 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 		DecisionRecord{
 			Field:      "main_component",
 			Chosen:     plan.MainComponent,
-			Confidence: confidenceFromAlternatives(plan.Alternatives, "components"),
-			Reason:     "deterministic baseline selected the top-ranked component candidate",
+			Confidence: planDecisionConfidence(plan.UserIntent, "main_component", confidenceFromAlternatives(plan.Alternatives, "components")),
+			Reason:     planDecisionReason(plan.UserIntent, "main_component", "deterministic baseline selected the top-ranked component candidate"),
 			Evidence:   bestAlternativeEvidenceForKind(plan.Alternatives, "components"),
 		},
 		DecisionRecord{
 			Field:      "build_style",
 			Chosen:     plan.BuildStyle,
-			Confidence: confidenceFromAlternatives(plan.Alternatives, "build_styles"),
-			Reason:     "deterministic baseline selected the top-ranked build style",
+			Confidence: planDecisionConfidence(plan.UserIntent, "build_style", confidenceFromAlternatives(plan.Alternatives, "build_styles")),
+			Reason:     planDecisionReason(plan.UserIntent, "build_style", "deterministic baseline selected the top-ranked build style"),
 			Evidence:   bestAlternativeEvidenceForKind(plan.Alternatives, "build_styles"),
 		},
 		DecisionRecord{
 			Field:      "package_name",
 			Chosen:     plan.PackageName,
-			Confidence: confidenceFromAlternatives(plan.Alternatives, "package_names"),
-			Reason:     "deterministic baseline selected the best package name candidate",
+			Confidence: planDecisionConfidence(plan.UserIntent, "package_name", confidenceFromAlternatives(plan.Alternatives, "package_names")),
+			Reason:     planDecisionReason(plan.UserIntent, "package_name", "deterministic baseline selected the best package name candidate"),
 			Evidence:   bestAlternativeEvidenceForKind(plan.Alternatives, "package_names"),
 		},
 	)
@@ -103,7 +131,7 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 		plan.Warnings = append(plan.Warnings, "container-only intent selected without a dedicated container assembly build style")
 	}
 
-	if plan.Alternatives != nil && len(plan.Alternatives.Components) > 1 {
+	if !planUserSpecified(plan.UserIntent, "main_component") && plan.Alternatives != nil && len(plan.Alternatives.Components) > 1 {
 		if absInt(plan.Alternatives.Components[0].Score-plan.Alternatives.Components[1].Score) <= 10 {
 			plan.Unresolved = append(plan.Unresolved, UnresolvedItem{
 				Code:     "component.selection_close",
@@ -116,7 +144,7 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 		}
 	}
 
-	if plan.Alternatives != nil && len(plan.Alternatives.BuildStyles) > 1 {
+	if !planUserSpecified(plan.UserIntent, "build_style") && plan.Alternatives != nil && len(plan.Alternatives.BuildStyles) > 1 {
 		if absInt(plan.Alternatives.BuildStyles[0].Score-plan.Alternatives.BuildStyles[1].Score) <= 10 {
 			plan.Unresolved = append(plan.Unresolved, UnresolvedItem{
 				Code:     "build_style.selection_close",
@@ -130,11 +158,131 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 	}
 
 	plan.Unresolved = dedupeUnresolved(plan.Unresolved)
-
 	plan.Warnings = dedupeWarnings(plan.Warnings)
 	plan.Decisions = dedupeDecisionRecords(plan.Decisions)
 
 	return plan
+}
+
+func buildUserIntentPlan(opts Options) *UserIntentPlan {
+	intent := &UserIntentPlan{}
+	var explicit []string
+	if opts.Intent != "" && opts.Intent != IntentAuto {
+		intent.RequestedIntent = opts.Intent
+		explicit = append(explicit, "intent")
+	}
+	if opts.TargetFamily != "" && opts.TargetFamily != TargetFamilyAuto {
+		intent.RequestedTargetFamily = opts.TargetFamily
+		explicit = append(explicit, "target_family")
+	}
+	intent.RequestedMainComponent = sanitizeName(strings.TrimSpace(opts.MainComponent))
+	if intent.RequestedMainComponent != "" {
+		explicit = append(explicit, "main_component")
+	}
+	if len(opts.BinaryNames) > 0 {
+		intent.RequestedBinaryNames = append([]string(nil), opts.BinaryNames...)
+		explicit = append(explicit, "binary_names")
+	}
+	intent.RequestedPackageName = sanitizeName(strings.TrimSpace(opts.PackageName))
+	if intent.RequestedPackageName != "" {
+		explicit = append(explicit, "package_name")
+	}
+	intent.RequestedBinaryName = sanitizeName(strings.TrimSpace(opts.BinaryName))
+	if intent.RequestedBinaryName != "" {
+		explicit = append(explicit, "binary_name")
+	}
+	intent.RequestedBuildStyle = strings.TrimSpace(opts.BuildStyle)
+	if intent.RequestedBuildStyle != "" {
+		explicit = append(explicit, "build_style")
+	}
+	intent.RequestedBuildTarget = strings.TrimSpace(opts.BuildTarget)
+	if intent.RequestedBuildTarget != "" {
+		explicit = append(explicit, "build_target")
+	}
+	intent.RequestedEntrypoint = strings.TrimSpace(opts.Entrypoint)
+	if intent.RequestedEntrypoint != "" {
+		explicit = append(explicit, "entrypoint")
+	}
+	intent.RequestedCmd = strings.TrimSpace(opts.Command)
+	if intent.RequestedCmd != "" {
+		explicit = append(explicit, "cmd")
+	}
+	if opts.TestMode != "" && opts.TestMode != TestAuto {
+		intent.RequestedTestMode = opts.TestMode
+		explicit = append(explicit, "test_mode")
+	}
+	intent.ExplicitFields = dedupeStrings(explicit)
+	if len(intent.ExplicitFields) == 0 {
+		return nil
+	}
+	return intent
+}
+
+func planUserSpecified(intent *UserIntentPlan, field string) bool {
+	if intent == nil {
+		return false
+	}
+	for _, item := range intent.ExplicitFields {
+		if item == strings.TrimSpace(field) {
+			return true
+		}
+	}
+	return false
+}
+
+func planDecisionReason(intent *UserIntentPlan, field, fallback string) string {
+	if planUserSpecified(intent, field) {
+		return "user-specified build intent overrode heuristic selection"
+	}
+	return fallback
+}
+
+func planDecisionConfidence(intent *UserIntentPlan, field, fallback string) string {
+	if planUserSpecified(intent, field) {
+		return "high"
+	}
+	return fallback
+}
+
+func requestedMainComponent(opts Options) string {
+	if s := sanitizeName(strings.TrimSpace(opts.MainComponent)); s != "" && s != "unknown" {
+		return s
+	}
+	if len(opts.BinaryNames) > 0 {
+		if s := sanitizeName(opts.BinaryNames[0]); s != "" && s != "unknown" {
+			return s
+		}
+	}
+	if s := sanitizeName(strings.TrimSpace(opts.BinaryName)); s != "" && s != "unknown" {
+		return s
+	}
+	return ""
+}
+
+func firstBinaryName(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(items[0])
+}
+
+func choosePrimaryBinaryName(opts Options, mainComponent, packageName string) string {
+	for _, candidate := range []string{opts.BinaryName, firstBinaryName(opts.BinaryNames), mainComponent, packageName} {
+		if s := sanitizeName(candidate); s != "" && s != "unknown" {
+			return s
+		}
+	}
+	return "app"
+}
+
+func choosePrimaryBuildTarget(opts Options, f *RepoFacts, mainComponent string) string {
+	if s := strings.TrimSpace(opts.BuildTarget); s != "" {
+		return s
+	}
+	if f == nil || f.PrimaryType != "go" {
+		return ""
+	}
+	return chooseGoBuildTarget(f, sanitizeName(mainComponent))
 }
 
 func defaultPlanArgs(opts Options, f *RepoFacts, a *Analysis) map[string]string {
@@ -162,6 +310,109 @@ func defaultPlanArgs(opts Options, f *RepoFacts, a *Analysis) map[string]string 
 	return args
 }
 
+func applyExplicitPlanOverrides(opts Options, facts *RepoFacts, analysis *Analysis, plan *SpecPlan) {
+	if plan == nil {
+		return
+	}
+
+	if s := requestedMainComponent(opts); s != "" {
+		plan.MainComponent = s
+	}
+	if s := sanitizeName(strings.TrimSpace(opts.PackageName)); s != "" && s != "unknown" {
+		plan.PackageName = s
+	}
+	plan.PrimaryBinaryName = choosePrimaryBinaryName(opts, plan.MainComponent, plan.PackageName)
+	plan.PrimaryBuildTarget = choosePrimaryBuildTarget(opts, facts, plan.MainComponent)
+	if s := strings.TrimSpace(opts.BuildStyle); s != "" {
+		plan.BuildStyle = s
+	}
+	if s := strings.TrimSpace(opts.Entrypoint); s != "" {
+		plan.Entrypoint = s
+	}
+	if strings.TrimSpace(opts.Command) != "" {
+		plan.Cmd = strings.TrimSpace(opts.Command)
+	}
+	if strings.TrimSpace(opts.VersionVarPath) != "" {
+		plan.LDFlagsVarPath = strings.TrimSpace(opts.VersionVarPath)
+	}
+	if opts.CGOEnabled != nil {
+		plan.CGOEnabled = opts.CGOEnabled
+	}
+
+	for _, dep := range opts.ExtraBuildDeps {
+		if dep = strings.TrimSpace(dep); dep != "" {
+			plan.Dependencies = append(plan.Dependencies, PlannedDependency{
+				Name:       dep,
+				Scope:      "build",
+				Confidence: "high",
+				Reason:     "user-supplied extra build dependency",
+			})
+		}
+	}
+	for _, dep := range opts.ExtraRuntimeDeps {
+		if dep = strings.TrimSpace(dep); dep != "" {
+			plan.Dependencies = append(plan.Dependencies, PlannedDependency{
+				Name:       dep,
+				Scope:      "runtime",
+				Confidence: "high",
+				Reason:     "user-supplied extra runtime dependency",
+			})
+		}
+	}
+}
+
+// chooseNetworkMode returns the recommended build network policy for a given
+// build style. Go and Rust builds with vendored/locked dependencies should use
+// "none" for reproducibility. Make-driven and node builds may need outbound
+// access and get an empty string (which means the dalec default — sandbox).
+func applyExplicitRuntimeOverrides(opts Options, plan *SpecPlan) {
+	if plan == nil {
+		return
+	}
+	if s := strings.TrimSpace(opts.Entrypoint); s != "" {
+		plan.Entrypoint = s
+	}
+	if strings.TrimSpace(opts.Command) != "" {
+		plan.Cmd = strings.TrimSpace(opts.Command)
+	}
+}
+
+func looksLikeGoMultiPlatformMatrix(a *Analysis) bool {
+	if a == nil {
+		return false
+	}
+	low := []string{}
+	for _, h := range a.BuildHints {
+		low = append(low, strings.ToLower(strings.TrimSpace(h.Command)))
+	}
+	joined := strings.Join(low, " ")
+	if !strings.Contains(joined, "goos=windows") {
+		return false
+	}
+	otherOS := 0
+	for _, osName := range []string{"goos=linux", "goos=darwin", "goos=freebsd", "goos=android", "goos=openbsd", "goos=netbsd"} {
+		if strings.Contains(joined, osName) {
+			otherOS++
+		}
+	}
+	return otherOS > 0
+}
+
+func chooseNetworkMode(f *RepoFacts, buildStyle string) string {
+	switch {
+	case buildStyle == "go-simple",
+		buildStyle == "go-multi-bin":
+		return "none"
+	case buildStyle == "rust-simple",
+		buildStyle == "rust-workspace":
+		return "none"
+	default:
+		// go-make and go-make-multi-bin may invoke arbitrary make targets that
+		// pull tooling — leave network open and let the user tighten it later.
+		return ""
+	}
+}
+
 func chooseIntent(f *RepoFacts, a *Analysis) IntentMode {
 	if f == nil {
 		return IntentPackage
@@ -176,24 +427,38 @@ func chooseIntent(f *RepoFacts, a *Analysis) IntentMode {
 	if looksContainerAssemblyRepo(f, a) {
 		return IntentContainerOnly
 	}
-
-	switch f.PrimaryType {
-	case "go", "rust":
-		if hasLikelyRuntime(f, a) {
-			return IntentPackageContainer
-		}
-		return IntentPackage
-	case "python", "node":
-		if hasLikelyRuntime(f, a) {
-			return IntentPackageContainer
-		}
-		return IntentPackage
-	default:
-		if f.HasDockerfile || f.HasContainerfile {
-			return IntentPackageContainer
-		}
-		return IntentPackage
+	if prefersPackageContainerIntent(f, a) {
+		return IntentPackageContainer
 	}
+	return IntentPackage
+}
+
+func prefersPackageContainerIntent(f *RepoFacts, a *Analysis) bool {
+	if f == nil || a == nil {
+		return false
+	}
+	if len(a.Services) > 0 {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(a.Runtime.Kind), "daemon") {
+		return true
+	}
+	for _, c := range a.Components {
+		if strings.EqualFold(strings.TrimSpace(c.Role), "daemon") {
+			return true
+		}
+	}
+	for _, art := range a.Artifacts {
+		if strings.EqualFold(strings.TrimSpace(art.Kind), "systemd") {
+			return true
+		}
+	}
+	for _, pe := range a.InstallLayout.Systemd {
+		if strings.TrimSpace(pe.Path) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func chooseTargetFamily(intent IntentMode) TargetFamily {
@@ -226,19 +491,43 @@ func looksWindowsCrossRepo(f *RepoFacts, a *Analysis) bool {
 	}
 	low := strings.ToLower(strings.Join(parts, " "))
 
-	if strings.Contains(low, "windowscross") {
-		return true
-	}
-	if strings.Contains(low, "goos=windows") || strings.Contains(low, "targetos=windows") {
-		return true
-	}
-	if strings.Contains(low, ".exe") && strings.Contains(low, "windows") {
-		return true
-	}
-	if strings.Contains(low, "cross compile") && strings.Contains(low, "windows") {
+	if strings.Contains(low, "windowscross") || strings.Contains(low, "windows cross") {
 		return true
 	}
 
+	if f.HasGoMod {
+		if !containsAnyFold(low, []string{
+			"goos=windows",
+			"set goos=windows",
+			"export goos=windows",
+			"targetos=windows",
+		}) {
+			return false
+		}
+		if containsAnyFold(low, []string{
+			"goos=linux",
+			"goos=darwin",
+			"goos=freebsd",
+			"goos=android",
+			"goos=solaris",
+			"goos=netbsd",
+			"goos=openbsd",
+		}) {
+			return false
+		}
+		return true
+	}
+
+	if containsAnyFold(low, []string{
+		"cargo xwin",
+		"cargo-xwin",
+		"llvm-mingw",
+		"mingw-w64",
+		"windres",
+		"signtool",
+	}) && strings.Contains(low, "windows") {
+		return true
+	}
 	return false
 }
 
@@ -292,16 +581,8 @@ func looksSysextRepo(f *RepoFacts, a *Analysis) bool {
 }
 
 func hasLikelyRuntime(f *RepoFacts, a *Analysis) bool {
-	if a != nil {
-		if len(a.Services) > 0 {
-			return true
-		}
-		if strings.TrimSpace(a.Runtime.Entrypoint) != "" {
-			return true
-		}
-		if len(a.CandidateComponents) > 0 {
-			return true
-		}
+	if a != nil && len(a.Services) > 0 {
+		return true
 	}
 	if f == nil {
 		return false
@@ -317,7 +598,7 @@ func hasLikelyRuntime(f *RepoFacts, a *Analysis) bool {
 		return true
 	case strings.TrimSpace(f.PythonConsoleScript) != "":
 		return true
-	case strings.TrimSpace(f.PythonModuleName) != "":
+	case strings.TrimSpace(f.PythonModuleName) != "" && (f.HasPyProject || f.HasSetupPy):
 		return true
 	default:
 		return false
@@ -326,6 +607,10 @@ func hasLikelyRuntime(f *RepoFacts, a *Analysis) bool {
 
 func chooseDefaultComponent(f *RepoFacts, a *Analysis, explicit string) string {
 	if s := sanitizeName(explicit); s != "" && s != "unknown" {
+		return s
+	}
+
+	if s := preferredGoPrimaryComponent(f, a); s != "" {
 		return s
 	}
 
@@ -370,7 +655,75 @@ func chooseDefaultComponent(f *RepoFacts, a *Analysis, explicit string) string {
 	return "app"
 }
 
-func chooseDeterministicPackageName(f *RepoFacts, a *Analysis, main string) string {
+func preferredGoPrimaryComponent(f *RepoFacts, a *Analysis) string {
+	if f == nil || f.PrimaryType != "go" || len(f.GoMainCandidates) == 0 {
+		return ""
+	}
+
+	byName := map[string]string{}
+	for _, rel := range f.GoMainCandidates {
+		rel = filepath.ToSlash(strings.TrimSpace(rel))
+
+		name := ""
+		if rel == "." || rel == "" {
+			name = sanitizeName(f.Name)
+		} else {
+			name = sanitizeName(filepath.Base(rel))
+		}
+		if name != "" && name != "unknown" {
+			byName[name] = rel
+		}
+	}
+
+	if repo := sanitizeName(f.Name); repo != "" {
+		if _, ok := byName[repo]; ok {
+			return repo
+		}
+	}
+
+	if a != nil {
+		if s := sanitizeName(a.Runtime.Entrypoint); s != "" && s != "unknown" {
+			if _, ok := byName[s]; ok && !isAuxiliaryGoBinary(s) {
+				return s
+			}
+		}
+	}
+
+	for _, s := range []string{"operator", "controller", "manager", "server", "daemon", "agent", "apiserver", "api"} {
+		if _, ok := byName[s]; ok {
+			return s
+		}
+	}
+
+	if rel := strings.TrimSpace(f.GoMainRel); rel != "" && rel != "." {
+		if s := sanitizeName(filepath.Base(rel)); s != "" && s != "unknown" && !isAuxiliaryGoBinary(s) {
+			return s
+		}
+	}
+
+	for _, rel := range f.GoMainCandidates {
+		name := sanitizeName(filepath.Base(rel))
+		if name != "" && name != "unknown" && !isAuxiliaryGoBinary(name) {
+			return name
+		}
+	}
+
+	return ""
+}
+
+func isAuxiliaryGoBinary(name string) bool {
+	switch sanitizeName(name) {
+	case "adapter", "webhooks", "admission-webhooks", "metrics-server", "metrics-apiserver", "proxy", "sidecar", "e2e", "test", "tests", "example", "examples":
+		return true
+	default:
+		return false
+	}
+}
+
+func chooseDeterministicPackageName(f *RepoFacts, a *Analysis, main string, explicit string) string {
+	if s := sanitizeName(explicit); s != "" && s != "unknown" {
+		return s
+	}
 	if a != nil && a.Alternatives != nil && len(a.Alternatives.PackageNames) > 0 {
 		if s := sanitizeName(a.Alternatives.PackageNames[0].Value); s != "" && s != "unknown" {
 			return s
@@ -413,19 +766,46 @@ func metadataLicense(f *RepoFacts, a *Analysis) string {
 }
 
 func metadataWebsite(f *RepoFacts, a *Analysis) string {
+	website := ""
 	if a != nil && strings.TrimSpace(a.Metadata.Website) != "" {
-		return a.Metadata.Website
+		website = a.Metadata.Website
+	} else if f != nil {
+		website = f.Website
 	}
-	if f != nil {
-		return f.Website
+	if f != nil && looksInstallScriptURL(website) && strings.TrimSpace(f.GitRemoteURL) != "" {
+		return normalizeRepoURL(f.GitRemoteURL)
 	}
-	return ""
+	return website
 }
 
-func chooseBuildStyle(f *RepoFacts, a *Analysis) string {
+// chooseBuildStyle delegates to selectStrategy (helpers.go) as the single
+// source of truth rather than duplicating the switch logic here.
+func chooseBuildStyle(f *RepoFacts, a *Analysis, explicit string) string {
+	if s := strings.TrimSpace(explicit); s != "" {
+		return s
+	}
 	if looksContainerAssemblyRepo(f, a) {
 		return "container-assembly"
 	}
+	if s := preferredMixedBuildStyle(f, a); s != "" {
+		return s
+	}
+	if shouldPreferSelectedStrategy(f, a) {
+		return strings.TrimSpace(a.SelectedStrategy)
+	}
+	if f != nil {
+		if f.HasGoMod && !hasStrongRuntimeEvidence(a) {
+			return "generic-placeholder"
+		}
+		if f.HasCargoToml && strings.TrimSpace(f.CargoBinName) == "" && strings.TrimSpace(f.CargoPackageName) == "" && !hasStrongRuntimeEvidence(a) {
+			return "generic-placeholder"
+		}
+		if (f.PrimaryType == "go" || f.PrimaryType == "rust") && !hasLikelyRuntime(f, a) {
+			return "generic-placeholder"
+		}
+	}
+	// Prefer analysis alternatives — they carry scored evidence from the full
+	// repo scan and are more reliable than a simple manifest check.
 	if a != nil && a.Alternatives != nil && len(a.Alternatives.BuildStyles) > 0 {
 		if s := strings.TrimSpace(a.Alternatives.BuildStyles[0].Value); s != "" {
 			return s
@@ -437,52 +817,82 @@ func chooseBuildStyle(f *RepoFacts, a *Analysis) string {
 	if f == nil {
 		return "generic-placeholder"
 	}
+	return selectStrategy(f, a)
+}
 
-	switch f.PrimaryType {
-	case "go":
-		if f.HasMakefile && len(f.GoMainCandidates) > 1 {
-			return "go-make-multi-bin"
-		}
-		if f.HasMakefile {
-			return "go-make"
-		}
-		if len(f.GoMainCandidates) > 1 {
-			return "go-multi-bin"
-		}
-		return "go-simple"
-	case "rust":
-		if cargoWorkspace(f.RepoDir) {
+func preferredMixedBuildStyle(f *RepoFacts, a *Analysis) string {
+	if f == nil {
+		return ""
+	}
+	if prefersRustForNodeWrapperRepo(f) {
+		if cargoWorkspace(f.RepoDir) || (a != nil && a.RepoShape.HasWorkspace) {
 			return "rust-workspace"
 		}
 		return "rust-simple"
-	case "node":
-		switch f.NodePackageManager {
-		case "pnpm":
-			return "node-pnpm-app"
-		case "yarn":
-			return "node-yarn-app"
-		default:
-			return "node-npm-app"
-		}
-	case "python":
-		if f.HasPyProject {
-			return "python-wheel"
-		}
-		return "python-requirements"
-	default:
-		if f.HasMakefile {
-			return "generic-make"
-		}
-		return "generic-placeholder"
 	}
+	return ""
+}
+
+func hasStrongRuntimeEvidence(a *Analysis) bool {
+	if a == nil {
+		return false
+	}
+	if len(a.Services) > 0 {
+		return true
+	}
+	return normalizeConfidence(a.Runtime.Confidence) != "low" && strings.TrimSpace(a.Runtime.Entrypoint) != ""
+}
+
+func shouldPreferSelectedStrategy(f *RepoFacts, a *Analysis) bool {
+	if f == nil || a == nil {
+		return false
+	}
+	selected := strings.TrimSpace(a.SelectedStrategy)
+	if selected == "" || selected == "generic-placeholder" || selected == "container-assembly" {
+		return false
+	}
+	languageCount := len(dedupeStrings(append([]string(nil), a.Languages...)))
+	if languageCount < 2 {
+		for _, present := range []bool{f.HasGoMod, f.HasCargoToml, f.HasPackageJSON, f.HasPyProject || f.HasRequirements || f.HasSetupPy} {
+			if present {
+				languageCount++
+			}
+		}
+	}
+	if languageCount < 2 {
+		return false
+	}
+	return (strings.HasPrefix(selected, "rust") && f.HasCargoToml) ||
+		(strings.HasPrefix(selected, "go") && f.HasGoMod) ||
+		(strings.HasPrefix(selected, "python") && (f.HasPyProject || f.HasRequirements || f.HasSetupPy))
 }
 
 func chooseRuntimeDefaults(f *RepoFacts, a *Analysis, main string) (string, string) {
-	if a != nil && strings.TrimSpace(a.Runtime.Entrypoint) != "" {
+	main = sanitizeName(main)
+	if main != "" && main != "unknown" {
+		switch {
+		case f != nil && (f.PrimaryType == "go" || f.PrimaryType == "rust") && hasLikelyRuntime(f, a):
+			return main, "--help"
+		case f != nil && f.PrimaryType == "unknown":
+			return main, ""
+		case f != nil && f.PrimaryType == "node" && hasLikelyRuntime(f, a):
+			if strings.TrimSpace(f.NodeMain) != "" && main == "node" {
+				return "node", f.NodeMain
+			}
+			return main, ""
+		case f != nil && f.PrimaryType == "python" && hasLikelyRuntime(f, a):
+			if strings.TrimSpace(f.PythonModuleName) != "" && main == "python3" {
+				return "python3", "-m " + f.PythonModuleName
+			}
+			return main, ""
+		}
+	}
+
+	if hasLikelyRuntime(f, a) && a != nil && strings.TrimSpace(a.Runtime.Entrypoint) != "" {
 		return a.Runtime.Entrypoint, a.Runtime.Cmd
 	}
 
-	if a != nil && a.Alternatives != nil && len(a.Alternatives.EntryPoints) > 0 {
+	if hasLikelyRuntime(f, a) && a != nil && a.Alternatives != nil && len(a.Alternatives.EntryPoints) > 0 {
 		entry := strings.TrimSpace(a.Alternatives.EntryPoints[0].Value)
 		if entry != "" {
 			if entry == "node" && f != nil && strings.TrimSpace(f.NodeMain) != "" {
@@ -501,24 +911,26 @@ func chooseRuntimeDefaults(f *RepoFacts, a *Analysis, main string) (string, stri
 
 	switch f.PrimaryType {
 	case "go", "rust":
-		return sanitizeName(main), "--help"
+		if hasLikelyRuntime(f, a) {
+			return sanitizeName(main), "--help"
+		}
 	case "node":
-		if f.NodeMain != "" {
+		if hasLikelyRuntime(f, a) && f.NodeMain != "" {
 			return "node", f.NodeMain
 		}
-		if f.NodeBinName != "" {
+		if hasLikelyRuntime(f, a) && f.NodeBinName != "" {
 			return f.NodeBinName, ""
 		}
 	case "python":
-		if f.PythonConsoleScript != "" {
+		if hasLikelyRuntime(f, a) && f.PythonConsoleScript != "" {
 			return f.PythonConsoleScript, ""
 		}
-		if f.PythonModuleName != "" {
+		if hasLikelyRuntime(f, a) && f.PythonModuleName != "" {
 			return "python3", "-m " + f.PythonModuleName
 		}
 	}
 
-	return sanitizeName(main), ""
+	return "", ""
 }
 
 func defaultRoutesForPlan(plan *SpecPlan, f *RepoFacts, a *Analysis) []TargetRoute {
@@ -573,26 +985,71 @@ func deterministicArtifacts(f *RepoFacts, a *Analysis, plan *SpecPlan) []Planned
 		})
 	}
 
-	main := sanitizeName(plan.MainComponent)
-	if main == "" || main == "unknown" {
-		main = sanitizeName(plan.PackageName)
+	installedName := sanitizeName(plan.PrimaryBinaryName)
+	if installedName == "" || installedName == "unknown" {
+		installedName = sanitizeName(plan.MainComponent)
 	}
-	if main == "" || main == "unknown" {
-		main = "app"
+	if installedName == "" || installedName == "unknown" {
+		installedName = sanitizeName(plan.PackageName)
+	}
+	if installedName == "" || installedName == "unknown" {
+		installedName = "app"
 	}
 
-	if a != nil {
-		for _, pe := range a.InstallLayout.Binaries {
-			add("binary", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, true)
+	buildTargetName := sanitizeName(plan.MainComponent)
+	if buildTargetName == "" || buildTargetName == "unknown" {
+		buildTargetName = installedName
+	}
+	buildTarget := strings.TrimSpace(plan.PrimaryBuildTarget)
+	if buildTarget == "" {
+		buildTarget = chooseGoBuildTarget(f, buildTargetName)
+	}
+
+	if plan.Intent != IntentContainerOnly {
+		switch {
+		case strings.HasPrefix(plan.BuildStyle, "go") && hasLikelyRuntime(f, a):
+			path := nativeBinaryArtifactPath(installedName)
+			if plan.Intent == IntentWindowsCross || plan.TargetFamily == TargetFamilyWindows {
+				path += ".exe"
+			}
+			out = append(out, PlannedArtifact{
+				Kind:        "binary",
+				Path:        path,
+				Name:        installedName,
+				BuildTarget: buildTarget,
+				Required:    true,
+				Confidence:  normalizeConfidence("high"),
+				Reason:      "primary Go package binary",
+			})
+
+		case strings.HasPrefix(plan.BuildStyle, "rust") && hasLikelyRuntime(f, a):
+			add("binary", "src/target/release/"+installedName, "", installedName, "", "high", "primary Cargo package binary", true)
 		}
+	}
+
+	if a != nil && shouldEmitManpagesInBaseline(a, plan) {
 		for _, pe := range a.InstallLayout.Manpages {
 			add("manpage", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
 		}
+	}
+
+	if a != nil {
+		for _, pe := range a.InstallLayout.Docs {
+			if isDirectoryLikeArtifactPath(pe.Path) && !shouldEmitDocDirsInBaseline(a, plan) {
+				continue
+			}
+			add("doc", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
+		}
+	}
+
+	if a != nil && len(a.InstallLayout.Systemd) > 0 {
+		for _, pe := range a.InstallLayout.Systemd {
+			add("systemd", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
+		}
+	}
+	if a != nil {
 		for _, pe := range a.InstallLayout.ConfigFiles {
 			add("config", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
-		}
-		for _, pe := range a.InstallLayout.Docs {
-			add("doc", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
 		}
 		for _, pe := range a.InstallLayout.DataDirs {
 			add("data_dir", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
@@ -600,39 +1057,53 @@ func deterministicArtifacts(f *RepoFacts, a *Analysis, plan *SpecPlan) []Planned
 		for _, pe := range a.InstallLayout.Libexec {
 			add("libexec", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
 		}
-		for _, pe := range a.InstallLayout.Systemd {
-			add("systemd", pe.Path, "", filepath.Base(pe.Path), "", pe.Confidence, pe.Reason, false)
+	}
+	if f != nil && strings.TrimSpace(f.LicensePath) != "" && plan.Intent != IntentContainerOnly {
+		add("license", filepath.ToSlash(strings.TrimSpace(f.LicensePath)), "", filepath.Base(f.LicensePath), "", "medium", "license file discovered in repository", false)
+	}
+
+	return dedupePlannedArtifacts(out)
+}
+
+func filterArtifactsForRequestedBinaries(in []PlannedArtifact, names []string) []PlannedArtifact {
+	if len(names) == 0 {
+		return in
+	}
+	wanted := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		if n = sanitizeName(n); n != "" && n != "unknown" {
+			wanted[n] = struct{}{}
 		}
 	}
 
-	// Fallback artifact shaping when install-layout evidence is sparse.
-	if !hasPlannedArtifactKind(out, "binary") && plan.Intent != IntentContainerOnly {
-		switch {
-		case strings.HasPrefix(plan.BuildStyle, "go"):
-			conf := "medium"
-			reason := "fallback Go binary artifact path"
-			if f != nil && f.HasMakefile {
-				conf = "low"
-				reason = "make-driven build; baseline normalized binary artifact path conservatively"
-			}
-			path := nativeBinaryArtifactPath(main)
-			if plan.Intent == IntentWindowsCross || plan.TargetFamily == TargetFamilyWindows {
-				path += ".exe"
-			}
-			add("binary", path, "", filepath.Base(path), "", conf, reason, true)
-		case strings.HasPrefix(plan.BuildStyle, "rust"):
-			add("binary", "src/target/release/"+main, "", main, "", "medium", "fallback Cargo release artifact path", true)
+	var out []PlannedArtifact
+	for _, art := range in {
+		if strings.TrimSpace(art.Kind) != "binary" {
+			out = append(out, art)
+			continue
+		}
+		if _, ok := wanted[artifactInstalledName(art, "")]; ok {
+			out = append(out, art)
 		}
 	}
-	if !hasPlannedArtifactKind(out, "doc") && f != nil {
-		// Only emit doc artifacts for language types that naturally produce them
-		switch {
-		case strings.HasPrefix(plan.BuildStyle, "python"),
-			strings.HasPrefix(plan.BuildStyle, "node"):
-			add("doc", "src/README.md", "", "README.md", "", "low", "baseline documentation fallback", false)
-		}
-	}
+	return dedupePlannedArtifacts(out)
+}
 
+func plannedGoBinaryArtifacts(names []string) []PlannedArtifact {
+	var out []PlannedArtifact
+	for _, n := range names {
+		n = sanitizeName(n)
+		if n == "" || n == "unknown" {
+			continue
+		}
+		out = append(out, PlannedArtifact{
+			Kind:       "binary",
+			Name:       n,
+			Path:       nativeBinaryArtifactPath(n),
+			Confidence: "high",
+			Reason:     "explicit user-requested Go binary",
+		})
+	}
 	return dedupePlannedArtifacts(out)
 }
 
@@ -655,15 +1126,22 @@ func deterministicDependencies(f *RepoFacts, a *Analysis, plan *SpecPlan) []Plan
 
 	switch {
 	case strings.HasPrefix(plan.BuildStyle, "go"):
-		add("build", "golang", "high", "Go repository detected")
+		if f != nil && !f.GoNeedsManagedToolchain {
+			add("build", "golang", "high", "Go repository detected")
+		}
 		if f != nil && f.HasMakefile {
 			add("build", "make", "high", "top-level Makefile detected")
+		}
+		if f != nil && f.GoNeedsManagedToolchain {
+			add("build", "ca-certificates", "medium", "managed Go toolchain download")
+			add("build", "tar", "medium", "managed Go toolchain extraction")
 		}
 	case strings.HasPrefix(plan.BuildStyle, "rust"):
 		add("build", "rust", "high", "Cargo repository detected")
 		add("build", "cargo", "high", "Cargo repository detected")
 	case strings.HasPrefix(plan.BuildStyle, "node"):
 		add("build", "nodejs", "high", "Node package manifest detected")
+		add("runtime", "nodejs", "medium", "Node application runtime")
 		switch {
 		case strings.HasPrefix(plan.BuildStyle, "node-pnpm"):
 			add("build", "pnpm", "medium", "pnpm-based Node baseline")
@@ -675,10 +1153,14 @@ func deterministicDependencies(f *RepoFacts, a *Analysis, plan *SpecPlan) []Plan
 	case strings.HasPrefix(plan.BuildStyle, "python"):
 		add("build", "python3", "high", "Python project detected")
 		add("build", "python3-pip", "medium", "Python packaging baseline")
+		add("runtime", "python3", "medium", "Python application runtime")
 	case strings.HasPrefix(plan.BuildStyle, "generic-make"):
 		add("build", "make", "high", "top-level Makefile detected")
 	case plan.Intent == IntentContainerOnly:
 		// No default build deps; container-only may be pure assembly.
+	}
+	if hasPlannedArtifactKind(plan.Artifacts, "systemd") {
+		add("runtime", "systemd", "low", "systemd service unit detected")
 	}
 
 	if a != nil {
@@ -699,19 +1181,18 @@ func deterministicDependencies(f *RepoFacts, a *Analysis, plan *SpecPlan) []Plan
 				add("build", "rsync", "low", "rsync usage detected")
 			}
 		}
-		
-		for _, h := range a.TestHints {
-                        low := strings.ToLower(h.Command)
-                        switch {
-                        case strings.Contains(low, "pytest"):
-                                add("test", "python3-pytest", "low", "pytest test hint detected")
-                        // golang and cargo are already in build deps — do not duplicate into test
-                        }
-                }
 
-		for _, _ = range a.ManpagePaths {
+		for _, h := range a.TestHints {
+			low := strings.ToLower(h.Command)
+			switch {
+			case strings.Contains(low, "pytest"):
+				add("test", "python3-pytest", "low", "pytest test hint detected")
+			}
+		}
+
+		for range a.ManpagePaths {
 			if hasManpageBuildHints(a) {
-    				add("build", "go-md2man", "low", "go-md2man usage detected in build hints")
+				add("build", "go-md2man", "low", "go-md2man usage detected in build hints")
 			}
 		}
 	}
@@ -736,10 +1217,10 @@ func defaultGenerateTests(mode TestMode, f *RepoFacts, a *Analysis, plan *SpecPl
 	if plan.Entrypoint != "" {
 		return true
 	}
-	if f != nil && (f.PrimaryType == "go" || f.PrimaryType == "rust" || f.PythonConsoleScript != "" || f.NodeBinName != "") {
+	if hasLikelyRuntime(f, a) {
 		return true
 	}
-	if a != nil && len(a.Services) > 0 {
+	if a != nil && (len(a.Services) > 0 || len(a.TestHints) > 0) {
 		return true
 	}
 
@@ -777,10 +1258,13 @@ func deterministicTests(f *RepoFacts, a *Analysis, plan *SpecPlan) []PlannedTest
 		})
 	}
 
-	if plan.Entrypoint != "" {
+	smokeBin := plannedSmokeBinary(plan)
+	if smokeBin == "" {
+		smokeBin = sanitizeName(plan.Entrypoint)
+	}
 
-		// Use the installed binary path if we know it
-		installedBin := "/usr/bin/" + sanitizeName(plan.Entrypoint)
+	if smokeBin != "" {
+		installedBin := "/usr/bin/" + smokeBin
 		cmd := installedBin
 		if strings.TrimSpace(plan.Cmd) != "" {
 			cmd += " " + strings.TrimSpace(plan.Cmd)
@@ -790,7 +1274,7 @@ func deterministicTests(f *RepoFacts, a *Analysis, plan *SpecPlan) []PlannedTest
 		reason := "runtime smoke test generated from entrypoint"
 		if strings.HasPrefix(plan.BuildStyle, "go") || strings.HasPrefix(plan.BuildStyle, "rust") {
 			conf = "medium"
-			reason = "runtime smoke test generated from compiled CLI-style entrypoint"
+			reason = "runtime smoke test generated from planned binary artifact"
 		}
 
 		tests = append(tests, PlannedTest{
@@ -802,6 +1286,18 @@ func deterministicTests(f *RepoFacts, a *Analysis, plan *SpecPlan) []PlannedTest
 	}
 
 	return dedupePlannedTests(tests)
+}
+
+func plannedSmokeBinary(plan *SpecPlan) string {
+	if plan == nil {
+		return ""
+	}
+	for _, art := range plan.Artifacts {
+		if strings.TrimSpace(art.Kind) == "binary" {
+			return artifactInstalledName(art, sanitizeName(plan.MainComponent))
+		}
+	}
+	return ""
 }
 
 func artifactInstalledName(art PlannedArtifact, fallback string) string {
@@ -833,9 +1329,20 @@ func manpageInstalledSubpath(src string) string {
 }
 
 func defaultConfigInstallPath(src string) string {
-	base := filepath.Base(strings.TrimSpace(src))
+	src = filepath.ToSlash(strings.TrimSpace(src))
+	base := filepath.Base(src)
 	if base == "" {
 		base = "app.conf"
+	}
+	if strings.HasPrefix(src, "etc/") {
+		return "/" + strings.TrimPrefix(src, "./")
+	}
+	if strings.HasPrefix(base, "etc_") {
+		named := strings.TrimPrefix(base, "etc_")
+		if named == "" {
+			named = base
+		}
+		return "/etc/" + strings.ReplaceAll(named, "_", "/")
 	}
 	return "/etc/" + base
 }
@@ -844,7 +1351,7 @@ func dedupePlannedArtifacts(in []PlannedArtifact) []PlannedArtifact {
 	seen := map[string]struct{}{}
 	out := make([]PlannedArtifact, 0, len(in))
 	for _, item := range in {
-		key := item.Kind + "|" + item.Path + "|" + item.Target
+		key := item.Kind + "|" + item.Path + "|" + item.Target + "|" + item.BuildTarget
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -1009,13 +1516,4 @@ func bestAlternativeEvidenceForKind(a *Alternatives, kind string) []string {
 	}
 
 	return nil
-}
-
-func containsFold(items []string, needle string) bool {
-	for _, item := range items {
-		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(needle)) {
-			return true
-		}
-	}
-	return false
 }

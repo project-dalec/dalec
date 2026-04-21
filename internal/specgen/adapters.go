@@ -15,6 +15,22 @@ type baselineAdapter interface {
 }
 
 func selectBaselineAdapter(f *RepoFacts, plan *SpecPlan) baselineAdapter {
+	style := strings.TrimSpace(planBuildStyle(plan))
+	if style != "" {
+		switch {
+		case strings.HasPrefix(style, "go"):
+			return goBaselineAdapter{}
+		case strings.HasPrefix(style, "rust"):
+			return rustBaselineAdapter{}
+		case strings.HasPrefix(style, "node"):
+			return nodeBaselineAdapter{}
+		case strings.HasPrefix(style, "python"):
+			return pythonBaselineAdapter{}
+		default:
+			return genericBaselineAdapter{}
+		}
+	}
+
 	adapters := []baselineAdapter{
 		goBaselineAdapter{},
 		rustBaselineAdapter{},

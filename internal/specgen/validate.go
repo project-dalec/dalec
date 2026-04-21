@@ -117,9 +117,14 @@ func validatePlan(plan *SpecPlan) error {
 	if plan.Intent == IntentWindowsCross && plan.TargetFamily != TargetFamilyWindows {
 		return fmt.Errorf("windowscross intent requires windows target family")
 	}
+
+	// Container-only plans are allowed to have an empty build style at plan
+	// time — BuildSpec will treat them as pure container assembly.
+	// Normalise rather than reject so that sparse analysis paths don't fail here.
 	if plan.Intent == IntentContainerOnly && strings.TrimSpace(plan.BuildStyle) == "" {
-		return fmt.Errorf("container-only intent requires a build style decision, even if build emission is later empty")
+		plan.BuildStyle = "container-assembly"
 	}
+
 	if plan.UseTargets && len(plan.Routes) == 0 {
 		return fmt.Errorf("plan uses targets but has no routes")
 	}
@@ -189,21 +194,13 @@ func binaryArtifactPathAllowed(path string, spec *dalec.Spec) bool {
 	path = normalizeArtifactPath(path)
 	low := strings.ToLower(path)
 
-	// Preferred normalized native layout.
+	// Preferred normalized native layout (covers both regular and .exe variants).
 	if strings.HasPrefix(low, "src/bin/") {
 		return true
 	}
 
-	// Windows-cross binary in normalized layout.
-	if strings.HasPrefix(low, "src/bin/") && strings.HasSuffix(low, ".exe") {
-		return true
-	}
-
-	// Common cargo layout.
+	// Common cargo layout (covers both regular and .exe variants).
 	if strings.HasPrefix(low, "src/target/release/") {
-		return true
-	}
-	if strings.HasPrefix(low, "src/target/release/") && strings.HasSuffix(low, ".exe") {
 		return true
 	}
 
