@@ -42,6 +42,46 @@ func main() {
 		emitArgs  = flag.Bool("emit-args", true, "Emit VERSION/REVISION-style baseline args when useful")
 		richPlan  = flag.Bool("rich-plan", true, "Preserve alternatives, decisions, and richer baseline planning context")
 		strict    = flag.Bool("strict", false, "Fail if the baseline contains high-severity unresolved items")
+
+		// User-intent flags — control what to build without needing AI refinement.
+		binaryNames = flag.String(
+			"binaries", "",
+			"Comma-separated explicit binary names for multi-binary repos, e.g. myctl,myagent.\n"+
+				"Overrides component-selection scoring. First name becomes the primary component.",
+		)
+		packageName    = flag.String("package-name", "", "Explicit package name to emit in the baseline spec")
+		binaryName     = flag.String("binary-name", "", "Explicit primary installed binary name when it differs from the package name")
+		buildStyle     = flag.String("build-style", "", "Explicit baseline build style, e.g. go-make, go-simple, rust-workspace")
+		buildTarget    = flag.String("build-target", "", "Explicit primary source build target, e.g. ./cmd/operator or ./cmd/gh")
+		entrypoint     = flag.String("entrypoint", "", "Explicit runtime entrypoint for image/tests")
+		cmdFlag        = flag.String("cmd", "", "Explicit runtime command/arguments for image/tests")
+		extraBuildDeps = flag.String(
+			"extra-build-deps", "",
+			"Comma-separated extra build-time package dependencies to inject into\n"+
+				"spec.dependencies.build, e.g. libssl-dev,zlib1g-dev,pkg-config.",
+		)
+		extraRuntimeDeps = flag.String(
+			"extra-runtime-deps", "",
+			"Comma-separated extra runtime package dependencies to inject into\n"+
+				"spec.dependencies.runtime.",
+		)
+		versionVarPath = flag.String(
+			"version-var", "",
+			"Fully-qualified Go ldflags version variable path used to inject the\n"+
+				"build-time version string, e.g. main.version or\n"+
+				"github.com/foo/bar/cmd.Version.\n"+
+				"When set the baseline emits: go build -ldflags \"-X <path>=${VERSION}\".",
+		)
+		cgoEnabled = flag.String(
+			"cgo", "auto",
+			"CGO mode for Go builds: auto|true|false.\n"+
+				"Default: auto (baseline keeps CGO disabled unless explicitly enabled).",
+		)
+		userHints = flag.String(
+			"hints", "",
+			"Free-text hints forwarded to the AI refinement stage.\n"+
+				"Ignored by the deterministic baseline generator.",
+		)
 	)
 
 	flag.Parse()
@@ -69,21 +109,43 @@ func main() {
 		resolvedIntent = specgen.IntentAuto
 	}
 
+	cgoPtr, err := parseOptionalBool(*cgoEnabled)
+	if err != nil {
+		fmt.Fprintf(
+			os.Stderr,
+			"specgen error: invalid --cgo value %q: %v\n",
+			*cgoEnabled, err,
+		)
+		os.Exit(1)
+	}
+
 	opts := specgen.Options{
-		RepoDir:         *repo,
-		OutFile:         *out,
-		SourceMode:      *source,
-		ForcedType:      *force,
-		SyntaxImage:     "ghcr.io/project-dalec/dalec/frontend:latest",
-		Intent:          resolvedIntent,
-		TargetFamily:    specgen.ParseTargetFamily(*targetFamily),
-		MainComponent:   strings.TrimSpace(*mainComp),
-		TestMode:        specgen.ParseTestMode(*withTests),
-		EmitTargets:     *emitTargets,
-		BundleOut:       strings.TrimSpace(*bundleOut),
-		PreferGitSource: *preferGit,
-		EmitArgs:        *emitArgs,
-		RichPlan:        *richPlan,
+		RepoDir:          *repo,
+		OutFile:          *out,
+		SourceMode:       *source,
+		ForcedType:       *force,
+		SyntaxImage:      "ghcr.io/project-dalec/dalec/frontend:latest",
+		Intent:           resolvedIntent,
+		TargetFamily:     specgen.ParseTargetFamily(*targetFamily),
+		MainComponent:    strings.TrimSpace(*mainComp),
+		TestMode:         specgen.ParseTestMode(*withTests),
+		EmitTargets:      *emitTargets,
+		BundleOut:        strings.TrimSpace(*bundleOut),
+		PreferGitSource:  *preferGit,
+		EmitArgs:         *emitArgs,
+		RichPlan:         *richPlan,
+		BinaryNames:      splitTrimmed(*binaryNames),
+		PackageName:      strings.TrimSpace(*packageName),
+		BinaryName:       strings.TrimSpace(*binaryName),
+		BuildStyle:       strings.TrimSpace(*buildStyle),
+		BuildTarget:      strings.TrimSpace(*buildTarget),
+		Entrypoint:       strings.TrimSpace(*entrypoint),
+		Command:          strings.TrimSpace(*cmdFlag),
+		ExtraBuildDeps:   splitTrimmed(*extraBuildDeps),
+		ExtraRuntimeDeps: splitTrimmed(*extraRuntimeDeps),
+		VersionVarPath:   strings.TrimSpace(*versionVarPath),
+		CGOEnabled:       cgoPtr,
+		UserHints:        strings.TrimSpace(*userHints),
 	}
 
 	res, err := specgen.GenerateBaseline(context.Background(), opts)
@@ -148,6 +210,36 @@ func main() {
 		intentStr,
 		targetFamilyStr,
 	)
+}
+
+// splitTrimmed splits a comma-separated string into a slice, trimming each
+// element and dropping empty entries.
+func splitTrimmed(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func parseOptionalBool(s string) (*bool, error) {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "", "auto":
+		return nil, nil
+	case "1", "t", "true", "yes", "on":
+		v := true
+		return &v, nil
+	case "0", "f", "false", "no", "off":
+		v := false
+		return &v, nil
+	default:
+		return nil, fmt.Errorf("expected auto|true|false")
+	}
 }
 
 func writeJSONIfRequested(path string, v any) error {

@@ -50,17 +50,18 @@ type TargetRoute struct {
 }
 
 type PlannedArtifact struct {
-	Kind       string `json:"kind"` // binary|manpage|doc|config|data_dir|libexec|systemd|unknown
-	Path       string `json:"path"`
-	Subpath    string `json:"subpath,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Mode       uint32 `json:"mode,omitempty"`
-	User       string `json:"user,omitempty"`
-	Group      string `json:"group,omitempty"`
-	Target     string `json:"target,omitempty"`
-	Required   bool   `json:"required,omitempty"`
-	Confidence string `json:"confidence,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Kind        string
+	Path        string
+	Subpath     string
+	Name        string
+	Target      string // actual Dalec target scoping only
+	BuildTarget string // language-specific source build target, e.g. ./cmd/operator
+	Required    bool
+	Confidence  string
+	Reason      string
+	Mode        uint32
+	User        string
+	Group       string
 }
 
 type PlannedDependency struct {
@@ -84,6 +85,21 @@ type PlannedTest struct {
 	Reason     string            `json:"reason,omitempty"`
 }
 
+type UserIntentPlan struct {
+	RequestedIntent        IntentMode   `json:"requested_intent,omitempty"`
+	RequestedTargetFamily  TargetFamily `json:"requested_target_family,omitempty"`
+	RequestedMainComponent string       `json:"requested_main_component,omitempty"`
+	RequestedBinaryNames   []string     `json:"requested_binary_names,omitempty"`
+	RequestedPackageName   string       `json:"requested_package_name,omitempty"`
+	RequestedBinaryName    string       `json:"requested_binary_name,omitempty"`
+	RequestedBuildStyle    string       `json:"requested_build_style,omitempty"`
+	RequestedBuildTarget   string       `json:"requested_build_target,omitempty"`
+	RequestedEntrypoint    string       `json:"requested_entrypoint,omitempty"`
+	RequestedCmd           string       `json:"requested_cmd,omitempty"`
+	RequestedTestMode      TestMode     `json:"requested_test_mode,omitempty"`
+	ExplicitFields         []string     `json:"explicit_fields,omitempty"`
+}
+
 type SpecPlan struct {
 	SchemaVersion int           `json:"schema_version"`
 	OutputProfile OutputProfile `json:"output_profile,omitempty"`
@@ -92,15 +108,31 @@ type SpecPlan struct {
 
 	Routes []TargetRoute `json:"routes,omitempty"`
 
-	MainComponent string `json:"main_component,omitempty"`
-	PackageName   string `json:"package_name,omitempty"`
-	Description   string `json:"description,omitempty"`
-	License       string `json:"license,omitempty"`
-	Website       string `json:"website,omitempty"`
+	MainComponent      string `json:"main_component,omitempty"`
+	PackageName        string `json:"package_name,omitempty"`
+	PrimaryBinaryName  string `json:"primary_binary_name,omitempty"`
+	PrimaryBuildTarget string `json:"primary_build_target,omitempty"`
+	Description        string `json:"description,omitempty"`
+	License            string `json:"license,omitempty"`
+	Website            string `json:"website,omitempty"`
 
 	BuildStyle string `json:"build_style,omitempty"`
 	Entrypoint string `json:"entrypoint,omitempty"`
 	Cmd        string `json:"cmd,omitempty"`
+
+	// NetworkMode controls the build network policy.
+	// "none" for reproducible Go/Rust builds with vendored deps.
+	// "" or "sandbox" for builds that need outbound access.
+	NetworkMode string `json:"network_mode,omitempty"`
+
+	// LDFlagsVarPath is the fully-qualified Go variable path for -ldflags version
+	// injection, e.g. "github.com/foo/bar/cmd.Version" or "main.version".
+	// Only meaningful for Go builds.
+	LDFlagsVarPath string `json:"ldflags_var_path,omitempty"`
+
+	// CGOEnabled controls whether CGO_ENABLED=1 is set for Go builds.
+	// nil means auto (defaults to disabled for most baseline Go builds).
+	CGOEnabled *bool `json:"cgo_enabled,omitempty"`
 
 	Args map[string]string `json:"args,omitempty"`
 
@@ -113,6 +145,7 @@ type SpecPlan struct {
 
 	Decisions    []DecisionRecord `json:"decisions,omitempty"`
 	Alternatives *Alternatives    `json:"alternatives,omitempty"`
+	UserIntent   *UserIntentPlan  `json:"user_intent,omitempty"`
 
 	Warnings   []string         `json:"warnings,omitempty"`
 	Unresolved []UnresolvedItem `json:"unresolved,omitempty"`

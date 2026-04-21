@@ -31,6 +31,38 @@ type Options struct {
 	EmitArgs        bool
 	RichPlan        bool
 
+	// User-supplied build intent.
+	// These fields are applied before heuristic ranking so repo discovery answers
+	// "what is available" while user intent answers "what should be built".
+	BinaryNames []string
+	PackageName string
+	BinaryName  string
+	BuildStyle  string
+	BuildTarget string
+	Entrypoint  string
+	Command     string
+
+	// ExtraBuildDeps is a list of extra build-time package dependencies to
+	// include in spec.dependencies.build, e.g. ["libssl-dev", "zlib1g-dev"].
+	ExtraBuildDeps []string
+
+	// ExtraRuntimeDeps is a list of extra runtime package dependencies to
+	// include in spec.dependencies.runtime.
+	ExtraRuntimeDeps []string
+
+	// VersionVarPath is the fully-qualified Go ldflags version variable path,
+	// e.g. "main.version" or "github.com/foo/bar/cmd.Version".
+	// When set, the baseline emits -ldflags "-X <path>=${VERSION}".
+	VersionVarPath string
+
+	// CGOEnabled explicitly overrides the CGO_ENABLED build environment variable.
+	// nil means auto (defaults to off for most Go builds for reproducibility).
+	CGOEnabled *bool
+
+	// UserHints is free-text guidance forwarded to the AI refinement stage.
+	// Ignored by the deterministic baseline generator.
+	UserHints string
+
 	// Legacy AI fields kept temporarily as no-ops so callers do not break
 	// while we refactor the rest of the package file-by-file.
 	BaselineOnly bool
@@ -86,6 +118,13 @@ func GenerateBaseline(ctx context.Context, opts Options) (*Result, error) {
 	facts, warnings, err := DetectRepo(repoDir, opts.ForcedType)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(opts.RepoURL) != "" && strings.TrimSpace(facts.GitRemoteURL) == "" {
+		facts.GitRemoteURL = strings.TrimSpace(opts.RepoURL)
+	}
+	if opts.PreferGitSource && strings.EqualFold(strings.TrimSpace(opts.SourceMode), "context") &&
+		strings.TrimSpace(facts.GitRemoteURL) != "" && strings.TrimSpace(facts.GitCommit) != "" {
+		opts.SourceMode = "git"
 	}
 
 	analysis, analysisWarnings := AnalyzeRepo(facts)
@@ -175,30 +214,4 @@ func normalizeBaselineOptions(opts Options) Options {
 	}
 
 	return opts
-}
-
-func buildBaselineBundle(
-	opts Options,
-	facts *RepoFacts,
-	analysis *Analysis,
-	plan *SpecPlan,
-	unresolved []UnresolvedItem,
-	spec *dalec.Spec,
-	warnings []string,
-) *BaselineBundle {
-	detectedType := ""
-	if facts != nil {
-		detectedType = facts.PrimaryType
-	}
-	return &BaselineBundle{
-		SchemaVersion: 1,
-		RepoDir:       opts.RepoDir,
-		DetectedType:  detectedType,
-		Warnings:      append([]string(nil), warnings...),
-		Analysis:      analysis,
-		Plan:          plan,
-		Unresolved:    append([]UnresolvedItem(nil), unresolved...),
-		Spec:          spec,
-	}
-
 }
