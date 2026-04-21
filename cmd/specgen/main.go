@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -275,5 +276,5 @@ func failOnHighSeverityUnresolved(items []specgen.UnresolvedItem) error {
 	if len(high) == 0 {
 		return nil
 	}
-	return fmt.Errorf(strings.Join(high, "; "))
+	return errors.New(strings.Join(high, "; "))
 }

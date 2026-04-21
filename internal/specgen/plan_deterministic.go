@@ -117,6 +117,13 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 			Reason:     planDecisionReason(plan.UserIntent, "package_name", "deterministic baseline selected the best package name candidate"),
 			Evidence:   bestAlternativeEvidenceForKind(plan.Alternatives, "package_names"),
 		},
+		DecisionRecord{
+			Field:      "entrypoint",
+			Chosen:     plan.Entrypoint,
+			Confidence: planDecisionConfidence(plan.UserIntent, "entrypoint", confidenceFromAlternatives(plan.Alternatives, "entrypoints")),
+			Reason:     planDecisionReason(plan.UserIntent, "entrypoint", "deterministic baseline selected runtime entrypoint defaults"),
+			Evidence:   bestAlternativeEvidenceForKind(plan.Alternatives, "entrypoints"),
+		},
 	)
 
 	if len(plan.Routes) == 0 {
@@ -159,7 +166,7 @@ func deterministicPlan(opts Options, facts *RepoFacts, analysis *Analysis) *Spec
 
 	plan.Unresolved = dedupeUnresolved(plan.Unresolved)
 	plan.Warnings = dedupeWarnings(plan.Warnings)
-	plan.Decisions = dedupeDecisionRecords(plan.Decisions)
+	plan.Decisions = collapsePlanDecisionRecords(plan.Decisions)
 
 	return plan
 }
@@ -283,6 +290,29 @@ func choosePrimaryBuildTarget(opts Options, f *RepoFacts, mainComponent string) 
 		return ""
 	}
 	return chooseGoBuildTarget(f, sanitizeName(mainComponent))
+}
+
+func collapsePlanDecisionRecords(in []DecisionRecord) []DecisionRecord {
+	last := map[string]int{}
+	for i, d := range in {
+		field := strings.TrimSpace(d.Field)
+		if field == "" {
+			continue
+		}
+		last[field] = i
+	}
+	var out []DecisionRecord
+	for i, d := range in {
+		field := strings.TrimSpace(d.Field)
+		if field == "" {
+			continue
+		}
+		if last[field] != i {
+			continue
+		}
+		out = append(out, d)
+	}
+	return dedupeDecisionRecords(out)
 }
 
 func defaultPlanArgs(opts Options, f *RepoFacts, a *Analysis) map[string]string {
@@ -1228,7 +1258,10 @@ func defaultGenerateTests(mode TestMode, f *RepoFacts, a *Analysis, plan *SpecPl
 }
 
 func deterministicTests(f *RepoFacts, a *Analysis, plan *SpecPlan) []PlannedTest {
-	name := sanitizeName(plan.MainComponent)
+	name := sanitizeName(plan.PrimaryBinaryName)
+	if name == "" || name == "unknown" {
+		name = sanitizeName(plan.MainComponent)
+	}
 	if name == "" || name == "unknown" {
 		name = "smoke"
 	}
@@ -1294,7 +1327,7 @@ func plannedSmokeBinary(plan *SpecPlan) string {
 	}
 	for _, art := range plan.Artifacts {
 		if strings.TrimSpace(art.Kind) == "binary" {
-			return artifactInstalledName(art, sanitizeName(plan.MainComponent))
+			return artifactInstalledName(art, sanitizeName(plan.PrimaryBinaryName))
 		}
 	}
 	return ""
