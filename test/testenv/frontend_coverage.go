@@ -13,11 +13,7 @@ import (
 	"time"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-)
-
-const (
-	frontendCovMetaKey     = "dalec.coverage.frontend.meta.gz"
-	frontendCovCountersKey = "dalec.coverage.frontend.counters.gz"
+	"github.com/project-dalec/dalec/internal/frontendcoverage"
 )
 
 func gunzip(b []byte) (out []byte, retErr error) {
@@ -39,23 +35,25 @@ func gunzip(b []byte) (out []byte, retErr error) {
 //
 //	covmeta.<hash>
 //	covcounters.<hash>.<pid>.<ts>.<rand>
-func writeFrontendCovdata(outDir string, res *gwclient.Result) error {
-	if outDir == "" || res == nil || res.Metadata == nil {
+func writeFrontendCovdata(outDir string, res *gwclient.Result, solveErr error) error {
+	if outDir == "" {
 		return nil
 	}
 
-	metaGz := res.Metadata[frontendCovMetaKey]
-	ctrGz := res.Metadata[frontendCovCountersKey]
-	if metaGz == nil || ctrGz == nil {
+	payload, err := frontendcoverage.PayloadFromSolve(res, solveErr)
+	if err != nil {
+		return err
+	}
+	if payload == nil {
 		// Not every Solve necessarily runs the dalec frontend; only write when present.
 		return nil
 	}
 
-	meta, err := gunzip(metaGz)
+	meta, err := gunzip(payload.MetaGz)
 	if err != nil {
 		return err
 	}
-	counters, err := gunzip(ctrGz)
+	counters, err := gunzip(payload.CountersGz)
 	if err != nil {
 		return err
 	}

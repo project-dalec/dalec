@@ -10,12 +10,7 @@ import (
 	"runtime/coverage"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-)
-
-const (
-	frontendCoverageOptKey = "dalec.coverage"
-	frontendCovMetaKey     = "dalec.coverage.frontend.meta.gz"
-	frontendCovCountersKey = "dalec.coverage.frontend.counters.gz"
+	"github.com/project-dalec/dalec/internal/frontendcoverage"
 )
 
 func isNoMetaErr(err error) bool {
@@ -26,14 +21,9 @@ func isNoMetaErr(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "no meta-data available")
 }
 
-// Enabled per solve via SolveRequest.FrontendOpt["dalec.coverage"]="1"
+// Enabled per solve via SolveRequest.FrontendOpt[frontendcoverage.OptKey]="1"
 func wantFrontendCoverage(c gwclient.Client) bool {
-	v, ok := c.BuildOpts().Opts[frontendCoverageOptKey]
-	if !ok {
-		return false
-	}
-	v = strings.ToLower(strings.TrimSpace(v))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
+	return frontendcoverage.Want(c.BuildOpts().Opts)
 }
 
 func gzipBytes(in []byte) ([]byte, error) {
@@ -49,65 +39,74 @@ func gzipBytes(in []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func attachFrontendCoverage(c gwclient.Client, res *gwclient.Result) error {
-	if res == nil || !wantFrontendCoverage(c) {
-		return nil
-	}
-	if res.Metadata == nil {
-		res.Metadata = map[string][]byte{}
-	}
+var frontendCoverageCollector = collectFrontendCoveragePayload
 
+func collectFrontendCoveragePayload() (*frontendcoverage.Payload, error) {
 	var metaBuf, ctrBuf bytes.Buffer
 
 	if err := coverage.WriteMeta(&metaBuf); err != nil {
 		if isNoMetaErr(err) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 	if err := coverage.WriteCounters(&ctrBuf); err != nil {
 		if isNoMetaErr(err) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 
 	metaGz, err := gzipBytes(metaBuf.Bytes())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ctrGz, err := gzipBytes(ctrBuf.Bytes())
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	res.Metadata[frontendCovMetaKey] = metaGz
-	res.Metadata[frontendCovCountersKey] = ctrGz
 
 	// Avoid cross-solve accumulation if the frontend process is reused.
 	// Only works for binaries built with -cover (and typically atomic counters).
 	_ = coverage.ClearCounters()
 
-	return nil
+	return &frontendcoverage.Payload{
+		MetaGz:     metaGz,
+		CountersGz: ctrGz,
+	}, nil
 }
 
 func wrapWithCoverage(next gwclient.BuildFunc) gwclient.BuildFunc {
 	return func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		res, err := next(ctx, c)
-
-		// If coverage is requested, make sure we have a result object to attach
-		// metadata to even on error paths.
-		if wantFrontendCoverage(c) && res == nil {
-			res = gwclient.NewResult()
+		if !wantFrontendCoverage(c) {
+			return res, err
 		}
 
-		if covErr := attachFrontendCoverage(c, res); covErr != nil {
+		payload, covErr := frontendCoverageCollector()
+		if covErr != nil {
 			if err != nil {
 				return res, errors.Join(err, covErr)
 			}
 			return res, covErr
 		}
+		if payload == nil {
+			return res, err
+		}
 
-		return res, err
+		if err != nil {
+			errWithCoverage, attachErr := payload.AttachToError(err)
+			if attachErr != nil {
+				return res, errors.Join(err, attachErr)
+			}
+			return res, errWithCoverage
+		}
+
+		if res == nil {
+			res = gwclient.NewResult()
+		}
+		payload.AttachToResult(res)
+
+		return res, nil
 	}
 }
