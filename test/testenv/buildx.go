@@ -25,6 +25,7 @@ import (
 	"github.com/moby/buildkit/solver/pb"
 	spb "github.com/moby/buildkit/sourcepolicy/pb"
 	pkgerrors "github.com/pkg/errors"
+	"github.com/project-dalec/dalec/internal/frontendcoverage"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -468,12 +469,12 @@ func (c *clientForceDalecWithInput) Solve(ctx context.Context, req gwclient.Solv
 			req.FrontendOpt = map[string]string{}
 		}
 		// Frontend-only toggle (NOT a dalec build arg)
-		req.FrontendOpt["dalec.coverage"] = "1"
+		req.FrontendOpt[frontendcoverage.OptKey] = "1"
 	}
 	res, err := c.Client.Solve(ctx, req)
 
 	if covRoot != "" {
-		if covErr := writeFrontendCovdata(filepath.Clean(covRoot), res); covErr != nil {
+		if covErr := writeFrontendCovdata(filepath.Clean(covRoot), res, err); covErr != nil {
 			if err != nil {
 				return res, errors.Join(err, covErr)
 			}
