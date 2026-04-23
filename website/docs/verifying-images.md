@@ -41,7 +41,7 @@ cosign verify ghcr.io/project-dalec/dalec/frontend:$VERSION \
   --certificate-identity https://github.com/project-dalec/dalec/.github/workflows/frontend-image.yml@refs/tags/$VERSION
 
 # 3. If verification succeeds, you can safely use Dalec
-docker build -f my-spec.yml --target mariner2/rpm .
+docker build -f my-spec.yml --target azlinux3/rpm .
 ```
 
 If verification fails, **do not use that image** - it may be compromised or unofficial.
@@ -236,7 +236,7 @@ jobs:
       - name: Build Package with Dalec
         run: |
           # Now safely use Dalec to build your package
-          docker build -f my-package.yml --target mariner2/rpm -o ./output .
+          docker build -f my-package.yml --target azlinux3/rpm -o ./output .
 ```
 
 ### GitLab CI Example
@@ -259,7 +259,7 @@ build-package:
   stage: build
   needs: [verify-dalec]
   script:
-    - docker build -f my-package.yml --target mariner2/rpm -o ./output .
+    - docker build -f my-package.yml --target azlinux3/rpm -o ./output .
 ```
 
 ### Best Practices

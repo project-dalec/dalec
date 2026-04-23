@@ -37,7 +37,7 @@ flowchart TB
 
 Detailed sequence:
 1. **BuildKit invokes the frontend** with a build context containing a Dalec spec (the spec is the effective `Dockerfile` for the custom frontend).
-2. **`BuildMux` resolves the target**: exact match, default handler, or prefix routing (e.g. `mariner2/container`). The matched handler sees the shortened target and a `dalec.target` build option that identifies the active spec target stanza.
+2. **`BuildMux` resolves the target**: exact match, default handler, or prefix routing (e.g. `azlinux3/container`). The matched handler sees the shortened target and a `dalec.target` build option that identifies the active spec target stanza.
 3. **Specs load once per build** through `LoadSpec`, which reads the spec from the Docker build context, merges build-arg substitutions (including derived platform arguments), and returns a `*dalec.Spec`.
 4. **`BuildWithPlatform` fans out per platform** requested by the client, invoking a target handler for each architecture. Handler closures return an image reference and optional `dalec.DockerImageSpec` metadata.
 5. **Handlers construct LLB graphs** using helpers from the `dalec` package to fetch sources, apply patches, run build steps, and generate artifacts (packages, root filesystems, signatures).

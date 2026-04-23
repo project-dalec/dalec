@@ -26,7 +26,6 @@ func init() {
 	targets.RegisterBuildTarget(rockylinux.V8TargetKey, rockylinux.ConfigV8.Handle)
 	targets.RegisterBuildTarget(rockylinux.V9TargetKey, rockylinux.ConfigV9.Handle)
 
-	targets.RegisterBuildTarget(azlinux.Mariner2TargetKey, azlinux.Mariner2Config.Handle)
 	targets.RegisterBuildTarget(azlinux.AzLinux3TargetKey, azlinux.Azlinux3Config.Handle)
 
 	targets.RegisterBuildTarget(windows.DefaultTargetKey, windows.Handle)

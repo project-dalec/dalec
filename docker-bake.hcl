@@ -66,7 +66,7 @@ target "maps-dep" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -81,7 +81,7 @@ target "maps-buildstep" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -96,7 +96,7 @@ target "maps-test" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -111,7 +111,7 @@ target "maps-source" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "mariner2/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -134,12 +134,12 @@ target "runc-azlinux" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        distro = ["mariner2", "azlinux3"]
+        distro = ["azlinux3"]
         tgt = ["rpm", "container", "rpm/spec"]
     }
-    target = "mariner2/${tgt}"
+    target = "${distro}/${tgt}"
     // only tag the container target
-    tags = tgt == "container" ? ["runc:mariner2"] : []
+    tags = tgt == "container" ? ["runc:${distro}"] : []
     // only output non-container targets to the fs
     output = tgt != "container" ? ["_output"] : []
 }
@@ -170,7 +170,7 @@ target "runc-jammy" {
 target "runc-test" {
     name = "runc-test-${distro}"
     matrix = {
-        distro =["mariner2", "azlinux3", "jammy"]
+        distro =["azlinux3", "jammy"]
     }
     contexts = {
         "dalec-runc-img" = "target:runc-${distro}-container"
@@ -187,7 +187,7 @@ variable "BUILD_SPEC" {
 target "build" {
     name = "build-${distro}-${tgt}"
     matrix = {
-        distro = ["mariner2"]
+        distro = ["azlinux3"]
         tgt = ["rpm", "container"]
     }
     dockerfile = BUILD_SPEC

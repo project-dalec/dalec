@@ -47,7 +47,7 @@ args:
 
 These arguments are set based on the default docker platform for the machine, *unless* the platform is overridden explicitly in the docker build with `--platform`. For example, upon invoking `docker build` on a Linux amd64 machine, we would have `TARGETOS=linux`, `TARGETARCH=amd64`, `TARGETPLATFORM=linux/amd64`.
 
-`DALEC_TARGET` is set to the target name, such as `mariner2`, `azlinux3`, or `windowscross`.
+`DALEC_TARGET` is set to the target name, such as `azlinux3` or `windowscross`.
 
 :::note
 No default value should be included for these build args. These args are opt-in. If you haven't listed them in the args section as shown above, Dalec will **not** substitute values for them.
@@ -135,17 +135,6 @@ Targets section is used to define configuration per target. Each target can have
 
 ```yaml
 targets:
-  mariner2:
-    image:
-      base: mcr.microsoft.com/cbl-mariner/distroless/minimal:2.0
-      post:
-        symlinks:
-          /usr/bin/my-binary:
-            paths:
-              - /my-binary
-    package_config:
-      signer:
-        image: example.com/signer:latest
   azlinux3:
     # same fields as above
   windowscross:
@@ -165,7 +154,7 @@ Example:
 
 ```yaml
 image:
-  base: mcr.microsoft.com/cbl-mariner/distroless/minimal:2.0
+  base: mcr.microsoft.com/azurelinux/distroless/minimal:3.0
   post:
     symlinks:
       /usr/bin/my-binary:

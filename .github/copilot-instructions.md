@@ -27,10 +27,10 @@ Always reference these instructions first and fallback to search or bash command
 - The frontend requires Docker BuildKit with buildx support
 
 ### Integration Testing
-- Run specific distro tests: `go test -timeout=59m -v ./test -run=TestMariner2` -- takes 30+ minutes. NEVER CANCEL. Set timeout to 75+ minutes.
+- Run specific distro tests: `go test -timeout=59m -v ./test -run=TestAzlinux3` -- takes 30+ minutes. NEVER CANCEL. Set timeout to 75+ minutes.
 - Run all integration tests: `go test -timeout=59m -v ./test` -- takes 45+ minutes. NEVER CANCEL. Set timeout to 75+ minutes.
 - Tests require Docker and BuildKit to be working properly
-- Tests cover multiple Linux distributions: Mariner2, Azlinux3, Jammy, Noble, Bullseye, Bookworm, etc.
+- Tests cover multiple Linux distributions: Azlinux3, Jammy, Noble, Bullseye, Bookworm, etc.
 
 ## Validation
 

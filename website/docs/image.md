@@ -42,7 +42,7 @@ Example:
 
 ```yaml
 image:
-  base: mcr.microsoft.com/cbl-mariner/distroless/minimal:2.0
+  base: docker.io/library/ubuntu:jammy
 ```
 
 

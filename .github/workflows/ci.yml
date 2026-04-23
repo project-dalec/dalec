@@ -93,7 +93,6 @@ jobs:
       fail-fast: false
       matrix:
         suite:
-          - Mariner2
           - Azlinux3
           - Bookworm
           - Bullseye
@@ -110,7 +109,7 @@ jobs:
           - other
         include:
           - suite: other
-            skip: Mariner2|Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
+            skip: Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
 
     # TODO: support diff/merge
     # Right now this is handled by the e2e suite, but we can migrate that here.
@@ -419,8 +418,8 @@ jobs:
       - name: Build go-md2man example in docs
         run: |
           version=$(cat docs/examples/go-md2man.yml | yq .version)
-          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=mariner2/rpm --output=_output .
-          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=mariner2 .
+          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=azlinux3/rpm --output=_output .
+          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=azlinux3 .
       - name: dump logs
         if: failure()
         id: dump-logs

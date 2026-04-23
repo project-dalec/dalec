@@ -6,7 +6,7 @@ The source abstraction enables fetching build sources over various protocols.
 
 Some sources are considered as inherently file-based sources, like HTTP URLs or local directories.
 Other sources are considered as inherently directory-based sources, like git repositories.
-Depending on the source type, the behavior of certain things may be different, depending on the target implementation (e.g. mariner2, jammy, windows, etc).
+Depending on the source type, the behavior of certain things may be different, depending on the target implementation (e.g. azlinux3, jammy, windows, etc).
 Sources are injected into the root path of the build environment using the name of the source.
 
 Ideally the content of a source is platform agnostic (e.g. no platform specific binaries).
