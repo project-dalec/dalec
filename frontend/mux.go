@@ -58,7 +58,7 @@ const (
 //
 // When BuildMux calls a handler, it modifies the client to chomp off the
 // matched route prefix.  So a BuildMux with receiving a build target of
-// mariner2/container will match on the registered handler for mariner2 then
+// azlinux3/container will match on the registered handler for azlinux3 then
 // call the handler with the build target changed to just container.
 //
 // Finally, BuildMux sets an extra build option on the client

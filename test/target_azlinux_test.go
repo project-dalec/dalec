@@ -37,52 +37,6 @@ metadata_expire=0
 	}
 }
 
-func TestMariner2(t *testing.T) {
-	t.Parallel()
-
-	ctx := startTestSpan(baseCtx, t)
-	cfg := testLinuxConfig{
-		Target: targetConfig{
-			Key:       azlinux.Mariner2TargetKey,
-			Package:   "mariner2/rpm",
-			Container: "mariner2/container",
-			DepsOnly:  "mariner2/container/depsonly",
-			Worker:    "mariner2/worker",
-			FormatDepEqual: func(v, _ string) string {
-				return v
-			},
-			ListExpectedSignFiles: azlinuxListSignFiles("cm2"),
-		},
-		LicenseDir: "/usr/share/licenses",
-		SystemdDir: struct {
-			Units   string
-			Targets string
-		}{
-			Units:   "/usr/lib/systemd",
-			Targets: "/etc/systemd/system",
-		},
-		Worker: workerConfig{
-			ContextName:    azlinux.Mariner2WorkerContextName,
-			CreateRepo:     createYumRepo(azlinux.Mariner2Config),
-			SignRepo:       signRepoDnf,
-			TestRepoConfig: azlinuxTestRepoConfig,
-		},
-		Release: OSRelease{
-			ID:        "mariner",
-			VersionID: "2.0",
-		},
-		SupportsGomodVersionUpdate: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("cm2"),
-	}
-
-	testLinuxDistro(ctx, t, cfg)
-	testAzlinuxExtra(ctx, t, cfg, azlinux.Mariner2Config.ImageRef)
-}
-
 func TestAzlinux3(t *testing.T) {
 	t.Parallel()
 

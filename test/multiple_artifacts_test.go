@@ -89,9 +89,9 @@ func testTargetArtifactsTakePrecedence(ctx context.Context, t *testing.T, target
 	vals := strings.Split(targetCfg.Package, "/")
 	primaryTarget := vals[0]
 	// prevent primaryTarget from being the same as secondaryTarget or tertiaryTarget
-	secondaryTarget := "mariner2"
+	secondaryTarget := "azlinux3"
 	if primaryTarget == secondaryTarget {
-		secondaryTarget = "azlinux3"
+		secondaryTarget = "almalinux9"
 	}
 	tertiaryTarget := "bookworm"
 	if primaryTarget == "bookworm" {

@@ -187,7 +187,7 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 // getPrebuiltPackage retrieves a package based on the target environment.
 // Target-specific packages (e.g., "{targetKey}-pkg") are prioritized over generic packages ("pkg").
 // This ensures compatibility with the build context and optimizes functionality for specific environments.
-// Examples of target keys include "mariner2", "azlinux3", "windowscross", and "bookworm".
+// Examples of target keys include "azlinux3", "windowscross", and "bookworm".
 func getPrebuiltPackage(ctx context.Context, targetKey string, client gwclient.Client, opts []llb.ConstraintsOpt, sOpt dalec.SourceOpts) (llb.State, bool) {
 	var pkgSt llb.State
 

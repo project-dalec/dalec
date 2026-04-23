@@ -5498,7 +5498,6 @@ echo "This is a third test binary"
 		},
 		Targets: map[string]dalec.Target{
 			"azlinux3":    rpmTarget,
-			"mariner2":    rpmTarget,
 			"almalinux8":  rpmTarget,
 			"almalinux9":  rpmTarget,
 			"rockylinux8": rpmTarget,

@@ -67,9 +67,6 @@
 - source: "mcr.microsoft.com/azurelinux/distroless/base:3.0"
   dest: mirror/mcr/azurelinux/distroless/base:3.0
 
-- source: "mcr.microsoft.com/cbl-mariner/base/core:2.0"
-  dest: mirror/mcr/cbl-mariner/base/core:2.0
-
 - source: "mcr.microsoft.com/oss/go/microsoft/golang:1.24"
   dest: mirror/mcr/oss/go/microsoft/golang:1.24
 

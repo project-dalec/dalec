@@ -713,7 +713,7 @@ func getZipperState(ctx context.Context, t *testing.T, gwc gwclient.Client) llb.
 		},
 	})
 
-	sr := newSolveRequest(withSpec(ctx, t, zipperSpec), withBuildTarget("mariner2/container"))
+	sr := newSolveRequest(withSpec(ctx, t, zipperSpec), withBuildTarget("azlinux3/container"))
 	zipper := reqToState(ctx, gwc, sr, t)
 	return zipper
 }

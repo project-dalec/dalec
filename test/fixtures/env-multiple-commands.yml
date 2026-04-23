@@ -9,10 +9,6 @@ vendor: Microsoft
 packager: Microsoft <support@microsoft.com>
 license: Apache 2.0
 
-targets: # Distro specific build requirements
-  mariner2:
-    dependencies:
-
 build:
   steps:
     - command: |

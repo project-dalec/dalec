@@ -7,6 +7,7 @@ args:
   RUNC_COMMIT:
   REVISION: 1
   VERSION:
+  DALEC_TARGET:
 
 name: moby-runc
 description: A CLI tool for spawning and running containers according to the OCI specification.
@@ -52,8 +53,6 @@ x-azl: &azl
 targets: # Distro specific build requirements
   azlinux3:
     <<: *azl
-  mariner2:
-    <<: *azl
   jammy:
     image:
     dependencies:
@@ -91,10 +90,14 @@ build:
     CGO_ENABLED: 1
     GOGC: off
     GOFLAGS: -trimpath
+    DALEC_TARGET: "${DALEC_TARGET}"
   steps:
     - command: |
-        set -e
+        set -eu
         cd src
+        if [ "${DALEC_TARGET}" = "azlinux3" ]; then
+          export GOEXPERIMENT=nosystemcrypto
+        fi
         make man runc BUILDTAGS=seccomp
 artifacts:
   binaries:

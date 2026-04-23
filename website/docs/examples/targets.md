@@ -41,11 +41,6 @@ jammy/deb (default)              Builds a deb package.
 jammy/dsc                        Builds a Debian source package.
 jammy/testing/container          Builds a container image for testing purposes only.
 jammy/worker                     Builds the worker image.
-mariner2/container (default)     Builds a container image for CBL-Mariner 2
-mariner2/container/depsonly      Builds a container image with only the runtime dependencies installed.
-mariner2/rpm                     Builds an rpm and src.rpm.
-mariner2/rpm/debug               Debug options for rpm builds.
-mariner2/worker                  Builds the base worker image responsible for building the rpm
 noble/deb (default)              Builds a deb package.
 noble/dsc                        Builds a Debian source package.
 noble/testing/container          Builds a container image for testing purposes only.

@@ -17,7 +17,6 @@ var (
 	}
 
 	targets = map[string]gwclient.BuildFunc{
-		Mariner2TargetKey: Mariner2Config.Handle,
 		AzLinux3TargetKey: Azlinux3Config.Handle,
 	}
 
