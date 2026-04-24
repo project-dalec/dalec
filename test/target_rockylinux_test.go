@@ -8,7 +8,7 @@ import (
 	"github.com/project-dalec/dalec/targets/linux/rpm/rockylinux"
 )
 
-func TestRockylinux9(t *testing.T) {
+func TestDalecTargetRockylinux9(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
@@ -58,7 +58,7 @@ func TestRockylinux9(t *testing.T) {
 	testRockylinuxExtra(ctx, t, cfg, rockylinux.ConfigV9.ImageRef)
 }
 
-func TestRockylinux8(t *testing.T) {
+func TestDalecTargetRockylinux8(t *testing.T) {
 	t.Parallel()
 
 	ctx := startTestSpan(baseCtx, t)
