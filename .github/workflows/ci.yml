@@ -88,7 +88,7 @@ jobs:
           fi
 
   integration:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.suite == 'other' && 'ubuntu-22.04' || 'ubuntu-latest-4-cores' }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +137,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Docker info
+        run: |
+          docker info
+          docker version
       - name: Setup otel-collector
         run: |
           set -e
@@ -163,16 +167,27 @@ jobs:
           sudo cp "${tmp}" /etc/systemd/system/docker.service.d/otlp.conf
           sudo cp "${tmp}" /etc/systemd/system/containerd.service.d/otlp.conf
 
+          sudo systemctl stop docker.service docker.socket
+          sudo systemctl stop containerd
+
           if ! sudo systemctl daemon-reload; then
             echo "::warning::Failed to reload systemd daemon for tracing configuration"
           fi
-          if ! sudo systemctl restart containerd; then
-            echo "::warning::Failed to restart containerd with tracing configuration"
-          fi
-          if ! sudo systemctl restart docker; then
-            echo "::warning::Failed to restart docker with tracing configuration"
-          fi
 
+          if ! sudo systemctl start containerd; then
+            echo "::error::Failed to restart containerd with tracing configuration"
+            journalctl -u containerd
+            exit 1
+          fi
+          if ! sudo systemctl start docker; then
+            sudo systemctl reset-failed docker
+            if ! sudo systemctl start docker; then
+              echo "::error::Failed to restart docker with tracing configuration"
+              journalctl -u docker
+              ps aux | grep dockerd
+              exit 1
+            fi
+          fi
       - name: download deps
         run: go mod download
       - name: Setup QEMU
@@ -284,6 +299,7 @@ jobs:
         env:
           TEST_SUITE: ${{ matrix.suite }}
       - name: Run integration tests
+        id: run-tests
         run: |
           set -ex
           if [ -n "${TEST_SUITE}" ] && [ ! "${TEST_SUITE}" = "other" ]; then
@@ -327,15 +343,29 @@ jobs:
           set -e
 
           dir="$(mktemp -d)"
-          f="${dir}/dockerd.log"
-          echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
-          sudo journalctl -u docker > "${f}"
+          echo "DOCKERD_LOG_PATH=${dir}" >> $GITHUB_OUTPUT
+
+          if [ "${{ steps.run-tests.outputs.test_timeout }}" = "true" ]; then
+            echo "::group::Collecting pprof data from dockerd (test timeout detected)"
+            curl --unix-socket /var/run/docker.sock \
+              -o "${dir}/goroutine-stacks.txt" \
+              "http://localhost/debug/pprof/goroutine?debug=2" || true
+
+            curl --unix-socket /var/run/docker.sock \
+              -o "${dir}/heap-profile.bin" \
+              "http://localhost/debug/pprof/heap" || true
+
+            cp "$(which dockerd)" "${dir}/dockerd" || true
+            echo "::endgroup::"
+          fi
+
+          sudo journalctl -u docker > "${dir}/dockerd.log"
       - name: Upload buildkit logs
         if: failure()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: e2e-dockerd-logs-${{ matrix.suite }}
-          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}/*
           retention-days: 1
 
   unit:
