@@ -6,7 +6,7 @@
 <title data-rh="true">Sources | Dalec</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://project-dalec.github.io/dalec/img/logo.png"><meta data-rh="true" name="twitter:image" content="https://project-dalec.github.io/dalec/img/logo.png"><meta data-rh="true" property="og:url" content="https://project-dalec.github.io/dalec/sources"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Sources | Dalec"><meta data-rh="true" name="description" content="A &quot;source&quot; in Dalec is an abstraction for fetching dependencies of a build."><meta data-rh="true" property="og:description" content="A &quot;source&quot; in Dalec is an abstraction for fetching dependencies of a build."><link data-rh="true" rel="icon" href="/dalec/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://project-dalec.github.io/dalec/sources"><link data-rh="true" rel="alternate" href="https://project-dalec.github.io/dalec/sources" hreflang="en"><link data-rh="true" rel="alternate" href="https://project-dalec.github.io/dalec/sources" hreflang="x-default"><link data-rh="true" rel="preconnect" href="https://2KEC24GMEN-dsn.algolia.net" crossorigin="anonymous"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Sources","item":"https://project-dalec.github.io/dalec/sources"}]}</script><link rel="search" type="application/opensearchdescription+xml" title="Dalec" href="/dalec/opensearch.xml">
 
 <meta name="algolia-site-verification" content="1C1CBEF56CCCC1B2"><link rel="stylesheet" href="/dalec/assets/css/styles.d155c7a5.css">
-<script src="/dalec/assets/js/runtime~main.194f740b.js" defer="defer"></script>
+<script src="/dalec/assets/js/runtime~main.ad06038f.js" defer="defer"></script>
 <script src="/dalec/assets/js/main.aaa49c7f.js" defer="defer"></script>
 </head>
 <body>
@@ -19,7 +19,7 @@ Usually this is source code but technically it could be anything.
 The source abstraction enables fetching build sources over various protocols.</p>
 <p>Some sources are considered as inherently file-based sources, like HTTP URLs or local directories.
 Other sources are considered as inherently directory-based sources, like git repositories.
-Depending on the source type, the behavior of certain things may be different, depending on the target implementation (e.g. mariner2, jammy, windows, etc).
+Depending on the source type, the behavior of certain things may be different, depending on the target implementation (e.g. azlinux3, jammy, windows, etc).
 Sources are injected into the root path of the build environment using the name of the source.</p>
 <p>Ideally the content of a source is platform agnostic (e.g. no platform specific binaries).
 These sources are used to create source packages for the target platform, such as an srpm or a debian dsc.
