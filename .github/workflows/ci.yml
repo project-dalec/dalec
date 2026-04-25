@@ -264,6 +264,13 @@ jobs:
           echo "================ CLEANUP COMPLETE ================"
       - name: Use azure ubuntu archive
         uses: ./.github/actions/dns-spoof-ubuntu-archive
+      - name: Start OOM monitor
+        run: |
+          sudo dmesg --clear || true
+          setsid sh -c 'sudo dmesg --follow 2>/dev/null | \
+            grep --line-buffered -iE "oom|out of memory|killed process|invoked oom" \
+            > /tmp/oom-monitor.log 2>&1' &
+          echo "OOM_MONITOR_PID=$!" >> "$GITHUB_ENV"
       - name: Pre-build base images
         run: |
           set -eu
@@ -283,6 +290,7 @@ jobs:
         env:
           TEST_SUITE: ${{ matrix.suite }}
       - name: Run integration tests
+        id: run-tests
         run: |
           set -ex
           if [ -n "${TEST_SUITE}" ] && [ ! "${TEST_SUITE}" = "other" ]; then
@@ -295,6 +303,22 @@ jobs:
         env:
           TEST_SUITE: ${{ matrix.suite }}
           TEST_SKIP: ${{ matrix.skip }}
+      - name: Check for OOM kills
+        if: always()
+        run: |
+          kill -- -"${OOM_MONITOR_PID}" 2>/dev/null || true
+          mkdir -p /tmp/reports
+
+          if [ -s /tmp/oom-monitor.log ]; then
+            echo "::warning::OOM kills detected during test run"
+            cat /tmp/oom-monitor.log
+            cp /tmp/oom-monitor.log /tmp/reports/oom-monitor.log
+          else
+            echo "No OOM kills detected"
+          fi
+
+          # Capture recent dmesg for context on any failures
+          sudo dmesg -T 2>/dev/null | tail -200 > /tmp/reports/dmesg-tail.log || true
       - name: Get traces
         if: always()
         run: |
@@ -326,15 +350,29 @@ jobs:
           set -e
 
           dir="$(mktemp -d)"
-          f="${dir}/dockerd.log"
-          echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
-          sudo journalctl -u docker > "${f}"
+          echo "DOCKERD_LOG_PATH=${dir}" >> $GITHUB_OUTPUT
+
+          if [ "${{ steps.run-tests.outputs.test_timeout }}" = "true" ]; then
+            echo "::group::Collecting pprof data from dockerd (test timeout detected)"
+            curl --unix-socket /var/run/docker.sock \
+              -o "${dir}/goroutine-stacks.txt" \
+              "http://localhost/debug/pprof/goroutine?debug=2" || true
+
+            curl --unix-socket /var/run/docker.sock \
+              -o "${dir}/heap-profile.bin" \
+              "http://localhost/debug/pprof/heap" || true
+
+            cp "$(which dockerd)" "${dir}/dockerd" || true
+            echo "::endgroup::"
+          fi
+
+          sudo journalctl -u docker > "${dir}/dockerd.log"
       - name: Upload buildkit logs
         if: failure()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: e2e-dockerd-logs-${{ matrix.suite }}
-          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}/*
           retention-days: 1
 
   unit:
