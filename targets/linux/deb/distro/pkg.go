@@ -37,12 +37,6 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dale
 
 	worker = worker.With(d.InstallBuildDeps(ctx, sOpt, spec, targetKey, append(opts, frontend.IgnoreCache(client))...))
 
-	// Preprocess the spec to generate patches for gomod edits and other generators
-	// This must happen after build deps are installed so Go is available
-	if err := spec.Preprocess(sOpt, worker, opts...); err != nil {
-		return dalec.ErrorState(worker, err)
-	}
-
 	var cfg deb.SourcePkgConfig
 	extraPaths := prepareGo(ctx, client, &cfg, worker, spec, targetKey, opts...)
 
@@ -178,11 +172,12 @@ func addPaths(paths []string, opts ...llb.ConstraintsOpt) llb.StateOption {
 	}
 }
 
-func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, final llb.State, targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption {
+func (cfg *Config) RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
-		deps := cfg.InstallTestDeps(sOpt, targetKey, spec, opts...)
-		tests := frontend.RunTests(ctx, client, spec, final, targetKey, sOpt.TargetPlatform)
-		return in.With(deps).With(tests)
+		opts = append(opts, frontend.IgnoreCache(client))
+		withTestDeps := cfg.InstallTestDeps(sOpt, targetKey, spec, opts...)
+		runTests := frontend.RunTests(ctx, client, sOpt, spec, withTestDeps, targetKey)
+		return in.With(runTests)
 	}
 }
 
