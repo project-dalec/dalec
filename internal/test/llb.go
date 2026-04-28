@@ -28,7 +28,7 @@ func LLBOpsFromState(ctx context.Context, state llb.State) ([]LLBOp, error) {
 			return nil, fmt.Errorf("parsing op: %w", err)
 		}
 		dgst := digest.FromBytes(dt)
-		ent := LLBOp{Op: &op, OpMetadata: def.Metadata[dgst].ToPB()}
+		ent := LLBOp{Digest: dgst, Op: &op, OpMetadata: def.Metadata[dgst].ToPB()}
 
 		ops = append(ops, ent)
 	}
@@ -56,6 +56,7 @@ func LLBOpsToJSON(ops []LLBOp) (string, error) {
 
 // LLBOp represents a single LLB operation along with its metadata.
 type LLBOp struct {
+	Digest     digest.Digest
 	Op         *pb.Op
 	OpMetadata *pb.OpMetadata
 }

@@ -9,7 +9,7 @@ func RegisterBuildTarget(name string, build gwclient.BuildFunc) {
 	plugins.Register(&plugins.Registration{
 		ID:   name,
 		Type: plugins.TypeBuildTarget,
-		InitFn: func(*plugins.InitContext) (interface{}, error) {
+		InitFn: func(*plugins.InitContext) (any, error) {
 			return plugins.BuildHandlerFunc(build), nil
 		},
 	})

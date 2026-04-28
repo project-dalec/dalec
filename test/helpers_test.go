@@ -21,6 +21,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
@@ -294,14 +295,15 @@ func solveT(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient
 	}
 
 	// Running this validation as part of this function allows us to verify most test scenarios.
-	verifyConstraintsPropagation(ctx, t, res)
+	verifyConstraintsPropagation(ctx, t, req, res)
 
 	return res
 }
 
-func verifyConstraintsPropagation(ctx context.Context, t *testing.T, res *gwclient.Result) {
+func verifyConstraintsPropagation(ctx context.Context, t *testing.T, req gwclient.SolveRequest, res *gwclient.Result) {
 	t.Helper()
 
+	inputOps := frontendInputOps(t, req)
 	allOps := []test.LLBOp{}
 
 	if err := res.EachRef(func(ref gwclient.Reference) error {
@@ -324,6 +326,13 @@ func verifyConstraintsPropagation(ctx context.Context, t *testing.T, res *gwclie
 	badOps := []test.LLBOp{}
 
 	for _, op := range allOps {
+		// Frontend inputs are supplied as already-marshaled definitions. BuildKit
+		// preserves those ops as-is, so Dalec cannot apply constraints to their
+		// internal ops when consuming them as named contexts.
+		if _, ok := inputOps[op.Digest]; ok {
+			continue
+		}
+
 		// - Checking metadata for progress group presence is a good gauge for constraints propagation.
 		// - As far as observed, merge OP does not inherit constraints.
 		// - "llb.customname" property comes from current frontend context Dockerfile, where constraints cannot be applied
@@ -347,6 +356,19 @@ func verifyConstraintsPropagation(ctx context.Context, t *testing.T, res *gwclie
 	t.Errorf("Found %d operations without progress group metadata:\n%s", len(badOps), opsJSON)
 }
 
+func frontendInputOps(t *testing.T, req gwclient.SolveRequest) map[digest.Digest]struct{} {
+	t.Helper()
+
+	ops := make(map[digest.Digest]struct{})
+	for _, def := range req.FrontendInputs {
+		for _, dt := range def.Def {
+			ops[digest.FromBytes(dt)] = struct{}{}
+		}
+	}
+
+	return ops
+}
+
 func solveTCh(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient.SolveRequest, rc chan<- *gwclient.Result, ec chan<- error) {
 	t.Helper()
 
@@ -358,7 +380,7 @@ func solveTCh(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclie
 		}
 
 		// Running this validation as part of this function allows us to verify most test scenarios.
-		verifyConstraintsPropagation(ctx, t, res)
+		verifyConstraintsPropagation(ctx, t, req, res)
 
 		rc <- res
 	}()

@@ -91,8 +91,7 @@ func main() {
 			return nil, errors.Wrap(err, "error marshalling file manifest")
 		}
 
-		pg := dalec.ProgressGroup("Signing Artifacts")
-
+		pg := dalec.ProgressGroup("phony signer output")
 		output := llb.Scratch().
 			File(llb.Mkfile("/target", 0o600, []byte(target)), pg).
 			File(llb.Mkfile("/config.json", 0o600, configBytes), pg).
@@ -111,7 +110,7 @@ func main() {
 				File(llb.Mkfile("/env/"+key, 0o600, []byte(v)), pg)
 		}
 
-		def, err := output.Marshal(ctx)
+		def, err := output.Marshal(ctx, pg)
 		if err != nil {
 			return nil, err
 		}
