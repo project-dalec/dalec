@@ -203,7 +203,7 @@ func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *
 		Warnf(ctx, client, st, "Spec signing config overwritten by config at path %q in build-context %q", cfgPath, configCtxName)
 	}
 
-	cfg, err := getSigningConfigFromContext(ctx, client, cfgPath, configCtxName, sOpt)
+	cfg, err := getSigningConfigFromContext(ctx, client, cfgPath, configCtxName, sOpt, opts...)
 	if err != nil {
 		return dalec.ErrorState(llb.Scratch(), err)
 	}
