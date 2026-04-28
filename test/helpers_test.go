@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/containerd/platforms"
@@ -226,15 +227,22 @@ func withBuildArg(k, v string) srOpt {
 	}
 }
 
+// Since withSpec is modifying a spec, this is used
+// to prevent potential data races which, while the data being modified is harmless
+// can still cause memory corruption.
+var withSpecMu sync.Mutex
+
 func withSpec(ctx context.Context, t *testing.T, spec *dalec.Spec) srOpt {
 	return func(cfg *newSolveRequestConfig) {
 		if spec != nil && !cfg.noFillSpecFields {
+			withSpecMu.Lock()
 			if spec.Packager == "" {
 				spec.Packager = "test"
 			}
 			if spec.Website == "" {
 				spec.Website = "https://github.com/project-dalec/dalec"
 			}
+			withSpecMu.Unlock()
 		}
 		specToSolveRequest(ctx, t, spec, cfg.req)
 	}
