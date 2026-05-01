@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/util/grpcerrors"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/status"
 )
@@ -95,7 +96,7 @@ func PayloadFromError(err error) (*Payload, error) {
 		return nil, nil
 	}
 
-	st, ok := status.FromError(err)
+	st, ok := grpcerrors.AsGRPCStatus(err)
 	if !ok {
 		return nil, nil
 	}

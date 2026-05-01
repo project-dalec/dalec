@@ -1,9 +1,13 @@
 package test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -34,7 +38,47 @@ func TestFrontendCoverageExportedOnSolveError(t *testing.T) {
 
 		assertNonEmptyGlob(t, filepath.Join(covDir, "covmeta.*"))
 		assertNonEmptyGlob(t, filepath.Join(covDir, "covcounters.*"))
+		assertFrontendCoverageHasCounters(t, covDir)
 	})
+}
+
+func assertFrontendCoverageHasCounters(t *testing.T, covDir string) {
+	t.Helper()
+
+	profile := filepath.Join(t.TempDir(), "frontend.out")
+	cmd := exec.Command("go", "tool", "covdata", "textfmt", "-i", covDir, "-o", profile)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("expected covdata textfmt to succeed, got %v: %s", err, stderr.String())
+	}
+
+	f, err := os.Open(profile)
+	if err != nil {
+		t.Fatalf("expected coverage profile to open, got %v", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 3 || fields[0] == "mode:" {
+			continue
+		}
+
+		count, err := strconv.ParseUint(fields[2], 10, 64)
+		if err != nil {
+			t.Fatalf("expected coverage count to parse from %q, got %v", scanner.Text(), err)
+		}
+		if count > 0 {
+			return
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("expected coverage profile scan to succeed, got %v", err)
+	}
+
+	t.Fatal("expected frontend coverage profile to contain at least one non-zero counter")
 }
 
 func assertNonEmptyGlob(t *testing.T, pattern string) {

@@ -3,8 +3,7 @@ package testenv
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/rand"
-	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -15,6 +14,8 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec/internal/frontendcoverage"
 )
+
+const covMetaFileHashOffset = 4 + 4 + 8 + 8
 
 func gunzip(b []byte) (out []byte, retErr error) {
 	zr, err := gzip.NewReader(bytes.NewReader(b))
@@ -34,7 +35,7 @@ func gunzip(b []byte) (out []byte, retErr error) {
 // Writes files compatible with `go tool covdata`:
 //
 //	covmeta.<hash>
-//	covcounters.<hash>.<pid>.<ts>.<rand>
+//	covcounters.<hash>.<pid>.<ts>
 func writeFrontendCovdata(outDir string, res *gwclient.Result, solveErr error) error {
 	if outDir == "" {
 		return nil
@@ -58,8 +59,10 @@ func writeFrontendCovdata(outDir string, res *gwclient.Result, solveErr error) e
 		return err
 	}
 
-	sum := sha256.Sum256(meta)
-	hash := hex.EncodeToString(sum[:])
+	hash, err := covdataMetaHash(meta)
+	if err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
@@ -87,11 +90,40 @@ func writeFrontendCovdata(outDir string, res *gwclient.Result, solveErr error) e
 		}
 	}
 
-	var rb [4]byte
-	_, _ = rand.Read(rb[:])
-
 	pid := os.Getpid()
 	ts := time.Now().UnixNano()
-	ctrPath := filepath.Join(outDir, fmt.Sprintf("covcounters.%s.%d.%d.%x", hash, pid, ts, rb))
-	return os.WriteFile(ctrPath, counters, 0o644)
+	for {
+		ctrPath := filepath.Join(outDir, fmt.Sprintf("covcounters.%s.%d.%d", hash, pid, ts))
+		f, err := os.OpenFile(ctrPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(err) {
+			ts++
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(counters); err != nil {
+			_ = f.Close()
+			_ = os.Remove(ctrPath)
+			return err
+		}
+		if err := f.Close(); err != nil {
+			_ = os.Remove(ctrPath)
+			return err
+		}
+		return nil
+	}
+}
+
+func covdataMetaHash(meta []byte) (string, error) {
+	if len(meta) < covMetaFileHashOffset+16 {
+		return "", fmt.Errorf("coverage metadata is too short: %d bytes", len(meta))
+	}
+
+	length := binary.LittleEndian.Uint64(meta[8:16])
+	if int(length) != len(meta) {
+		return "", fmt.Errorf("coverage metadata length mismatch: header=%d actual=%d", length, len(meta))
+	}
+
+	return hex.EncodeToString(meta[covMetaFileHashOffset : covMetaFileHashOffset+16]), nil
 }

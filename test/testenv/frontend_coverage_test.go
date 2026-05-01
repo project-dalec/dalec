@@ -3,11 +3,12 @@ package testenv
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -15,7 +16,8 @@ import (
 )
 
 func TestWriteFrontendCovdata(t *testing.T) {
-	rawMeta := []byte("raw-meta")
+	metaHash := [16]byte{0x01, 0x02, 0x03, 0x04, 0x05}
+	rawMeta := covMetaForTest(t, metaHash)
 	rawCounters := []byte("raw-counters")
 	payload := &frontendcoverage.Payload{
 		MetaGz:     gzipBytesForTest(t, rawMeta),
@@ -55,8 +57,7 @@ func TestWriteFrontendCovdata(t *testing.T) {
 				t.Fatalf("expected nil write error, got %v", writeErr)
 			}
 
-			hash := sha256.Sum256(rawMeta)
-			hashHex := hex.EncodeToString(hash[:])
+			hashHex := hex.EncodeToString(metaHash[:])
 
 			metaPath := filepath.Join(outDir, "covmeta."+hashHex)
 			gotMeta, readErr := os.ReadFile(metaPath)
@@ -73,6 +74,9 @@ func TestWriteFrontendCovdata(t *testing.T) {
 			}
 			if len(counterFiles) != 1 {
 				t.Fatalf("expected exactly one counter file, got %d", len(counterFiles))
+			}
+			if gotParts := len(strings.Split(filepath.Base(counterFiles[0]), ".")); gotParts != 4 {
+				t.Fatalf("expected covcounter filename to have 4 dot-separated parts, got %d: %s", gotParts, counterFiles[0])
 			}
 
 			gotCounters, readErr := os.ReadFile(counterFiles[0])
@@ -99,4 +103,13 @@ func gzipBytesForTest(t *testing.T, in []byte) []byte {
 	}
 
 	return buf.Bytes()
+}
+
+func covMetaForTest(t *testing.T, hash [16]byte) []byte {
+	t.Helper()
+
+	meta := make([]byte, covMetaFileHashOffset+len(hash))
+	binary.LittleEndian.PutUint64(meta[8:16], uint64(len(meta)))
+	copy(meta[covMetaFileHashOffset:], hash[:])
+	return meta
 }
