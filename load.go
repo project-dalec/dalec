@@ -271,7 +271,7 @@ func (s *Spec) SubstituteArgs(env map[string]string, opts ...SubstituteOpt) erro
 		for i, ver := range v.Version {
 			updated, err := expandArgs(lex, ver, args, cfg.AllowArg)
 			if err != nil {
-				appendErr(errors.Wrapf(err, "replaces %s version %d", k, i))
+				appendErr(errors.Wrapf(err, "conflicts %s version %d", k, i))
 			}
 			s.Conflicts[k].Version[i] = updated
 		}

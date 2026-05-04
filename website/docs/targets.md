@@ -174,20 +174,19 @@ For more details on how Artifacts are structured and configured, see the [Artifa
 
 ### Target defined package metadata
 
-`conflicts`, `replaces`, and `provides` can be defined at the target level in addition to the [globalspec level](spec.md#additional-metadata).
-This allows you to define package metadata that is specific to a target.
+`conflicts`, `replaces`, and `provides` can be defined at the target level in addition to the [global spec level](spec.md#additional-metadata).
+This allows you to define package metadata that is specific to a target. If a target defines one of these fields, the target value replaces the global value for that field.
 
 ```yaml
 targets:
   azlinux3:
-    package:
-      conflicts:
-        - "foo"
-        - "bar"
-      replaces:
-        - foo"
-      provides:
-        - "qux"
+    conflicts:
+      foo:
+      bar:
+    replaces:
+      foo:
+    provides:
+      qux:
 ```
 
 ## Special considerations
@@ -291,4 +290,3 @@ This is considered a "break glass" way to work around issues when building on De
 Overriding some rules, such as `dh_install`, will also interfere with dalec functionality.
 
 In the future dalec may stop using dpkg-buildpackage and these rules would not be applicable anymore.
-
