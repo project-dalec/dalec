@@ -74,9 +74,6 @@ func (w *rulesWrapper) Envs() fmt.Stringer {
 func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 	b := &strings.Builder{}
 
-	artifacts := w.GetArtifacts(w.target)
-
-	var fixPerms bool
 	checkPerms := func(cfgs map[string]dalec.ArtifactConfig) bool {
 		for _, cfg := range cfgs {
 			if cfg.Permissions.Perm() != 0 {
@@ -95,17 +92,36 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 		return false
 	}
 
-	fixPerms = checkPerms(artifacts.Binaries) ||
-		checkPerms(artifacts.ConfigFiles) ||
-		checkPerms(artifacts.Manpages) ||
-		checkPerms(artifacts.Headers) ||
-		checkPerms(artifacts.Licenses) ||
-		checkPerms(artifacts.Docs) ||
-		checkPerms(artifacts.Libs) ||
-		checkPerms(artifacts.Libexec) ||
-		checkPerms(artifacts.DataDirs) ||
-		checkDirPerms(artifacts.Directories.GetConfig()) ||
-		checkDirPerms(artifacts.Directories.GetState())
+	checkArtifactPerms := func(artifacts *dalec.Artifacts) bool {
+		if artifacts == nil {
+			return false
+		}
+		return checkPerms(artifacts.Binaries) ||
+			checkPerms(artifacts.ConfigFiles) ||
+			checkPerms(artifacts.Manpages) ||
+			checkPerms(artifacts.Headers) ||
+			checkPerms(artifacts.Licenses) ||
+			checkPerms(artifacts.Docs) ||
+			checkPerms(artifacts.Libs) ||
+			checkPerms(artifacts.Libexec) ||
+			checkPerms(artifacts.DataDirs) ||
+			checkDirPerms(artifacts.Directories.GetConfig()) ||
+			checkDirPerms(artifacts.Directories.GetState())
+	}
+
+	artifacts := w.GetArtifacts(w.target)
+	fixPerms := checkArtifactPerms(&artifacts)
+
+	// Also check subpackage artifacts
+	if !fixPerms {
+		packages := w.Spec.GetSubPackages(w.target)
+		for _, pkg := range packages {
+			if checkArtifactPerms(pkg.Artifacts) {
+				fixPerms = true
+				break
+			}
+		}
+	}
 
 	if fixPerms {
 		// Normally this should be `execute_after_dh_fixperms`, however this doesn't
@@ -114,7 +130,7 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 		// our extra script.
 		b.WriteString("override_dh_fixperms:\n")
 		b.WriteString("\tdh_fixperms\n")
-		b.WriteString("\tDESTDIR=debian/$(shell dh_listpackages) debian/dalec/fix_perms.sh\n\n")
+		b.WriteString("\tdebian/dalec/fix_perms.sh\n\n")
 	}
 
 	return b
@@ -140,48 +156,87 @@ func (w *rulesWrapper) OverrideSystemd() (fmt.Stringer, error) {
 	b := &strings.Builder{}
 
 	artifacts := w.GetArtifacts(w.target)
-
 	units := artifacts.Systemd.GetUnits()
 
-	if len(units) == 0 {
+	// Collect subpackage units
+	type pkgUnits struct {
+		pkgName string
+		units   map[string]dalec.SystemdUnitConfig
+	}
+	var subPkgUnits []pkgUnits
+
+	packages := w.Spec.GetSubPackages(w.target)
+	if len(packages) > 0 {
+		keys := dalec.SortMapKeys(packages)
+		for _, key := range keys {
+			pkg := packages[key]
+			if pkg.Artifacts == nil {
+				continue
+			}
+			subUnits := pkg.Artifacts.Systemd.GetUnits()
+			if len(subUnits) > 0 {
+				subPkgUnits = append(subPkgUnits, pkgUnits{
+					pkgName: pkg.ResolvedName(w.Spec.Name, key),
+					units:   subUnits,
+				})
+			}
+		}
+	}
+
+	if len(units) == 0 && len(subPkgUnits) == 0 {
 		return b, nil
 	}
 
 	b.WriteString("override_dh_installsystemd:\n")
 
-	grouped := groupUnitsByBaseName(units)
-	sorted := dalec.SortMapKeys(grouped)
-
 	var includeCustomEnable bool
-	for _, basename := range sorted {
-		grouping := grouped[basename]
 
-		needsCustomEnable := requiresCustomEnable(grouping)
-		if needsCustomEnable {
-			includeCustomEnable = true
+	// Primary package units
+	if len(units) > 0 {
+		grouped := groupUnitsByBaseName(units)
+		sorted := dalec.SortMapKeys(grouped)
+
+		for _, basename := range sorted {
+			grouping := grouped[basename]
+
+			needsCustomEnable := requiresCustomEnable(grouping)
+			if needsCustomEnable {
+				includeCustomEnable = true
+			}
+
+			firstKey := maps.Keys(grouping)[0]
+			enable := grouping[firstKey].Enable
+
+			b.WriteString("\tdh_installsystemd --name=" + basename)
+			if !enable || needsCustomEnable {
+				b.WriteString(" --no-enable")
+			}
+			b.WriteString("\n")
 		}
+	}
 
-		// dh_installsystemd does not want the suffix of the file, so trim it off
-		// here.
-		// Otherwise it will _silently_ fail, *yay*.
-		// We also need to check if there are multiple units with the same base name
-		// with different `Enable` options set.
-		// `dh_installsystemd` cannot deal with this, in those cases we'll write a
-		// custom postinst/postrm script.
-		//
-		// We also only need to do this once per basename, so we don't need to
-		// iterate over every unit.
+	// Subpackage units
+	for _, su := range subPkgUnits {
+		grouped := groupUnitsByBaseName(su.units)
+		sorted := dalec.SortMapKeys(grouped)
 
-		// Get the first key which we'll use to check if the unit is enabled.
-		// Either all units are enabled or not enabled OR we need to do custom enable
-		firstKey := maps.Keys(grouping)[0]
-		enable := grouping[firstKey].Enable
+		for _, basename := range sorted {
+			grouping := grouped[basename]
 
-		b.WriteString("\tdh_installsystemd --name=" + basename)
-		if !enable || needsCustomEnable {
-			b.WriteString(" --no-enable")
+			needsCustomEnable := requiresCustomEnable(grouping)
+			if needsCustomEnable {
+				includeCustomEnable = true
+			}
+
+			firstKey := maps.Keys(grouping)[0]
+			enable := grouping[firstKey].Enable
+
+			b.WriteString("\tdh_installsystemd -p" + su.pkgName + " --name=" + basename)
+			if !enable || needsCustomEnable {
+				b.WriteString(" --no-enable")
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 
 	if includeCustomEnable {
