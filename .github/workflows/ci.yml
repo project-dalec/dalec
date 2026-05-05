@@ -482,9 +482,7 @@ jobs:
           docker buildx bake test
       - name: Build go-md2man example in docs
         run: |
-          version=$(cat docs/examples/go-md2man.yml | yq .version)
-          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=azlinux3/rpm --output=_output .
-          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=azlinux3 .
+          docker buildx bake examples
       - name: dump logs
         if: failure()
         id: dump-logs
@@ -506,7 +504,6 @@ jobs:
           name: e2e-dockerd-logs-diffmerge=${{ matrix.disable_diff_merge }}
           path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
           retention-days: 1
-
   coverage-report:
     runs-on: ubuntu-22.04
     needs:

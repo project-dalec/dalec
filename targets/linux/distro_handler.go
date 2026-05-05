@@ -9,12 +9,12 @@ import (
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
-
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec/internal/testrunner"
 )
 
 type DistroConfig interface {
@@ -49,8 +49,7 @@ type DistroConfig interface {
 
 	// RunTests runts the tests specified in a dalec spec against a built container, which may be the target container.
 	// Some distros may need to pass in a separate worker before mounting the target container.
-	RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State,
-		targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption
+	RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, target string, opts ...llb.ConstraintsOpt) llb.StateOption
 }
 
 func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
@@ -117,9 +116,24 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			}
 
 			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
-			tests := c.RunTests(ctx, client, spec, sOpt, ctr, targetKey, opts...)
+			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
 
-			ref, err := getRef(ctx, client, ctr.With(tests))
+			def, err := ctr.With(runTests).Marshal(ctx, opts...)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			res, err := client.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+
+			ref, err := res.SingleRef()
+			if err != nil {
+				return nil, nil, err
+			}
 
 			return ref, img, err
 		})
@@ -175,11 +189,33 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				dalec.WithConstraints(opts...),
 			).AddMount("/output", llb.Scratch())
 
-			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, pc)
-			tests := c.RunTests(ctx, client, spec, sOpt, erofs, targetKey, pc)
+			// The input to the test runner needs to be the output of the container builder.
+			// In order to accomplish this while still outputing the sysext image, we need to
+			// create a dependency chain from tests back to erofs.
+			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+			withTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
+			withFinalState := testrunner.WithFinalState(erofs, frontend.TestWithClientFrontend(client), testrunner.WithConstraints(opts...))
 
-			ref, err := getRef(ctx, client, ctr.With(tests))
-			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, err
+			erofs = ctr.With(withTests).With(withFinalState)
+
+			def, err := erofs.Marshal(ctx, opts...)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			res, err := client.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+
+			ref, err := res.SingleRef()
+			if err != nil {
+				return nil, nil, err
+			}
+
+			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, nil
 		})
 	}
 }
@@ -187,7 +223,7 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 // getPrebuiltPackage retrieves a package based on the target environment.
 // Target-specific packages (e.g., "{targetKey}-pkg") are prioritized over generic packages ("pkg").
 // This ensures compatibility with the build context and optimizes functionality for specific environments.
-// Examples of target keys include "azlinux3", "windowscross", and "bookworm".
+// Examples of target keys include "mariner2", "azlinux3", "windowscross", and "bookworm".
 func getPrebuiltPackage(ctx context.Context, targetKey string, client gwclient.Client, opts []llb.ConstraintsOpt, sOpt dalec.SourceOpts) (llb.State, bool) {
 	var pkgSt llb.State
 
@@ -237,34 +273,41 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			}
 
 			pc := dalec.Platform(platform)
+			opts := []llb.ConstraintsOpt{pg, pc}
 
-			pkgSt := cfg.BuildPkg(ctx, client, sOpt, spec, targetKey, pg, pc)
+			pkgSt := cfg.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
 
-			ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, pg, pc)
-			tests := cfg.RunTests(ctx, client, spec, sOpt, pkgSt, targetKey, pg, pc)
+			// The input to the test runner needs to be the output of the container builder.
+			// In order to accomplish this while still outputing the package, we need to
+			// create a dependency chain from tests back to pkgSt.
+			ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+			withTests := cfg.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
+			withFinalState := testrunner.WithFinalState(pkgSt, frontend.TestWithClientFrontend(client), testrunner.WithConstraints(opts...))
 
-			ref, err := getRef(ctx, client, ctr.With(tests))
+			pkgSt = ctr.With(withTests).With(withFinalState)
+
+			def, err := pkgSt.Marshal(ctx, opts...)
+			if err != nil {
+				return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
+			}
+
+			res, err := client.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+
+			ref, err := res.SingleRef()
+			if err != nil {
+				return nil, nil, err
+			}
+
 			if platform == nil {
 				p := platforms.DefaultSpec()
 				platform = &p
 			}
-			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, err
+			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, nil
 		})
 	}
-}
-
-func getRef(ctx context.Context, client gwclient.Client, st llb.State) (gwclient.Reference, error) {
-	def, err := st.Marshal(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
-		Definition: def.ToPB(),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return res.SingleRef()
 }
