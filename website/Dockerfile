@@ -1,2 +1,2 @@
 # Use a Dockerfile for the image ref so that dependabot can update it for us
-FROM docker.io/library/node:25-bookworm@sha256:c69f4e0640e5b065f2694579793e4309f1e0e49868b0f2fea29c44d9c0dc2caf
+FROM docker.io/library/node:26-bookworm@sha256:d3c7d3908a4d67178c41a20995b2e7ad199496f0df50011ab28b3cfd797981d3
