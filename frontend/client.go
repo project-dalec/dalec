@@ -20,6 +20,9 @@ const (
 	// for the builder.
 	KeyDefaultPlatform = "frontend.dalec.defaultPlatform"
 	KeyJSONSchema      = "frontend.dalec.schema"
+
+	resultJSONMetaKey = "result.json"
+	resultTextMetaKey = "result.txt"
 )
 
 const keyTarget = "target"
@@ -38,9 +41,7 @@ func (err *noSuchHandlerError) Error() string {
 	return fmt.Sprintf("no such handler for target %q: available targets: %s", err.Target, strings.Join(err.Available, ", "))
 }
 
-var (
-	_ gwclient.Client = (*clientWithCustomOpts)(nil)
-)
+var _ gwclient.Client = (*clientWithCustomOpts)(nil)
 
 type clientWithCustomOpts struct {
 	opts gwclient.BuildOpts
@@ -112,10 +113,10 @@ func handleResolveSpec(ctx context.Context, client gwclient.Client) (*gwclient.R
 	}
 
 	res := gwclient.NewResult()
-	res.AddMeta("result.json", dtJSON)
+	res.AddMeta(resultJSONMetaKey, dtJSON)
 	// result.txt here so that `docker buildx build --print` will output it directly.
 	// Otherwise it prints a go object.
-	res.AddMeta("result.txt", dtYaml)
+	res.AddMeta(resultTextMetaKey, dtYaml)
 
 	return res, nil
 }
@@ -130,8 +131,8 @@ func handleDefaultPlatform() (*gwclient.Result, error) {
 		return nil, err
 	}
 
-	res.AddMeta("result.json", dt)
-	res.AddMeta("result.txt", []byte(platforms.Format(p)))
+	res.AddMeta(resultJSONMetaKey, dt)
+	res.AddMeta(resultTextMetaKey, []byte(platforms.Format(p)))
 
 	return res, nil
 }
@@ -139,8 +140,8 @@ func handleDefaultPlatform() (*gwclient.Result, error) {
 func handleJSONSchema() (*gwclient.Result, error) {
 	res := gwclient.NewResult()
 	jsonSchema := dalec.GetJSONSchema()
-	res.AddMeta("result.json", jsonSchema)
-	res.AddMeta("result.txt", jsonSchema)
+	res.AddMeta(resultJSONMetaKey, jsonSchema)
+	res.AddMeta(resultTextMetaKey, jsonSchema)
 
 	return res, nil
 }
