@@ -144,6 +144,15 @@ func TestRouterPrefixMatch(t *testing.T) {
 func TestRouterEmptyTargetReturnsError(t *testing.T) {
 	ctx := context.Background()
 	var r Router
+	var emptyRouteCalled bool
+
+	r.Add(ctx, Route{
+		FullPath: "",
+		Handler: func(context.Context, gwclient.Client) (*gwclient.Result, error) {
+			emptyRouteCalled = true
+			return nil, nil
+		},
+	})
 
 	r.Add(ctx, Route{
 		FullPath: "mydefault",
@@ -162,6 +171,9 @@ func TestRouterEmptyTargetReturnsError(t *testing.T) {
 	var nsh *noSuchHandlerError
 	if !errors.As(err, &nsh) {
 		t.Fatalf("expected noSuchHandlerError, got %T: %v", err, err)
+	}
+	if emptyRouteCalled {
+		t.Fatal("expected empty target to error before matching empty route")
 	}
 }
 
