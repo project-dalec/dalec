@@ -204,8 +204,8 @@ func (r *Router) describe() (*gwclient.Result, error) {
 
 	res := gwclient.NewResult()
 	res.Metadata = map[string][]byte{
-		"result.txt": buf.Bytes(),
-		"version":    []byte(subrequests.SubrequestsDescribeDefinition.Version),
+		resultTextMetaKey: buf.Bytes(),
+		"version":         []byte(subrequests.SubrequestsDescribeDefinition.Version),
 	}
 	return res, nil
 }
@@ -273,9 +273,9 @@ func queryForwardedTargets(ctx context.Context, client gwclient.Client, prefix s
 		return nil, err
 	}
 
-	dt, ok := res.Metadata["result.json"]
+	dt, ok := res.Metadata[resultJSONMetaKey]
 	if !ok {
-		return nil, errors.New("forwarded frontend did not return result.json")
+		return nil, errors.New("forwarded frontend did not return " + resultJSONMetaKey)
 	}
 
 	var remote bktargets.List
@@ -300,13 +300,13 @@ func dalecTargetListToResult(ls TargetList) (*gwclient.Result, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "error marshalling target list to json")
 	}
-	res.AddMeta("result.json", dtJSON)
+	res.AddMeta(resultJSONMetaKey, dtJSON)
 
 	buf := bytes.NewBuffer(nil)
 	if err := printTargets(ls, buf); err != nil {
 		return nil, err
 	}
-	res.AddMeta("result.txt", buf.Bytes())
+	res.AddMeta(resultTextMetaKey, buf.Bytes())
 
 	res.AddMeta("version", []byte(bktargets.SubrequestsTargetsDefinition.Version))
 	return res, nil
@@ -336,20 +336,17 @@ func printTargets(ls TargetList, w io.Writer) error {
 }
 
 // lookupTarget finds the route matching the given target string.
-// It tries exact match first, then longest prefix match.
 // An empty target is always an error — callers must specify a target key.
+// Otherwise it tries exact match first, then longest prefix match.
 func (r *Router) lookupTarget(ctx context.Context, target string) (matchedPath string, _ *Route, _ error) {
-	// 1. Exact match
-	if route, ok := r.routes[target]; ok {
-		return target, &route, nil
-	}
-
-	// 2. Empty target — no global default; prompt the user.
 	if target == "" {
 		return "", nil, handlerNotFound(target, maps.Keys(r.routes))
 	}
 
-	// 3. Longest prefix match
+	if route, ok := r.routes[target]; ok {
+		return target, &route, nil
+	}
+
 	var candidates []string
 	for k := range r.routes {
 		if strings.HasPrefix(target, k+"/") {
