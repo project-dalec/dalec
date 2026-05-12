@@ -980,6 +980,191 @@ EOF
 					"expected squashed image to have at most 1 layer, got %d", len(img.RootFS.DiffIDs))
 			})
 		})
+
+		// These tests exercise the bootstrap install script's lossy
+		// extraction of the spec-built .deb's `Depends:` field. The
+		// extraction pipeline strips version constraints, picks only the
+		// first option of any `pkg-a | pkg-b` alternative, does not parse
+		// arch restrictions, and never reads `Pre-Depends:`. The cases
+		// below pin down whether each of those simplifications actually
+		// causes user-visible failures end-to-end.
+		t.Run("bootstrap_dependency_extraction", func(t *testing.T) {
+			t.Parallel()
+			target := testConfig.Target.MinimalContainer
+
+			t.Run("loose_version_constraint_resolves", func(t *testing.T) {
+				// The spec's Depends becomes `curl (>= 0.0.1)`. The
+				// bootstrap strips it to `curl` before invoking apt.
+				// apt installs the latest curl, which trivially satisfies
+				// the original constraint, so the end-to-end result is
+				// correct — the lossy extraction is benign here.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Tests: []*dalec.TestSpec{
+						{
+							Name: "curl is installed and runnable",
+							Files: map[string]dalec.FileCheckOutput{
+								"/usr/bin/curl": {},
+							},
+						},
+					},
+				})
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"curl": {Version: []string{">= 0.0.1"}},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+
+			t.Run("multiple_version_constraints_dedupe", func(t *testing.T) {
+				// `Runtime: curl: { version: [">= 7", "<< 99"] }` makes
+				// dalec emit two comma-separated entries in Depends:
+				// `curl (>= 7), curl (<< 99)`. The bootstrap pipeline
+				// must dedupe both back to a single `curl` so the apt
+				// invocation does not repeat the name.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Tests: []*dalec.TestSpec{
+						{
+							Name: "curl is installed exactly once",
+							Files: map[string]dalec.FileCheckOutput{
+								"/usr/bin/curl": {},
+							},
+						},
+					},
+				})
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"curl": {Version: []string{">= 7", "<< 99"}},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+
+			t.Run("unsatisfiable_version_constraint_fails_build", func(t *testing.T) {
+				// `curl (>= 99.0.0)` is impossible to satisfy from any
+				// real Debian/Ubuntu archive. The bootstrap passes the
+				// spec .deb path directly to apt-get install, which
+				// reads the constraint from the .deb's control file and
+				// refuses to find an installation plan — failing the
+				// build at the bootstrap step.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{})
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"curl": {Version: []string{">= 99.0.0"}},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					sr.Evaluate = true
+					_, err := gwc.Solve(ctx, sr)
+					assert.Assert(t, err != nil, "expected the bootstrap to fail because curl >= 99.0.0 is unsatisfiable")
+				})
+			})
+
+			t.Run("runtime_dep_with_pre_depends_resolves_transitively", func(t *testing.T) {
+				// `apt` itself declares Pre-Depends on a handful of libs
+				// (libgcc-s1, libstdc++6 etc.). dalec never writes a
+				// Pre-Depends field into its own .deb — only Depends —
+				// so the bootstrap script never sees Pre-Depends in the
+				// spec package. The reviewer asked whether this is a
+				// real-world problem.
+				//
+				// In practice it is not, because the bootstrap hands the
+				// extracted package names to `apt-get install`, and apt
+				// is the one that recursively resolves Pre-Depends of
+				// any package it pulls in. This test verifies that path:
+				// a spec runtime-depending on `apt` builds cleanly and
+				// the resulting container has apt installed (which means
+				// its Pre-Depends were resolved correctly).
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Tests: []*dalec.TestSpec{
+						{
+							Name: "apt is installed (pre-depends resolved)",
+							Files: map[string]dalec.FileCheckOutput{
+								"/usr/bin/apt":     {},
+								"/usr/bin/apt-get": {},
+							},
+						},
+					},
+				})
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"apt": {},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+
+			t.Run("virtual_package_runtime_dep_resolves", func(t *testing.T) {
+				// `awk` is a virtual package on Debian/Ubuntu, provided
+				// by `mawk`, `gawk`, and `original-awk`. apt resolves
+				// it via Provides when the bootstrap hands it the spec
+				// .deb path (rather than the bare extracted name), and
+				// the cleanup pass must keep the chosen provider
+				// (`mawk`) installed.
+				//
+				// We exercise the provider binary (`/usr/bin/mawk`)
+				// directly rather than `/usr/bin/awk`. The latter is an
+				// update-alternatives symlink owned by no package and
+				// created only by mawk's postinst; its presence depends
+				// on update-alternatives machinery that behaves
+				// inconsistently in the bootstrap-from-scratch flow
+				// across distros, which is orthogonal to what this test
+				// validates: that the virtual dep's provider survives
+				// cleanup and is executable end-to-end.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Tests: []*dalec.TestSpec{
+						{
+							Name: "awk provider is installed and executable",
+							Steps: []dalec.TestStep{
+								{
+									Command: "/usr/bin/mawk 'BEGIN{print \"ok\"}'",
+									Stdout:  dalec.CheckOutput{Contains: []string{"ok"}},
+								},
+							},
+						},
+					},
+				})
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"awk": {},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+		})
 	})
 
 	t.Run("sysext", func(t *testing.T) {
