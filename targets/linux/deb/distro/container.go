@@ -193,25 +193,27 @@ essential_packages=$(dpkg-query -Wf '${Package} ${Essential}\n' | awk '$2 == "ye
 # the container, we define them here.
 bootstrap_extra_packages="passwd"
 
+# Local spec-built .deb files. Passing these by path to apt-get (apt 1.1+
+# syntax — available on every distro dalec supports) lets apt parse the
+# control files itself and resolve dependencies natively, including:
+#   - Pre-Depends (in addition to Depends)
+#   - alternatives ("pkg-a | pkg-b") — apt picks an installable option
+#   - virtual packages (Provides) — apt picks a real provider
+#   - version constraints — unsatisfiable ones cause the build to fail
+#   - architecture restrictions
 local_package_files=$(ls /spec-packages/*.deb)
-
-# Get names of local packages so we can exclude them from apt-get install.
-local_package_names=$(for f in ${local_package_files}; do dpkg-deb -f "${f}" Package 2>/dev/null; done | sort -u)
-
-# Extract dependencies of local packages, since we need to download those as well.
-#
-# Spec packages may depend on base packages, so we need to filter to only download remaining packages, since downloading local packages
-# would fail.
-dependencies_to_download=$(for f in ${local_package_files}; do dpkg-deb -f "${f}" Depends 2>/dev/null; done | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g' | grep -v '^$' | sort -u | grep -vxF "${local_package_names}" || true)
 
 # Get the exact filenames apt needs by using --print-uris with an empty cache dir.
 # This forces apt to report ALL needed packages (not just uncached ones), giving
 # us exact filenames including correct version and architecture suffixes.
 # --print-uris output format: 'URL' filename size hash
 # We extract the second field (the filename).
+#
+# Local .deb paths are recognized as already-available and don't appear in
+# --print-uris output, so the filenames here are only remote deps.
 needed_filenames=$(apt-get -o Dir::State::status="${rootfs}/var/lib/dpkg/status" \
     -o Dir::Cache::Archives=/tmp \
-    --yes --print-uris install ${essential_packages} ${bootstrap_extra_packages} ${dependencies_to_download} \
+    --yes --print-uris install ${essential_packages} ${bootstrap_extra_packages} ${local_package_files} \
     | grep '\.deb ' | awk '{print $2}')
 
 mkdir -p "${rootfs}${apt_archives}"/partial
@@ -228,9 +230,11 @@ done
 
 # Download remaining needed packages directly into the rootfs cache.
 # apt skips packages already present, so only missing ones are fetched.
+# Passing the local .deb paths anchors the install plan to the spec packages
+# without re-fetching them.
 apt-get -o Dir::State::status="${rootfs}/var/lib/dpkg/status" \
     -o Dir::Cache::Archives="${rootfs}${apt_archives}" \
-    --yes --download-only install ${essential_packages} ${bootstrap_extra_packages} ${dependencies_to_download}
+    --yes --download-only install ${essential_packages} ${bootstrap_extra_packages} ${local_package_files}
 
 deb_files=$(ls "${rootfs}${apt_archives}"/*.deb)
 
@@ -359,6 +363,15 @@ rm -f /var/lib/dpkg/info/libpam-runtime.prerm 2>/dev/null || true
 
 # Recursive dependency resolver: prints the transitive closure of installed
 # Depends/Pre-Depends starting from the given space-separated package list.
+#
+# Handles three tricky cases that a naive dpkg-query+sed pipeline gets wrong:
+#   - Alternatives ("pkg-a | pkg-b"): walk every option, keep whichever is
+#     installed (rather than blindly picking the first).
+#   - Virtual packages (Provides): if a dep name is not an installed package
+#     itself, look up installed packages whose Provides field lists it and
+#     keep those instead. Without this, virtual deps like "awk" silently
+#     drop their real provider (mawk/gawk) from the keep set.
+#   - Multi-arch qualifiers (":amd64"): stripped so the name matches.
 resolve_deps() {
     queue="$1"
     resolved=""
@@ -370,17 +383,47 @@ resolve_deps() {
 
         resolved="${resolved} ${pkg}"
 
+        # Strip version constraints "(>= 1.0)", arch restrictions "[amd64]",
+        # whitespace, and multi-arch qualifiers ":amd64". Keep alternatives
+        # ("|") as-is; they are split below.
         deps=$(dpkg-query -W -f='${Depends}\n${Pre-Depends}\n' "${pkg}" 2>/dev/null \
-            | tr ',' '\n' | sed 's/([^)]*)//g; s/|.*//; s/ //g; s/:.*//g' | grep -v '^$' | sort -u)
+            | tr ',' '\n' | sed 's/([^)]*)//g; s/\[[^]]*\]//g; s/[[:space:]]//g; s/:[a-z0-9-]*//g' | grep -v '^$' | sort -u)
 
-        for dep in ${deps}; do
-            if ! dpkg -s "${dep}" 2>/dev/null | grep -q '^Status: install ok installed'; then
-                continue
-            fi
-            if echo "${resolved}" | grep -qw "${dep}"; then
-                continue
-            fi
-            queue=$(printf '%s\n%s' "${queue}" "${dep}")
+        for dep_alt in ${deps}; do
+            # Walk all alternatives ("pkg-a|pkg-b") so we don't lose track
+            # of whichever option is actually installed.
+            for dep in $(echo "${dep_alt}" | tr '|' ' '); do
+                if [ -z "${dep}" ] || echo "${resolved}" | grep -qw "${dep}"; then
+                    continue
+                fi
+
+                # Real, directly-installed package.
+                if dpkg -s "${dep}" 2>/dev/null | grep -q '^Status: install ok installed'; then
+                    queue=$(printf '%s\n%s' "${queue}" "${dep}")
+                    continue
+                fi
+
+                # Virtual package: find installed packages whose Provides
+                # field lists this name (with optional version constraint
+                # stripped) and keep them.
+                providers=$(dpkg-query -W -f='${Package}|${Provides}\n' 2>/dev/null \
+                    | awk -F'|' -v want="${dep}" '
+                        $2 == "" { next }
+                        {
+                            n = split($2, list, ",")
+                            for (i = 1; i <= n; i++) {
+                                name = list[i]
+                                sub(/\(.*$/, "", name)
+                                gsub(/^[ \t]+|[ \t]+$/, "", name)
+                                if (name == want) { print $1; next }
+                            }
+                        }
+                    ')
+                for prov in ${providers}; do
+                    if echo "${resolved}" | grep -qw "${prov}"; then continue; fi
+                    queue=$(printf '%s\n%s' "${queue}" "${prov}")
+                done
+            done
         done
     done
     echo "${resolved}"
