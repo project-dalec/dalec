@@ -13,6 +13,8 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	gitservices "github.com/project-dalec/dalec/test/git_services"
+	"github.com/project-dalec/dalec/test/testenv"
 	"gotest.tools/v3/assert"
 )
 
@@ -450,6 +452,123 @@ func TestSourceHTTP(t *testing.T) {
 		good := newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, newSpec(url, goodDigest)))
 		good.Evaluate = true
 		solveT(ctx, t, gwc, good)
+	})
+}
+
+func TestSourceGitChecksumPreservesTagMetadata(t *testing.T) {
+	t.Parallel()
+
+	parentCtx := startTestSpan(baseCtx, t)
+
+	const (
+		secretName = "super-secret"
+		sourceName = "repo"
+		tagName    = "v1.2.3"
+	)
+
+	runGitServerTest := func(ctx context.Context, t *testing.T, f func(context.Context, gwclient.Client, llb.State, string, func(string) *dalec.Spec)) {
+		t.Helper()
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			t.Helper()
+
+			attr := gitservices.Attributes{
+				ServerRoot:      "/",
+				PrivateRepoPath: "username/private",
+				HTTPServerPath:  "/usr/local/bin/git_http_server",
+				HTTPPort:        "8080",
+			}
+
+			testState := gitservices.NewTestState(t, gwc, &attr)
+			worker := initWorker(gwc)
+			repo := llb.Scratch().File(llb.Mkfile("foo", 0o644, []byte("bar\n")))
+			repo = worker.Dir(attr.PrivateRepoAbsPath()).Run(dalec.ShArgs(`
+			set -eux
+			export GIT_CONFIG_NOGLOBAL=true
+			git init
+			git config user.name foo
+			git config user.email foo@bar.com
+			git add -A
+			git commit -m commit --no-gpg-sign
+			git tag -a `+tagName+` -m `+tagName+`
+		`)).AddMount(attr.RepoAbsDir(), repo)
+
+			commitSt := worker.Dir(attr.PrivateRepoAbsPath()).Run(dalec.ShArgs(`
+			set -eu
+			git rev-parse HEAD > /out/commit
+		`), llb.AddMount(attr.RepoAbsDir(), repo, llb.Readonly)).AddMount("/out", llb.Scratch())
+			commitDef, err := commitSt.Marshal(ctx)
+			assert.NilError(t, err)
+
+			commitRes, err := gwc.Solve(ctx, gwclient.SolveRequest{Definition: commitDef.ToPB(), Evaluate: true})
+			assert.NilError(t, err)
+			commit := strings.TrimSpace(string(readFile(ctx, t, "commit", commitRes)))
+
+			gitHost := worker.With(hostedRepo(repo, attr.RepoAbsDir()))
+			httpServer := testState.StartHTTPGitServer(ctx, gitHost)
+
+			newSpec := func(checksum string) *dalec.Spec {
+				return &dalec.Spec{
+					Sources: map[string]dalec.Source{
+						sourceName: {
+							Git: &dalec.SourceGit{
+								URL:        "http://" + httpServer.IP + ":" + httpServer.Port + "/" + attr.PrivateRepoPath,
+								Commit:     tagName,
+								Checksum:   checksum,
+								KeepGitDir: true,
+								Auth: dalec.GitAuth{
+									Token: secretName,
+								},
+							},
+						},
+					},
+				}
+			}
+
+			f(ctx, gwc, worker, commit, newSpec)
+		}, testenv.WithSecrets(secretName, "password"))
+	}
+
+	t.Run("preserves tag metadata", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(parentCtx, t)
+
+		runGitServerTest(ctx, t, func(ctx context.Context, gwc gwclient.Client, worker llb.State, commit string, newSpec func(string) *dalec.Spec) {
+			req := newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, newSpec(commit)))
+			sourceRes := solveT(ctx, t, gwc, req)
+			verifySt := worker.Run(dalec.ShArgs(`
+			set -eu
+			git -C /src/`+sourceName+` tag --points-at HEAD > /out/tag
+			git -C /src/`+sourceName+` rev-parse HEAD > /out/head
+			git -C /src/`+sourceName+` rev-parse `+tagName+`^{} > /out/tag-commit
+			git -C /src/`+sourceName+` cat-file -t `+tagName+` > /out/tag-type
+		`), llb.AddMount("/src", resultToState(t, sourceRes), llb.Readonly)).AddMount("/out", llb.Scratch())
+			verifyDef, err := verifySt.Marshal(ctx)
+			assert.NilError(t, err)
+
+			verifyRes, err := gwc.Solve(ctx, gwclient.SolveRequest{Definition: verifyDef.ToPB(), Evaluate: true})
+			assert.NilError(t, err)
+
+			checkFile(ctx, t, "tag", verifyRes, []byte(tagName+"\n"))
+			checkFile(ctx, t, "head", verifyRes, []byte(commit+"\n"))
+			checkFile(ctx, t, "tag-commit", verifyRes, []byte(commit+"\n"))
+			checkFile(ctx, t, "tag-type", verifyRes, []byte("tag\n"))
+		})
+	})
+
+	t.Run("rejects checksum mismatch", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(parentCtx, t)
+
+		runGitServerTest(ctx, t, func(ctx context.Context, gwc gwclient.Client, worker llb.State, commit string, newSpec func(string) *dalec.Spec) {
+			_, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, newSpec("0000000000000000000000000000000000000000"))))
+			if err == nil {
+				t.Fatal("expected git checksum mismatch, but received none")
+			}
+			if !strings.Contains(err.Error(), "expected checksum to match") {
+				t.Fatalf("expected git checksum mismatch, got: %v", err)
+			}
+		})
 	})
 }
 

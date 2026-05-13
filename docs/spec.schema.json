@@ -1820,22 +1820,33 @@
 			],
 			"properties": {
 				"auth": {
-					"$ref": "#/$defs/GitAuth"
+					"$ref": "#/$defs/GitAuth",
+					"description": "Auth can be used to add instructions on how to authenticate with the git repository."
+				},
+				"checksum": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Checksum is the expected commit hash for the resolved ref.\nIt is useful when \"Commit\" refers to a mutable ref, such as a tag."
 				},
 				"commit": {
 					"type": [
 						"string"
-					]
+					],
+					"description": "Commit is the ref, which may be a commit, a tag, or even a full ref.\nNOTE: When using a commit ref, tag info is *not* fetched."
 				},
 				"keepGitDir": {
 					"type": [
 						"boolean"
-					]
+					],
+					"description": "KeepGitDir includes the .git directory in the source.\nNOTE: Not all git metadata may be available. The available metadata depends\non the ref specified by \"Commit\"."
 				},
 				"url": {
 					"type": [
 						"string"
-					]
+					],
+					"description": "URL is the URL of the git repository."
 				}
 			},
 			"additionalProperties": {

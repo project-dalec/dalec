@@ -180,7 +180,8 @@ sources:
   foo:
     git:
       url: https://github.com/foo/bar.git
-      commit: ${COMMIT}
+      commit: ${TAG}
+      checksum: ${COMMIT}
       keepGitDir: true
     generate:
     - gomod: {}

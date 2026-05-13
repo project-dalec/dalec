@@ -13,10 +13,20 @@ import (
 )
 
 type SourceGit struct {
-	URL        string  `yaml:"url" json:"url"`
-	Commit     string  `yaml:"commit" json:"commit"`
-	KeepGitDir bool    `yaml:"keepGitDir,omitempty" json:"keepGitDir,omitempty"`
-	Auth       GitAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// URL is the URL of the git repository.
+	URL string `yaml:"url" json:"url"`
+	// Commit is the ref, which may be a commit, a tag, or even a full ref.
+	// NOTE: When using a commit ref, tag info is *not* fetched.
+	Commit string `yaml:"commit" json:"commit"`
+	// Checksum is the expected commit hash for the resolved ref.
+	// It is useful when "Commit" refers to a mutable ref, such as a tag.
+	Checksum string `yaml:"checksum,omitempty" json:"checksum,omitempty"`
+	// KeepGitDir includes the .git directory in the source.
+	// NOTE: Not all git metadata may be available. The available metadata depends
+	// on the ref specified by "Commit".
+	KeepGitDir bool `yaml:"keepGitDir,omitempty" json:"keepGitDir,omitempty"`
+	// Auth can be used to add instructions on how to authenticate with the git repository.
+	Auth GitAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
 
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
@@ -118,6 +128,9 @@ func (src *SourceGit) baseState(opts fetchOptions) llb.State {
 	if src.KeepGitDir {
 		gOpts = append(gOpts, llb.KeepGitDir())
 	}
+	if src.Checksum != "" {
+		gOpts = append(gOpts, llb.GitChecksum(src.Checksum))
+	}
 	gOpts = append(gOpts, WithConstraints(opts.Constraints...))
 	gOpts = append(gOpts, &src.Auth)
 	gOpts = append(gOpts, src._sourceMap.GetRootLocation())
@@ -162,6 +175,12 @@ func (src *SourceGit) processBuildArgs(lex *shell.Lex, args map[string]string, a
 	if err != nil {
 		errs = append(errs, err)
 	}
+
+	updated, err = expandArgs(lex, src.Checksum, args, allowArg)
+	src.Checksum = updated
+	if err != nil {
+		errs = append(errs, err)
+	}
 	if len(errs) > 0 {
 		err := fmt.Errorf("failed to process build args for git source: %w", stderrors.Join(errs...))
 		err = errdefs.WithSource(err, src._sourceMap.GetErrdefsSource())
@@ -185,4 +204,7 @@ func (src *SourceGit) doc(w io.Writer, name string) {
 	printDocLn(w, "Generated from a git repository:")
 	printDocLn(w, "	Remote:", ref.Remote)
 	printDocLn(w, "	Ref:", src.Commit)
+	if src.Checksum != "" {
+		printDocLn(w, "	Checksum:", src.Checksum)
+	}
 }
