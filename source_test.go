@@ -175,6 +175,20 @@ func TestSourceGitHTTP(t *testing.T) {
 		checkGitOp(t, ops, &src)
 	})
 
+	t.Run("with checksum and git dir", func(t *testing.T) {
+		src := Source{
+			Git: &SourceGit{
+				URL:        "https://localhost/test.git",
+				Commit:     "v1.2.3",
+				Checksum:   "0123456789abcdef",
+				KeepGitDir: true,
+			},
+		}
+
+		ops := getSourceOp(ctx, t, src)
+		checkGitOp(t, ops, &src)
+	})
+
 	t.Run("gomod auth", func(t *testing.T) {
 		const (
 			numSecrets = 2
@@ -1030,6 +1044,18 @@ func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
 
 	if op.Attrs["git.fullurl"] != src.Git.URL {
 		t.Errorf("expected git.fullurl %q, got %q", src.Git.URL, op.Attrs["git.fullurl"])
+	}
+
+	if src.Git.Checksum != "" {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrGitChecksum], src.Git.Checksum), op.Attrs)
+	} else {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrGitChecksum], ""), op.Attrs)
+	}
+
+	if src.Git.KeepGitDir {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrKeepGitDir], "true"), op.Attrs)
+	} else {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrKeepGitDir], ""), op.Attrs)
 	}
 
 	const (

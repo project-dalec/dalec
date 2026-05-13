@@ -43,7 +43,7 @@ sources:
 
 ### Git
 
-Git sources fetch a git repository at a specific commit.
+Git sources fetch a git repository at a specific commit, branch, or tag ref.
 You can use either an SSH style git URL or an HTTPS style git URL.
 
 For SSH style git URLs, if the client (such as the docker CLI) has provided
@@ -61,12 +61,26 @@ sources:
     git:
       # This uses an HTTPS style git URL.
       url: https://github.com/myOrg/myRepo.git
-      commit: 1234567890abcdef
+      commit: v1.2.3
+      checksum: 1234567890abcdef # [Optional] Verify the ref resolves to this commit.
       keepGitDir: true # [Optional] Keep the .git directory when fetching the git source. Default: false
 ```
 
 By default, Dalec will discard the `.git` directory when fetching a git source.
 You can override this behavior by setting `keepGitDir: true` in the git configuration.
+
+When `commit` is a branch or tag, `checksum` can be used to verify that the ref
+resolves to the expected commit. This lets you fetch a tag while still pinning
+the content to a known commit. BuildKit accepts a full or short hex commit hash
+for `checksum`.
+
+`checksum` requires BuildKit v0.22.0 or later. When using Docker's embedded
+BuildKit backend, use Docker Engine v28.2.0 or later.
+
+Fetching by tag can be useful when tools inspect git metadata during the build.
+For example, Go build metadata and Kubernetes-style version tooling can use tag
+information from `.git` when `keepGitDir: true` is set, while `checksum` still
+ensures the tag resolves to the expected commit.
 
 Git repositories are considered to be "directory" sources.
 

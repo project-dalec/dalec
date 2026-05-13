@@ -42,6 +42,16 @@ func TestSourceValidation(t *testing.T) {
 			expectErr: true,
 		},
 		{
+			title: "git source checksum accepts hex",
+			src: Source{
+				Git: &SourceGit{
+					URL:      "https://example.com/repo.git",
+					Commit:   "v1.2.3",
+					Checksum: "0123456789abcdef",
+				},
+			},
+		},
+		{
 			title:     "has multiple source types in docker-image command mount",
 			expectErr: true,
 			src: Source{
@@ -666,6 +676,7 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	const (
 		foo            = "foo"
 		bar            = "bar"
+		checksum       = "baddecaf"
 		argWithDefault = "some default value"
 		plainOleValue  = "some plain old value"
 	)
@@ -700,6 +711,13 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 		Includes: []string{"foo/${BAR}"},
 		Excludes: []string{"foo/${BAR}"},
 		Inline:   &SourceInline{},
+	}
+	spec.Sources["git"] = Source{
+		Git: &SourceGit{
+			URL:      "https://example.com/foo/${BAR}.git",
+			Commit:   "$FOO",
+			Checksum: "$CHECKSUM",
+		},
 	}
 
 	spec.Patches = map[string][]PatchSpec{
@@ -795,13 +813,18 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	env["BAR"] = bar
 
 	spec.Args["BAR"] = ""
+	spec.Args["CHECKSUM"] = ""
 	spec.Args["VAR_WITH_DEFAULT"] = argWithDefault
+	env["CHECKSUM"] = checksum
 
 	assert.NilError(t, spec.SubstituteArgs(env))
 
 	assert.Check(t, cmp.Equal(spec.Sources["patch"].Path, "foo/"+bar))
 	assert.Check(t, cmp.Equal(spec.Sources["patch"].Includes[0], "foo/"+bar))
 	assert.Check(t, cmp.Equal(spec.Sources["patch"].Excludes[0], "foo/"+bar))
+	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.URL, "https://example.com/foo/"+bar+".git"))
+	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Commit, foo))
+	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Checksum, checksum))
 	assert.Check(t, cmp.Equal(spec.Patches["src"][0].Path, foo))
 
 	// Base package config
@@ -1191,6 +1214,26 @@ targets:
 		assert.Check(t, cmp.Equal(target.Dependencies.ExtraRepos[0].Data[4].Spec.Build.Source.HTTP.URL, "https://test"))
 
 		assert.Check(t, cmp.Equal(target.PackageConfig.Signer.Args["FOO"], "test"))
+	})
+
+	t.Run("git checksum build arg loaded from yaml", func(t *testing.T) {
+		dt := []byte(`
+args:
+  COMMIT:
+sources:
+  test:
+    git:
+      url: https://example.com/repo.git
+      commit: v1.2.3
+      checksum: ${COMMIT}
+`)
+
+		spec, err := LoadSpec(dt)
+		assert.NilError(t, err)
+
+		err = spec.SubstituteArgs(map[string]string{"COMMIT": "0123456789abcdef"})
+		assert.NilError(t, err)
+		assert.Check(t, cmp.Equal(spec.Sources["test"].Git.Checksum, "0123456789abcdef"))
 	})
 
 	t.Run("default value", func(t *testing.T) {
