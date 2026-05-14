@@ -39,6 +39,10 @@ func knownArg(key string) bool {
 		return true
 	case "DALEC_SKIP_TESTS":
 		return true
+	case "DALEC_SOURCE_FILTER_CONFIG_PATH":
+		return true
+	case "DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME":
+		return true
 	case KeyDalecTarget:
 		return true
 	}

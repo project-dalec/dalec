@@ -67,7 +67,8 @@ var tmplFuncs = map[string]any{
 
 type specWrapper struct {
 	*dalec.Spec
-	Target string
+	Target       string
+	SourceFilter dalec.SourceFilterConfig
 }
 
 func (w *specWrapper) Changelog() (fmt.Stringer, error) {
@@ -337,18 +338,43 @@ func (w *specWrapper) Sources() (fmt.Stringer, error) {
 		if scanner.Err() != nil {
 			return nil, scanner.Err()
 		}
+		if !w.SourceFilter.IsEmpty() && isDir {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
 		fmt.Fprintf(b, "Source%d: %s\n", idx, ref)
 	}
 
 	sourceIdx := len(keys)
 
 	if w.Spec.HasGomods() {
+		if !w.SourceFilter.IsEmpty() {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
 		fmt.Fprintf(b, "Source%d: %s.tar.gz\n", sourceIdx, gomodsName)
 		sourceIdx += 1
 	}
 
 	if w.Spec.HasCargohomes() {
+		if !w.SourceFilter.IsEmpty() {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
 		fmt.Fprintf(b, "Source%d: %s.tar.gz\n", sourceIdx, cargohomeName)
+		sourceIdx += 1
+	}
+
+	if w.Spec.HasPips() {
+		if !w.SourceFilter.IsEmpty() {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
+		fmt.Fprintf(b, "Source%d: %s.tar.gz\n", sourceIdx, pipDepsName)
 		sourceIdx += 1
 	}
 
@@ -360,6 +386,24 @@ func (w *specWrapper) Sources() (fmt.Stringer, error) {
 		b.WriteString("\n")
 	}
 	return b, nil
+}
+
+func docSourceFilter(w io.Writer, name string, values []string) error {
+	if _, err := fmt.Fprintf(w, "# %s:\n", name); err != nil {
+		return err
+	}
+	for _, value := range values {
+		scanner := bufio.NewScanner(strings.NewReader(value))
+		for scanner.Scan() {
+			if _, err := fmt.Fprintf(w, "# \t%s\n", scanner.Text()); err != nil {
+				return err
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *specWrapper) Release() string {
@@ -1133,7 +1177,11 @@ func (w *specWrapper) DisableAutoReq() string {
 
 // WriteSpec generates an rpm spec from the provided [dalec.Spec] and distro target and writes it to the passed in writer
 func WriteSpec(spec *dalec.Spec, target string, w io.Writer) error {
-	s := &specWrapper{spec, target}
+	return WriteSpecWithSourceFilter(spec, target, dalec.SourceFilterConfig{}, w)
+}
+
+func WriteSpecWithSourceFilter(spec *dalec.Spec, target string, filter dalec.SourceFilterConfig, w io.Writer) error {
+	s := &specWrapper{Spec: spec, Target: target, SourceFilter: filter}
 
 	err := specTmpl.Execute(w, s)
 	if err != nil {
