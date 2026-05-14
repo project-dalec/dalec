@@ -113,8 +113,8 @@ github.com/hashicorp/go-cleanhttp v0.5.2 h1:035FKYIWjmULyFRBKPs8TBQoi0x6d9G4xc9n
 github.com/hashicorp/go-cleanhttp v0.5.2/go.mod h1:kO/YDlP8L1346E6Sodw+PrpBSV4/SoxCXGY6BqNFT48=
 github.com/in-toto/attestation v1.1.2 h1:MBFn6lsMq6dptQZJBhalXTcWMb/aJy3V+GX3VYj/V1E=
 github.com/in-toto/attestation v1.1.2/go.mod h1:gYFddHMZj3DiQ0b62ltNi1Vj5rC879bTmBbrv9CRHpM=
-github.com/in-toto/in-toto-golang v0.10.0 h1:+s2eZQSK3WmWfYV85qXVSBfqgawi/5L02MaqA4o/tpM=
-github.com/in-toto/in-toto-golang v0.10.0/go.mod h1:wjT4RiyFlLWCmLUJjwB8oZcjaq7HA390aMJcD3xXgmg=
+github.com/in-toto/in-toto-golang v0.11.0 h1:nfidMYBFx+E0lnmX5KUnN2Pdm8zdNKal1ayjJuzzRoA=
+github.com/in-toto/in-toto-golang v0.11.0/go.mod h1:u3PjTnwFKjp5a1YCcw8SJg0G+tMeKfVoWsWeFMDCMtw=
 github.com/invopop/jsonschema v0.13.0 h1:KvpoAJWEjR3uD9Kbm2HWJmqsEaHt8lBUpd0qHcIi21E=
 github.com/invopop/jsonschema v0.13.0/go.mod h1:ffZ5Km5SWWRAIN6wbDXItl95euhFz2uON45H2qjYt+0=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=

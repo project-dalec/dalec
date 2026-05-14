@@ -33,6 +33,7 @@ require (
 	golang.org/x/mod v0.33.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/tools v0.42.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 	gotest.tools/v3 v3.5.2
@@ -66,7 +67,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
 	github.com/in-toto/attestation v1.1.2 // indirect
-	github.com/in-toto/in-toto-golang v0.10.0 // indirect
+	github.com/in-toto/in-toto-golang v0.11.0 // indirect
 	github.com/kjk/lzma v0.0.0-20161016003348-3fd93898850d // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
@@ -102,7 +103,6 @@ require (
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
 )
