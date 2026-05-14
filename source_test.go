@@ -315,6 +315,126 @@ func TestSourceHTTP(t *testing.T) {
 	})
 }
 
+func TestSourceFilterAtPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	filter := SourceFilterConfig{GlobalExcludes: []string{"nested/bad.txt", "*.tmp"}}
+	st := llb.Scratch().File(llb.Mkfile("src/nested/bad.txt", 0o644, nil)).With(SourceFilterAtPath("src", filter))
+
+	def, err := st.Marshal(ctx)
+	assert.NilError(t, err)
+
+	var fileOp *pb.FileOp
+	for _, dt := range def.Def {
+		var op pb.Op
+		assert.NilError(t, op.Unmarshal(dt))
+		if op.GetFile() != nil {
+			fileOp = op.GetFile()
+		}
+	}
+	if fileOp == nil {
+		t.Fatal("expected file op")
+	}
+
+	cp := fileOp.Actions[0].GetCopy()
+	if cp == nil {
+		t.Fatal("expected copy action")
+	}
+	assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, []string{"src/nested/bad.txt", "src/*.tmp"}))
+}
+
+func TestSourceFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	filter := SourceFilterConfig{GlobalExcludes: []string{"bad.txt"}}
+	st := llb.Scratch().File(llb.Mkfile("bad.txt", 0o644, nil)).With(SourceFilter(filter))
+
+	def, err := st.Marshal(ctx)
+	assert.NilError(t, err)
+
+	var fileOp *pb.FileOp
+	for _, dt := range def.Def {
+		var op pb.Op
+		assert.NilError(t, op.Unmarshal(dt))
+		if op.GetFile() != nil {
+			fileOp = op.GetFile()
+		}
+	}
+	if fileOp == nil {
+		t.Fatal("expected file op")
+	}
+
+	cp := fileOp.Actions[0].GetCopy()
+	if cp == nil {
+		t.Fatal("expected copy action")
+	}
+	assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, filter.GlobalExcludes))
+}
+
+func TestSourceFilterEmptyNoop(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	base := llb.Scratch().File(llb.Mkfile("keep.txt", 0o644, nil))
+	filtered := base.With(SourceFilter(SourceFilterConfig{}))
+
+	baseDef, err := base.Marshal(ctx)
+	assert.NilError(t, err)
+	filteredDef, err := filtered.Marshal(ctx)
+	assert.NilError(t, err)
+
+	assert.Check(t, cmp.DeepEqual(filteredDef.Def, baseDef.Def))
+}
+
+func TestNodeModDepsSourceFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	spec := &Spec{Sources: map[string]Source{
+		"src": {
+			Inline: &SourceInline{Dir: &SourceInlineDir{Files: map[string]*SourceInlineFile{
+				"package.json": {Contents: "{}"},
+			}}},
+			Generate: []*SourceGenerator{{NodeMod: &GeneratorNodeMod{}}},
+		},
+	}}
+	spec.FillDefaults()
+
+	result := spec.NodeModDeps(SourceOpts{SourceFilter: func() (SourceFilterConfig, error) {
+		return SourceFilterConfig{GlobalExcludes: []string{"node_modules/**"}}, nil
+	}}, llb.Scratch())
+
+	st, ok := result["src"]
+	if !ok {
+		t.Fatal("expected generated node module source")
+	}
+
+	def, err := st.Marshal(ctx)
+	assert.NilError(t, err)
+
+	for _, dt := range def.Def {
+		var op pb.Op
+		assert.NilError(t, op.Unmarshal(dt))
+		fileOp := op.GetFile()
+		if fileOp == nil {
+			continue
+		}
+		for _, action := range fileOp.Actions {
+			cp := action.GetCopy()
+			if cp == nil {
+				continue
+			}
+			if slices.Equal(cp.ExcludePatterns, []string{"src/node_modules/**"}) {
+				return
+			}
+		}
+	}
+
+	t.Fatal("expected node module dependency output to be filtered with source-prefixed excludes")
+}
+
 func toImageRef(ref string) string {
 	return "docker-image://" + ref
 }
@@ -685,6 +805,16 @@ func TestSourceContext(t *testing.T) {
 		checkContext(t, ops[0].GetSource(), &src)
 		testWithFilters(t, src)
 	})
+
+	t.Run("with source filter", func(t *testing.T) {
+		src := Source{Context: &SourceContext{}}
+		sOpt := prepareGetSourceOp(ctx, t, &src)
+		sOpt.SourceFilter = func() (SourceFilterConfig, error) {
+			return SourceFilterConfig{GlobalExcludes: []string{"drop.txt"}}, nil
+		}
+		ops := getSourceOpWithOpts(ctx, t, src, sOpt)
+		checkContext(t, ops[0].GetSource(), &Source{Context: &SourceContext{}, Excludes: []string{"drop.txt"}})
+	})
 }
 
 func TestSourceInlineFile(t *testing.T) {
@@ -805,6 +935,26 @@ func TestSourceInlineDir(t *testing.T) {
 			})
 		})
 	}
+
+	t.Run("with source filter", func(t *testing.T) {
+		src := Source{Inline: &SourceInline{Dir: &SourceInlineDir{Files: map[string]*SourceInlineFile{
+			"keep.txt": {Contents: "keep"},
+			"drop.txt": {Contents: "drop"},
+		}}}}
+		sOpt := SourceOpts{SourceFilter: func() (SourceFilterConfig, error) {
+			return SourceFilterConfig{GlobalExcludes: []string{"drop.txt"}}, nil
+		}}
+		ops := getSourceOpWithOpts(ctx, t, src, sOpt)
+		if len(ops) != 4 {
+			t.Fatalf("expected mkdir, two mkfile ops, and filter copy op, got %d", len(ops))
+		}
+
+		cp := ops[3].GetFile().Actions[0].GetCopy()
+		if cp == nil {
+			t.Fatal("expected copy action")
+		}
+		assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, []string{"drop.txt"}))
+	})
 }
 
 func checkMkdir(t *testing.T, op *pb.FileOp, src *SourceInlineDir) {
@@ -983,6 +1133,17 @@ func getSourceOp(ctx context.Context, t *testing.T, src Source) []*pb.Op {
 		name = "test"
 	}
 
+	st := src.ToState(name, sOpt)
+	return sourceOpsFromState(ctx, t, st)
+}
+
+func getSourceOpWithOpts(ctx context.Context, t *testing.T, src Source, sOpt SourceOpts) []*pb.Op {
+	t.Helper()
+	src.fillDefaults()
+	name := ""
+	if !src.IsDir() {
+		name = "test"
+	}
 	st := src.ToState(name, sOpt)
 	return sourceOpsFromState(ctx, t, st)
 }

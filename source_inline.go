@@ -327,7 +327,25 @@ func (s *SourceInlineFile) toMount(opts fetchOptions) (llb.State, []llb.MountOpt
 func (s *SourceInlineDir) toState(opts fetchOptions) llb.State {
 	base := s.baseState(opts)
 	// inline dir handles dir names and subpaths itself
-	// Do not pass rename to sourceFilters
+	// Include/exclude patterns are relative to the requested source root, but
+	// inline dirs create files under Rename before sourceFilters runs.
+	if opts.Rename != "" {
+		if len(opts.Includes) > 0 {
+			includes := make([]string, len(opts.Includes))
+			for i, include := range opts.Includes {
+				includes[i] = filepath.ToSlash(filepath.Join(opts.Rename, include))
+			}
+			opts.Includes = includes
+		}
+		if len(opts.Excludes) > 0 {
+			excludes := make([]string, len(opts.Excludes))
+			for i, exclude := range opts.Excludes {
+				excludes[i] = filepath.ToSlash(filepath.Join(opts.Rename, exclude))
+			}
+			opts.Excludes = excludes
+		}
+	}
+	// Do not pass rename to sourceFilters as a destination rename.
 	opts.Rename = ""
 	return base.With(sourceFilters(opts))
 }

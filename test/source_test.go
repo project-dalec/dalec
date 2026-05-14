@@ -1032,6 +1032,115 @@ func TestSourceWithCargohome(t *testing.T) {
 	})
 }
 
+func TestDebugGomodSourceFilterConfig(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:        "test-source-filter-gomod",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Testing source filter config with gomod",
+		Sources: map[string]dalec.Source{
+			"src": {
+				Generate: []*dalec.SourceGenerator{{Gomod: &dalec.GeneratorGomod{}}},
+				Inline: &dalec.SourceInline{
+					Dir: &dalec.SourceInlineDir{
+						Files: map[string]*dalec.SourceInlineFile{
+							"main.go": {Contents: gomodFixtureMain},
+							"go.mod":  {Contents: gomodFixtureMod},
+							"go.sum":  {Contents: gomodFixtureSum},
+						},
+					},
+				},
+			},
+		},
+		Dependencies: &dalec.PackageDependencies{
+			Build: map[string]dalec.PackageConstraints{
+				"golang": {},
+			},
+		},
+	}
+
+	filterConfig := llb.Scratch().File(llb.Mkfile("/source-filter.yml", 0o644, []byte(`
+global_excludes:
+  - github.com/cpuguy83/tar2go@v0.3.1
+`)))
+
+	runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+		req := newSolveRequest(
+			withBuildTarget("debug/gomods"),
+			withSpec(ctx, t, spec),
+			withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, filterConfig),
+			withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/source-filter.yml"),
+		)
+
+		res := solveT(ctx, t, gwc, req)
+		ref, err := res.SingleRef()
+		assert.NilError(t, err)
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "github.com/cpuguy83/tar2go@v0.3.1"})
+		assert.Assert(t, err != nil, "expected filtered gomod directory to be absent")
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "cache"})
+		assert.NilError(t, err)
+	})
+}
+
+func TestDebugSourcesSourceFilterConfig(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:        "test-source-filter-debug-sources",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Testing source filter config with debug sources",
+		Sources: map[string]dalec.Source{
+			"src": {
+				Inline: &dalec.SourceInline{
+					Dir: &dalec.SourceInlineDir{
+						Files: map[string]*dalec.SourceInlineFile{
+							"keep.txt": {Contents: "keep"},
+							"drop.txt": {Contents: "drop"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	filterConfig := llb.Scratch().File(llb.Mkfile("/source-filter.yml", 0o644, []byte(`
+global_excludes:
+  - drop.txt
+`)))
+
+	runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+		req := newSolveRequest(
+			withBuildTarget("debug/sources"),
+			withSpec(ctx, t, spec),
+			withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, filterConfig),
+			withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/source-filter.yml"),
+		)
+
+		res := solveT(ctx, t, gwc, req)
+		ref, err := res.SingleRef()
+		assert.NilError(t, err)
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "src/keep.txt"})
+		assert.NilError(t, err)
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "src/drop.txt"})
+		assert.Assert(t, err != nil, "expected filtered source file to be absent")
+	})
+}
+
 func TestSourceContext(t *testing.T) {
 	t.Parallel()
 

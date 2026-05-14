@@ -101,6 +101,7 @@ func (s *Spec) CargohomeDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Cons
 		})
 	}
 
+	deps = deps.With(sourceFilter(sOpt, opts...))
 	return &deps
 }
 

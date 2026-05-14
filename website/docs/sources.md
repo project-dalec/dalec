@@ -354,6 +354,39 @@ Build sources are considered to be "directory" sources.
 Generators are used to generate a source from another source.
 Currently the generators supported are `gomod`, `cargohome`, `pip`, and `nodemod`.
 
+## Build-time source filters
+
+Dalec can load a build-time source filter configuration from a build context.
+This is useful when a packaging or signing environment must reject specific
+source files, but the package spec should not be changed.
+
+The filter config is a YAML file with a `global_excludes` list:
+
+```yaml
+global_excludes:
+  - "testdata/large-fixture.zip"
+  - "vendor/**/examples/**"
+```
+
+Pass the config path with `DALEC_SOURCE_FILTER_CONFIG_PATH`. The file is read
+from the `dalec-source-options` build context unless
+`DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME` names a different build context.
+
+Example with Docker Buildx:
+
+```console
+$ docker buildx build \
+  --build-arg DALEC_SOURCE_FILTER_CONFIG_PATH=source-filter.yml \
+  --build-context dalec-source-options=./ci/dalec \
+  ...
+```
+
+`global_excludes` patterns are evaluated relative to each source root. For
+normal directory sources this uses the same filtering path as `sources.*.excludes`;
+local context filters are pushed into BuildKit context loading. For generated
+aggregate sources such as `gomod`, patterns are relative to the generated cache
+root and are applied after generation.
+
 ### Gomod
 
 The `gomod` generator manages a single go module cache for all sources that
