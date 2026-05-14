@@ -408,6 +408,16 @@ done
 # in which case we keep them and their deps.
 keep_set=$(resolve_deps "$(echo ${keep_set} | tr ' ' '\n')")
 
+# Persist the keep set so the worker dpkg-remove step (which runs against
+# /target using --root=) can validate that every keep-set package is still
+# installed after both purge passes. We can't reliably validate this from
+# inside the container: purge_last may remove dpkg's own shared libraries
+# (libmd, libc, libpam...) before we get to run dpkg-query, producing
+# false "missing" verdicts. The worker has its own working dpkg + libs and
+# can safely query the target rootfs via --root=/target.
+mkdir -p /var/lib/dpkg
+printf '%s\n' ${keep_set} > /var/lib/dpkg/.dalec-keep-set
+
 # purge_last: cleanup tools (+ their deps) not in the keep set. These
 # survive the main purge so they remain available for it, then get purged
 # at the very end.
@@ -454,7 +464,6 @@ fi
 # Remove leftover directories (after dpkg purge so maintainer scripts still work).
 cleanup_dirs="
 /etc/apt
-/etc/systemd
 /usr/lib/apt
 /usr/share/bash-completion
 /usr/share/bug
@@ -465,9 +474,35 @@ cleanup_dirs="
 /var/cache/debconf
 /var/lib/apt
 /var/lib/pam
-/var/lib/systemd
 /var/log
 "
+
+# Preserve /etc/systemd and /var/lib/systemd if the final image actually
+# uses systemd. Otherwise, these are dead config / state directories that
+# can be pruned.
+#
+# We check the dpkg status here (after purge_first has run) rather than
+# only looking at keep_set, because keep_set tracks names from the spec
+# .deb but systemd may also have arrived via a base-image dependency,
+# Provides, or by being pulled in as a Recommends/Suggests.
+#
+# systemctl on PATH is also accepted as a pragmatic proxy: if the user
+# has arranged for systemctl to be available (e.g. via a custom base
+# image where systemd is set up differently), we treat the image as
+# systemd-using.
+keep_systemd=0
+if dpkg -s systemd 2>/dev/null | grep -q '^Status: install ok installed'; then
+    keep_systemd=1
+elif command -v systemctl >/dev/null 2>&1; then
+    keep_systemd=1
+fi
+
+if [ "${keep_systemd}" != "1" ]; then
+    cleanup_dirs="${cleanup_dirs}
+/etc/systemd
+/var/lib/systemd
+"
+fi
 
 if [ "${DALEC_HAS_DOCS}" != "true" ]; then
     cleanup_dirs="${cleanup_dirs}
@@ -501,18 +536,15 @@ if [ -n "${purge_last}" ]; then
 fi
 `
 
-	// Script that runs on the worker to remove dpkg from the target rootfs.
-	// Using --root= lets the worker's own dpkg binary operate on the mounted rootfs
-	// without needing dpkg to exist inside the target.
+	// Script that runs on the worker to (a) optionally remove dpkg from the
+	// target rootfs and (b) validate the target's dpkg database after the
+	// in-container cleanup. Using --root= lets the worker's own dpkg binary
+	// operate on the mounted rootfs without depending on the target's own
+	// (possibly half-removed) dpkg/libraries.
 	dpkgRemoveScript := `#!/bin/sh
 set -x
 
-# Only proceed if the cleanup script signalled that dpkg should be removed.
-if [ ! -f /target/var/lib/dpkg/.dalec-remove-dpkg ]; then
-    echo "dpkg is a runtime dependency, skipping removal"
-    exit 0
-fi
-rm -f /target/var/lib/dpkg/.dalec-remove-dpkg
+keep_set_file=/target/var/lib/dpkg/.dalec-keep-set
 
 # --force-remove-protected was added in dpkg 1.20.6; older releases don't
 # recognize it. The worker's dpkg may differ from the target's, so probe it.
@@ -521,15 +553,57 @@ if dpkg --force-help 2>/dev/null | grep -qw remove-protected; then
     force_remove_protected="--force-remove-protected"
 fi
 
-# Remove dpkg and any leftover packages from the target rootfs using the
-# worker's dpkg binary. Use --purge to clean config-files entries too.
-# /var/lib/dpkg/status is preserved because dpkg only removes files it owns,
-# not the status database itself.
-for pkg in $(dpkg --root=/target -l 2>/dev/null | awk '/^[irpu]/ && !/^ii/ {print $2}' || true); do
-    dpkg --root=/target --purge --force-depends --force-remove-essential ${force_remove_protected} "${pkg}" 2>/dev/null || true
-done
-if dpkg --root=/target -s dpkg 2>/dev/null | grep -q '^Status:.*installed'; then
-    dpkg --root=/target --purge --force-depends --force-remove-essential dpkg || true
+# If the in-container cleanup signalled that dpkg should be removed, do so
+# from the worker side using --root=/target. dpkg cannot purge itself from
+# inside the container, hence this external step.
+if [ -f /target/var/lib/dpkg/.dalec-remove-dpkg ]; then
+    rm -f /target/var/lib/dpkg/.dalec-remove-dpkg
+
+    # Remove dpkg and any leftover packages from the target rootfs using
+    # the worker's dpkg binary. Use --purge to clean config-files entries
+    # too. /var/lib/dpkg/status is preserved because dpkg only removes
+    # files it owns, not the status database itself.
+    for pkg in $(dpkg --root=/target -l 2>/dev/null | awk '/^[irpu]/ && !/^ii/ {print $2}' || true); do
+        dpkg --root=/target --purge --force-depends --force-remove-essential ${force_remove_protected} "${pkg}" 2>/dev/null || true
+    done
+    if dpkg --root=/target -s dpkg 2>/dev/null | grep -q '^Status:.*installed'; then
+        dpkg --root=/target --purge --force-depends --force-remove-essential dpkg || true
+    fi
+else
+    echo "dpkg is a runtime dependency, skipping removal"
+fi
+
+# Validate the target's dpkg database now that all purges (both
+# in-container and worker-side) are done. The in-container cleanup uses
+# --force-depends and tolerates per-package purge failures because
+# individual maintainer scripts often can't run in a stripped container.
+# What we cannot tolerate is the build succeeding while:
+#   - dpkg --audit reports any package in an inconsistent state, or
+#   - any keep-set package ended up half-removed / config-failed / missing.
+# Running these checks from the worker via --root=/target is reliable
+# even when the target's own dpkg/libraries have just been removed.
+audit_output=$(dpkg --root=/target --audit 2>/dev/null || true)
+if [ -n "${audit_output}" ]; then
+    echo "ERROR: dpkg --audit reported inconsistent state in target rootfs:" >&2
+    echo "${audit_output}" >&2
+    exit 1
+fi
+
+if [ -f "${keep_set_file}" ]; then
+    while read -r pkg; do
+        [ -z "${pkg}" ] && continue
+        status=$(dpkg-query --root=/target -W -f='${db:Status-Status}\n' "${pkg}" 2>/dev/null || echo "missing")
+        case "${status}" in
+            installed) ;;
+            *)
+                echo "ERROR: keep-set package '${pkg}' is in state '${status}' after cleanup (expected 'installed')" >&2
+                exit 1
+                ;;
+        esac
+    done < "${keep_set_file}"
+
+    # Remove the marker file so it does not leak into the final image.
+    rm -f "${keep_set_file}"
 fi
 `
 
