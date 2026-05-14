@@ -859,6 +859,36 @@ EOF
 				})
 			})
 
+			t.Run("preserves_systemd_dirs_when_systemd_is_installed", func(t *testing.T) {
+				// When the final image actually has the systemd package
+				// installed (whether requested directly or pulled in
+				// transitively), the cleanup script must not prune
+				// /etc/systemd or /var/lib/systemd — those directories
+				// hold unit files and runtime state required for
+				// systemd to function.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{})
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"systemd": {},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					for _, dir := range []string{"/etc/systemd", "/var/lib/systemd"} {
+						_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: dir})
+						assert.NilError(t, err, "%s must be preserved when systemd is installed", dir)
+					}
+				})
+			})
+
 			t.Run("removes_docs_without_doc_artifacts", func(t *testing.T) {
 				t.Parallel()
 				ctx := startTestSpan(ctx, t)
