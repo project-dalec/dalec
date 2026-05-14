@@ -111,8 +111,6 @@ jobs:
           - suite: other
             skip: Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
 
-    # TODO: support diff/merge
-    # Right now this is handled by the e2e suite, but we can migrate that here.
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.19.2
@@ -126,6 +124,18 @@ jobs:
 
       - name: checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Update Docker
+        run: |
+          set -e
+          docker version
+          docker info
+
+          sudo apt update
+          sudo apt install -y moby-engine=29.4.* moby-buildx=0.33.* moby-cli=29.4.* moby-containerd=2.3.*
+
+          docker version
+          docker info
 
       - uses: ./.github/actions/enable-containerd
 
