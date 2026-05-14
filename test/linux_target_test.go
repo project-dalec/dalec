@@ -822,11 +822,38 @@ EOF
 						"/var/lib/apt",
 						"/var/lib/pam",
 						"/var/lib/systemd",
-						"/var/log",
 					} {
 						_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: dir})
 						assert.ErrorContains(t, err, "no such file", "expected %s to be removed", dir)
 					}
+				})
+			})
+
+			t.Run("empties_var_log_but_keeps_directory", func(t *testing.T) {
+				// /var/log itself must remain as a directory: packages
+				// and runtime processes (logrotate, journald, syslog,
+				// libc's openlog(), various applications) assume it
+				// exists and may fail or crash if it doesn't. Cleanup
+				// should empty its contents but never remove the
+				// directory entry.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					stat, err := ref.StatFile(ctx, gwclient.StatRequest{Path: "/var/log"})
+					assert.NilError(t, err, "/var/log directory must be preserved")
+					assert.Assert(t, stat.IsDir(), "/var/log must remain a directory, got mode %o", stat.Mode)
+
+					entries, err := ref.ReadDir(ctx, gwclient.ReadDirRequest{Path: "/var/log"})
+					assert.NilError(t, err)
+					assert.Equal(t, len(entries), 0, "/var/log should be empty after cleanup, got %d entries", len(entries))
 				})
 			})
 
@@ -926,6 +953,48 @@ EOF
 
 					_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/share/doc"})
 					assert.NilError(t, err, "/usr/share/doc should be preserved when spec has doc artifacts")
+				})
+			})
+
+			t.Run("preserves_usr_share_doc_with_only_license_artifacts", func(t *testing.T) {
+				// On deb targets, dalec installs license artifacts under
+				// /usr/share/doc/<pkg>/. A spec that declares licenses
+				// but no docs or manpages must still keep /usr/share/doc
+				// — otherwise the license files get swept away by the
+				// cleanup pass and the resulting image ships without
+				// the legally required attribution.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Sources: map[string]dalec.Source{
+						"LICENSE": {
+							Inline: &dalec.SourceInline{
+								File: &dalec.SourceInlineFile{
+									Contents: "MIT-licensed\n",
+								},
+							},
+						},
+					},
+					Artifacts: dalec.Artifacts{
+						Licenses: map[string]dalec.ArtifactConfig{
+							"LICENSE": {},
+						},
+					},
+				})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					res := solveT(ctx, t, gwc, sr)
+					ref, err := res.SingleRef()
+					assert.NilError(t, err)
+
+					_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/share/doc"})
+					assert.NilError(t, err, "/usr/share/doc must be preserved when spec has license artifacts (deb installs licenses under /usr/share/doc/<pkg>/)")
+
+					// Spot-check that the license file itself made it into the final image.
+					_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/share/doc/" + spec.Name + "/LICENSE"})
+					assert.NilError(t, err, "license artifact must survive cleanup")
 				})
 			})
 

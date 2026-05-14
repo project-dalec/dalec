@@ -128,7 +128,12 @@ func installPackagesInContainer(input buildContainerInput, ro []llb.RunOption) l
 					// installation of a lot of things, including doc files.
 					// This is mounting over that file with an empty file so that our test suite
 					// passes (as it is looking at these files).
-					if !input.Spec.GetArtifacts(input.Target).HasDocs() {
+					//
+					// Licenses also install under /usr/share/doc on deb targets, so the
+					// excludes workaround is equally required when the spec has license
+					// artifacts (even if it has no docs or manpages).
+					artifacts := input.Spec.GetArtifacts(input.Target)
+					if !artifacts.HasDocs() && len(artifacts.Licenses) == 0 {
 						return
 					}
 
@@ -474,7 +479,6 @@ cleanup_dirs="
 /var/cache/debconf
 /var/lib/apt
 /var/lib/pam
-/var/log
 "
 
 # Preserve /etc/systemd and /var/lib/systemd if the final image actually
@@ -504,13 +508,36 @@ if [ "${keep_systemd}" != "1" ]; then
 "
 fi
 
-if [ "${DALEC_HAS_DOCS}" != "true" ]; then
+if [ "${DALEC_KEEP_USR_SHARE_DOC}" != "true" ]; then
     cleanup_dirs="${cleanup_dirs}
 /usr/share/doc
 /usr/share/man
 /usr/share/info
 "
 fi
+
+# Policy note: the conditional above is "all-or-nothing" for the entire
+# /usr/share/doc, /usr/share/man, /usr/share/info trees. When the spec
+# author opts in by declaring docs/manpages/licenses, dalec preserves
+# these directories wholesale — which also retains docs and manpages
+# shipped by the spec package's RUNTIME DEPENDENCIES. When the spec
+# author opts out (no docs/manpages/licenses), the trees are pruned
+# wholesale, taking dependency-owned docs and manpages with them.
+#
+# This is intentional for the minimal-container use case (the primary
+# consumer of this code path): users who care about image size want all
+# /usr/share/doc and /usr/share/man content gone, and users who declare
+# their own docs/licenses are explicitly expressing "I want these paths
+# to exist in the final image". A more granular policy (e.g. preserve
+# only spec-owned files under those paths) would require either dpkg
+# diversions per file or a post-install scan against a known manifest,
+# both of which add significant complexity for marginal benefit in the
+# minimal-image scenario.
+#
+# Spec authors who want to retain dependency-owned docs/manpages can
+# declare any docs/manpages/licenses of their own to flip the toggle, or
+# use the non-minimal container target where this cleanup does not run
+# at all.
 
 for d in ${cleanup_dirs}; do
     rm -rf "${d}"
@@ -534,6 +561,11 @@ fi
 if [ -n "${purge_last}" ]; then
     PATH="/tmp:${PATH}" dpkg --purge --force-depends --force-remove-essential ${force_remove_protected} ${purge_last} || true
 fi
+
+# Note: /var/log is intentionally NOT cleaned here. dpkg purges above
+# write to /var/log/dpkg.log, and the subsequent worker dpkg-remove step
+# may add more entries. The worker performs the final /var/log emptying
+# at the very end so all log writes are captured.
 `
 
 	// Script that runs on the worker to (a) optionally remove dpkg from the
@@ -605,6 +637,20 @@ if [ -f "${keep_set_file}" ]; then
     # Remove the marker file so it does not leak into the final image.
     rm -f "${keep_set_file}"
 fi
+
+# Empty /target/var/log but keep the directory itself. Many packages and
+# runtime processes (logrotate, journald, syslog, libc's openlog(),
+# application log files, etc.) expect /var/log to exist and will fail or
+# crash if it is missing entirely. Removing only the contents keeps the
+# disk savings while preserving the well-known mount/log point.
+#
+# This runs LAST — after both the in-container cleanup script's purges
+# and the worker's optional dpkg-removal purges above. Both write to
+# /target/var/log/dpkg.log, /target/var/log/apt/, etc., so emptying
+# earlier would just see them repopulated.
+if [ -d /target/var/log ]; then
+    find /target/var/log -mindepth 1 -delete 2>/dev/null || true
+fi
 `
 
 	scriptSt := llb.Scratch().File(llb.Mkfile("cleanup.sh", 0o755, []byte(script)), cleanupOpts...)
@@ -615,13 +661,21 @@ fi
 	stubSt := llb.Scratch().File(llb.Mkfile("stub", 0o755, []byte("#!/bin/sh\nexit 1\n")), cleanupOpts...)
 
 	// Run the main cleanup inside the container (purges everything except dpkg).
+	//
+	// DALEC_KEEP_USR_SHARE_DOC drives whether /usr/share/doc, /usr/share/man,
+	// and /usr/share/info are preserved. On deb targets, dalec installs
+	// license artifacts under /usr/share/doc/<pkg>/, so we must preserve
+	// those paths whenever the spec has docs, manpages, OR licenses.
+	artifacts := input.Spec.GetArtifacts(input.Target)
+	keepUsrShareDoc := artifacts.HasDocs() || len(artifacts.Licenses) > 0
+
 	st = st.Run(
 		dalec.WithConstraints(cleanupOpts...),
 		llb.AddMount("/tmp/dalec-cleanup.sh", scriptSt, llb.SourcePath("cleanup.sh"), llb.Readonly),
 		llb.AddMount("/tmp/dalec-spec-packages", input.SpecPackages, llb.Readonly),
 		llb.AddMount("/tmp/diff", stubSt, llb.SourcePath("stub"), llb.Readonly),
 		llb.AddMount("/tmp/tar", stubSt, llb.SourcePath("stub"), llb.Readonly),
-		llb.AddEnv("DALEC_HAS_DOCS", strconv.FormatBool(input.Spec.GetArtifacts(input.Target).HasDocs())),
+		llb.AddEnv("DALEC_KEEP_USR_SHARE_DOC", strconv.FormatBool(keepUsrShareDoc)),
 		llb.Args([]string{"/usr/bin/sh", "/tmp/dalec-cleanup.sh"}),
 	).Root()
 
