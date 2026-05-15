@@ -928,12 +928,13 @@ EOF
 				t.Parallel()
 				ctx := startTestSpan(ctx, t)
 
+				const readmeContents = "hello docs"
 				spec := testLinuxSpec(t, dalec.Spec{
 					Sources: map[string]dalec.Source{
 						"README": {
 							Inline: &dalec.SourceInline{
 								File: &dalec.SourceInlineFile{
-									Contents: "hello docs",
+									Contents: readmeContents,
 								},
 							},
 						},
@@ -951,8 +952,15 @@ EOF
 					ref, err := res.SingleRef()
 					assert.NilError(t, err)
 
-					_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/share/doc"})
-					assert.NilError(t, err, "/usr/share/doc should be preserved when spec has doc artifacts")
+					// Verify the spec-declared doc artifact survives cleanup
+					// in its expected on-disk location with intact contents.
+					// A bare StatFile on /usr/share/doc would pass even if
+					// cleanup accidentally emptied the directory but left
+					// the mountpoint behind.
+					docPath := "/usr/share/doc/" + spec.Name + "/README"
+					got, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: docPath})
+					assert.NilError(t, err, "spec doc artifact must be present at %s after cleanup", docPath)
+					assert.Equal(t, string(got), readmeContents, "spec doc artifact contents must be intact at %s", docPath)
 				})
 			})
 
@@ -966,12 +974,13 @@ EOF
 				t.Parallel()
 				ctx := startTestSpan(ctx, t)
 
+				const licenseContents = "MIT-licensed\n"
 				spec := testLinuxSpec(t, dalec.Spec{
 					Sources: map[string]dalec.Source{
 						"LICENSE": {
 							Inline: &dalec.SourceInline{
 								File: &dalec.SourceInlineFile{
-									Contents: "MIT-licensed\n",
+									Contents: licenseContents,
 								},
 							},
 						},
@@ -989,12 +998,14 @@ EOF
 					ref, err := res.SingleRef()
 					assert.NilError(t, err)
 
-					_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/share/doc"})
-					assert.NilError(t, err, "/usr/share/doc must be preserved when spec has license artifacts (deb installs licenses under /usr/share/doc/<pkg>/)")
-
-					// Spot-check that the license file itself made it into the final image.
-					_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/share/doc/" + spec.Name + "/LICENSE"})
-					assert.NilError(t, err, "license artifact must survive cleanup")
+					// Verify the actual license artifact survives cleanup
+					// with intact contents. Checking only that
+					// /usr/share/doc exists would pass even if cleanup
+					// emptied the directory but kept the mountpoint.
+					licensePath := "/usr/share/doc/" + spec.Name + "/LICENSE"
+					got, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: licensePath})
+					assert.NilError(t, err, "license artifact must survive cleanup at %s", licensePath)
+					assert.Equal(t, string(got), licenseContents, "license artifact contents must be intact at %s", licensePath)
 				})
 			})
 
@@ -1002,6 +1013,17 @@ EOF
 				t.Parallel()
 				ctx := startTestSpan(ctx, t)
 
+				// Asserts that spec-declared runtime deps survive the
+				// cleanup pass as files on disk.
+				//
+				// End-to-end exec validation of a runtime dep is
+				// covered by the sibling
+				// virtual_package_runtime_dep_resolves test, which
+				// actually runs /usr/bin/awk after cleanup and checks
+				// its stdout. That test catches missing dynamic
+				// linkers, broken shared library closures, and other
+				// runtime-only regressions that a bare StatFile check
+				// would silently miss.
 				spec := testLinuxSpec(t, dalec.Spec{
 					Tests: []*dalec.TestSpec{
 						{

@@ -328,8 +328,25 @@ func cleanupBootstrapContainer(st llb.State, input buildContainerInput, opts ...
 	cleanupOpts := append(opts, dalec.ProgressGroup("Cleanup Bootstrap Container"))
 
 	script := `#!/bin/sh
-
 set -x
+
+# Append /tmp to PATH so the no-op diff/tar stubs mounted there by the
+# Go caller (see stubSt below) are picked up by any maintainer script
+# that calls 'diff' or 'tar' without an absolute path AFTER the real
+# tools have been purged. These stubs need to be reachable for BOTH
+# purge passes (purge_first and purge_last) — the first pass purges
+# most of the system and frequently triggers prerm/postrm scripts
+# that exec diff or tar; if those tools have already been removed and
+# the stubs are not on PATH, the maintainer scripts crash and leave
+# packages in an inconsistent state.
+#
+# IMPORTANT: /tmp is APPENDED, not prepended. dpkg-deb internally
+# execs 'tar' to read .deb control archives, so prepending /tmp would
+# make every dpkg-deb invocation in this script (including the
+# keep_set seeding right below) fail with 'tar subprocess returned
+# error exit status 1' and leave us with an empty keep_set.
+PATH="${PATH}:/tmp"
+export PATH
 
 # Remove problematic maintainer scripts that cause infinite loops during purge.
 rm -f /var/lib/dpkg/info/libpam-runtime.prerm 2>/dev/null || true
@@ -403,15 +420,58 @@ resolve_deps() {
 }
 
 # Packages from the user's spec — the starting point of the keep set.
+#
+# Seed with TWO sources, then take the transitive closure of both:
+#
+#   1. The spec package names themselves (read from each .deb's Package
+#      field). resolve_deps will walk their dpkg-query Depends and find
+#      everything they require post-install.
+#
+#   2. The Depends + Pre-Depends fields read directly from each spec
+#      .deb's control data. This is the critical safety net: if
+#      anything goes wrong with the spec package's installed state in
+#      dpkg's database (e.g. half-configured, missing entirely from
+#      the status DB, or dpkg-query returning empty Depends for any
+#      reason), resolve_deps walking only from the package name would
+#      drop the user's runtime deps from the keep set and they'd be
+#      purged. Reading Depends straight from the .deb sidesteps any
+#      installed-state pathologies.
 keep_set=""
 for f in $(ls /tmp/dalec-spec-packages/*.deb 2>/dev/null); do
     keep_set="${keep_set} $(dpkg-deb -f "${f}" Package)"
+
+    # Pull the runtime Depends + Pre-Depends from the .deb control
+    # itself and normalize them the same way resolve_deps normalizes
+    # dpkg-query output (strip version constraints, arch restrictions,
+    # whitespace, multi-arch qualifiers; keep '|' alternatives so they
+    # are split into individual names below).
+    raw_deps=$(dpkg-deb -f "${f}" Depends Pre-Depends 2>/dev/null \
+        | sed 's/^[A-Za-z-]*: *//' \
+        | tr ',' '\n' \
+        | sed 's/([^)]*)//g; s/\[[^]]*\]//g; s/[[:space:]]//g; s/:[a-z0-9-]*//g' \
+        | grep -v '^$' | sort -u)
+    for dep_alt in ${raw_deps}; do
+        for dep in $(echo "${dep_alt}" | tr '|' ' '); do
+            [ -z "${dep}" ] && continue
+            keep_set="${keep_set} ${dep}"
+        done
+    done
 done
 
-# Full transitive closure of spec packages. Cleanup tools end up here only
-# if a spec package actually depends on them (directly or transitively),
-# in which case we keep them and their deps.
+# Full transitive closure of the seed set. Cleanup tools end up here
+# only if a spec package actually depends on them (directly or
+# transitively), in which case we keep them and their deps.
 keep_set=$(resolve_deps "$(echo ${keep_set} | tr ' ' '\n')")
+
+# Surface the resolved keep set in build logs for diagnostic purposes.
+# A small keep_set (just the spec package itself, no transitive deps)
+# is a legitimate outcome for specs that declare no runtime deps and
+# whose generated .deb's Depends field is empty — those builds intend
+# the cleanup to purge everything except the spec package. We log the
+# resolved set so unexpected smallness is at least visible to anyone
+# triaging "the binary I expected is missing" issues, but we do NOT
+# fail the build here.
+echo "DALEC keep_set (resolved): ${keep_set}"
 
 # Persist the keep set so the worker dpkg-remove step (which runs against
 # /target using --root=) can validate that every keep-set package is still
@@ -420,8 +480,21 @@ keep_set=$(resolve_deps "$(echo ${keep_set} | tr ' ' '\n')")
 # (libmd, libc, libpam...) before we get to run dpkg-query, producing
 # false "missing" verdicts. The worker has its own working dpkg + libs and
 # can safely query the target rootfs via --root=/target.
+#
+# Only the names that correspond to actually-installed packages are
+# persisted. The seed includes the raw Depends names (e.g. 'awk') which
+# resolve_deps then follows via Provides to a real installed package
+# (e.g. 'mawk'); both end up in ${keep_set}, but the worker can only
+# audit the latter — dpkg-query against the virtual name 'awk' would
+# return 'not-installed' and produce a false-positive validation
+# failure even though the build is correct.
 mkdir -p /var/lib/dpkg
-printf '%s\n' ${keep_set} > /var/lib/dpkg/.dalec-keep-set
+: > /var/lib/dpkg/.dalec-keep-set
+for pkg in ${keep_set}; do
+    if dpkg-query -W -f='${db:Status-Status}\n' "${pkg}" 2>/dev/null | grep -qx installed; then
+        printf '%s\n' "${pkg}" >> /var/lib/dpkg/.dalec-keep-set
+    fi
+done
 
 # purge_last: cleanup tools (+ their deps) not in the keep set. These
 # survive the main purge so they remain available for it, then get purged
@@ -432,7 +505,13 @@ purge_last=""
 # maintainer scripts, etc.) but not necessarily wanted in the final image.
 # If a spec package transitively depends on any of these, it (and its full
 # dependency tree) stays in the keep set; otherwise it gets purged at the end.
-for pkg in dpkg dash coreutils base-files libc-bin grep; do
+#
+# findutils provides /usr/bin/find and /usr/bin/xargs, which many
+# packages' prerm/postrm scripts shell out to during the first purge
+# pass (e.g. libstdc++6's prerm uses 'find … | xargs' to clear ld.so
+# cache entries). Purging findutils early causes those scripts to
+# exit 127 and leaves their owning packages in a half-removed state.
+for pkg in dpkg dash coreutils base-files libc-bin grep findutils; do
     if echo "${keep_set}" | grep -qw "${pkg}"; then continue; fi
 
     # dpkg can't purge itself from inside the container; signal the worker
@@ -463,6 +542,33 @@ for pkg in $(dpkg-query -W -f='${Package}\n' | sed 's/:.*//g'); do
 done
 
 if [ -n "${purge_first}" ]; then
+    # Strip prerm/postrm scripts of packages we're about to purge.
+    # Many of them (libpam-modules, libpam0g, anything debconf-aware)
+    # unconditionally exec helpers like /usr/share/debconf/frontend
+    # that may already have been purged earlier in this same pass —
+    # dpkg purges in alphabetical order, not dependency order, so
+    # debconf often goes away before its consumers. When that happens,
+    # the script returns exit 127, dpkg flags the package as failed,
+    # and the worker-side dpkg --audit reports the resulting
+    # 'config-files' state as inconsistent and fails the build.
+    #
+    # Skipping the *rm scripts is safe in this context:
+    #   - cleanup_dirs and the final layer squash wipe whatever state
+    #     a postrm would have unwound.
+    #   - The packages being purged are explicitly not in the final
+    #     image, so nothing depends on the unwind side-effects.
+    #
+    # Multi-arch packages have files named ${pkg}:${arch}.{pre,post}rm,
+    # which is why we use a shell glob in addition to the bare name.
+    for pkg in ${purge_first}; do
+        rm -f "/var/lib/dpkg/info/${pkg}.prerm" \
+              "/var/lib/dpkg/info/${pkg}.postrm" 2>/dev/null || true
+        for f in /var/lib/dpkg/info/${pkg}:*.prerm \
+                 /var/lib/dpkg/info/${pkg}:*.postrm; do
+            [ -e "${f}" ] && rm -f "${f}"
+        done
+    done
+
     dpkg --purge --force-depends --force-remove-essential ${purge_first} || true
 fi
 
@@ -490,14 +596,36 @@ cleanup_dirs="
 # .deb but systemd may also have arrived via a base-image dependency,
 # Provides, or by being pulled in as a Recommends/Suggests.
 #
-# systemctl on PATH is also accepted as a pragmatic proxy: if the user
-# has arranged for systemctl to be available (e.g. via a custom base
-# image where systemd is set up differently), we treat the image as
-# systemd-using.
+# Detection covers three signals, in order:
+#   1. The systemd PID-1 binary itself is on disk. This is the most
+#      reliable indicator because dpkg-deb --extract unpacks files
+#      regardless of whether postinst later succeeds. In stripped /
+#      minimal containers systemd's postinst frequently fails (no init,
+#      no D-Bus, can't enable units), leaving the package in
+#      'half-configured' state — but the binary is present and
+#      /etc/systemd still matters.
+#
+#      We deliberately do NOT check for /usr/lib/systemd/system as a
+#      proxy: many non-systemd packages (e2fsprogs, init-system-helpers,
+#      dbus, etc.) ship unit files there, so its presence does not imply
+#      that systemd itself is installed.
+#   2. dpkg-query reports any installed-ish state for the systemd
+#      package (covers the half-configured case explicitly, in case the
+#      binary lives in a non-standard location).
+#   3. systemctl on PATH — pragmatic fallback for custom base images
+#      where systemd is set up by other means.
 keep_systemd=0
-if dpkg -s systemd 2>/dev/null | grep -q '^Status: install ok installed'; then
+if [ -x /usr/lib/systemd/systemd ] || [ -x /lib/systemd/systemd ]; then
     keep_systemd=1
-elif command -v systemctl >/dev/null 2>&1; then
+fi
+if [ "${keep_systemd}" != "1" ]; then
+    case "$(dpkg-query -W -f='${db:Status-Status}\n' systemd 2>/dev/null)" in
+        installed|half-configured|triggers-awaited|triggers-pending)
+            keep_systemd=1
+            ;;
+    esac
+fi
+if [ "${keep_systemd}" != "1" ] && command -v systemctl >/dev/null 2>&1; then
     keep_systemd=1
 fi
 
@@ -559,7 +687,7 @@ if dpkg --force-help 2>/dev/null | grep -qw remove-protected; then
 fi
 
 if [ -n "${purge_last}" ]; then
-    PATH="/tmp:${PATH}" dpkg --purge --force-depends --force-remove-essential ${force_remove_protected} ${purge_last} || true
+    dpkg --purge --force-depends --force-remove-essential ${force_remove_protected} ${purge_last} || true
 fi
 
 # Note: /var/log is intentionally NOT cleaned here. dpkg purges above
