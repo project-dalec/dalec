@@ -2880,6 +2880,81 @@ func main() {
 		})
 	})
 
+	t.Run("go module replace", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		pg := dalec.ProgressGroup("Setup gomod replace context")
+
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0o644, []byte("module example.com/app\n\ngo 1.18\n\nrequire example.com/dep v0.0.0\n")), pg).
+			File(llb.Mkfile("/main.go", 0o644, []byte(`package main
+
+import (
+	"fmt"
+
+	"example.com/dep"
+)
+
+func main() {
+	fmt.Println(dep.Value())
+}
+`)), pg).
+			File(llb.Mkdir("/dep", 0o755), pg).
+			File(llb.Mkfile("/dep/go.mod", 0o644, []byte("module example.com/dep\n\ngo 1.18\n")), pg).
+			File(llb.Mkfile("/dep/dep.go", 0o644, []byte(`package dep
+
+func Value() string {
+	return "local dep"
+}
+`)), pg)
+
+		const contextName = "gomod-replace-package-test"
+
+		spec := &dalec.Spec{
+			Name:        "test-build-with-gomod-replace",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing package target gomod replace preprocessing",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "example.com/dep", Update: "./dep"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace example.com/dep => ./dep' ./src/go.mod"},
+					{Command: "cd ./src && go build"},
+					{Command: "test \"$(cd ./src && go run .)\" = 'local dep'"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("cargo home", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
