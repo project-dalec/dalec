@@ -2,45 +2,73 @@ package frontendapi
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/containerd/plugin"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/debug"
 	"github.com/project-dalec/dalec/internal/plugins"
 	_ "github.com/project-dalec/dalec/targets/plugin"
 )
 
-func NewBuildRouter(ctx context.Context) (*frontend.BuildMux, error) {
-	var mux frontend.BuildMux
-	mux.Add(debug.DebugRoute, debug.Handle, nil)
-
-	if err := loadBuildPlugins(ctx, &mux); err != nil {
+// NewRouter creates a Router with all routes registered.
+func NewRouter(ctx context.Context, client gwclient.Client) (*frontend.Router, error) {
+	spec, err := frontend.LoadSpecForRouting(ctx, client)
+	if err != nil {
 		return nil, err
 	}
-	return &mux, nil
-}
 
-func loadBuildPlugins(ctx context.Context, mux *frontend.BuildMux) error {
-	set := plugin.NewPluginSet()
+	r := &frontend.Router{}
 
-	filter := func(r *plugins.Registration) bool {
-		return r.Type != plugins.TypeBuildTarget
+	// Register debug routes.
+	for _, route := range debug.Routes(debug.DebugRoute) {
+		r.Add(ctx, route)
 	}
 
-	for _, r := range plugins.Graph(filter) {
+	// Load route providers from the plugin registry.
+	if err := loadRouteProviders(ctx, spec, r); err != nil {
+		return nil, err
+	}
+
+	return r, nil
+}
+
+func loadRouteProviders(ctx context.Context, spec *dalec.Spec, r *frontend.Router) error {
+	set := plugin.NewPluginSet()
+
+	filter := func(reg *plugins.Registration) bool {
+		return reg.Type != plugins.TypeRouteProvider
+	}
+
+	for _, reg := range plugins.Graph(filter) {
 		cfg := plugin.NewContext(ctx, set, nil)
 
-		p := r.Init(cfg)
+		p := reg.Init(cfg)
 		if err := set.Add(p); err != nil {
 			return err
 		}
 
 		v, err := p.Instance()
-		if err != nil && !plugin.IsSkipPlugin(err) {
+		if err != nil {
+			if plugin.IsSkipPlugin(err) {
+				continue
+			}
 			return err
 		}
 
-		mux.Add(r.ID, v.(plugins.BuildHandler).HandleBuild, nil)
+		provider, ok := v.(plugins.RouteProvider)
+		if !ok {
+			return fmt.Errorf("plugin %T does not implement RouteProvider", v)
+		}
+		routes, err := provider.Routes(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("error loading routes for %s: %w", reg.URI(), err)
+		}
+		for _, route := range routes {
+			r.Add(ctx, route)
+		}
 	}
 
 	return nil
