@@ -103,7 +103,7 @@ func GetBuildArg(client gwclient.Client, k string) (string, bool) {
 }
 
 func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.Client, platform *ocispecs.Platform) dalec.SourceOpts {
-	return dalec.SourceOpts{
+	sOpt := dalec.SourceOpts{
 		TargetPlatform: platform,
 		Resolver:       c,
 		Forward:        ForwarderFromClient(ctx, c),
@@ -129,6 +129,12 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 		},
 		GitCredHelperOpt: withCredHelper(c),
 	}
+
+	sOpt.SourceFilter = sync.OnceValues(func() (dalec.SourceFilterConfig, error) {
+		return loadSourceFilterConfig(ctx, c, sOpt.GetContext)
+	})
+
+	return sOpt
 }
 
 func SourceOptFromClient(ctx context.Context, c gwclient.Client, platform *ocispecs.Platform) (dalec.SourceOpts, error) {

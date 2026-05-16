@@ -133,6 +133,7 @@ func (s *Spec) PipDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constraint
 
 	// Merge all cache states into a single state
 	merged := MergeAtPath(llb.Scratch(), cacheStates, "/", opts...)
+	merged = merged.With(sourceFilter(sOpt, opts...))
 	return &merged
 }
 

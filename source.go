@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/goccy/go-yaml/ast"
@@ -153,6 +154,7 @@ type SourceOpts struct {
 	GetContext       func(string, ...llb.LocalOption) (*llb.State, error)
 	TargetPlatform   *ocispecs.Platform
 	GitCredHelperOpt func() (llb.RunOption, error)
+	SourceFilter     func() (SourceFilterConfig, error)
 }
 
 var errInvalidMountConfig = errors.New("invalid mount config")
@@ -198,7 +200,19 @@ func (s Source) Doc(name string) io.Reader {
 	if s.Path != "" {
 		fmt.Fprintln(buf, "	Extracted path:", s.Path)
 	}
+	writeSourceDocList(buf, "Includes", s.Includes)
+	writeSourceDocList(buf, "Excludes", s.Excludes)
 	return buf
+}
+
+func writeSourceDocList(w io.Writer, name string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	printDocLn(w, "\t"+name+":")
+	for _, value := range values {
+		printDocLn(w, "\t\t", value)
+	}
 }
 
 func patchSource(worker, sourceState llb.State, sourceToState map[string]llb.State, patchNames []PatchSpec, subPath string, sources map[string]Source, sourceName string, opts ...llb.ConstraintsOpt) llb.State {
@@ -441,7 +455,10 @@ func (s *Source) validate() error {
 
 	if !invalid {
 		// Only validate the source if it is a valid source variant so as to avoid panics.
-		if err := s.toInterface().validate(s.fetchOptions(SourceOpts{})); err != nil {
+		fo, err := s.fetchOptions(SourceOpts{})
+		if err != nil {
+			errs = append(errs, err)
+		} else if err := s.toInterface().validate(fo); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -474,17 +491,31 @@ type fetchOptions struct {
 	SourceOpt   SourceOpts
 }
 
-func (s *Source) fetchOptions(sOpt SourceOpts) fetchOptions {
+func (s *Source) fetchOptions(sOpt SourceOpts) (fetchOptions, error) {
+	excludes := s.Excludes
+	if s.IsDir() {
+		globalExcludes, err := sOpt.sourceFilterExcludes()
+		if err != nil {
+			return fetchOptions{}, err
+		}
+		if len(globalExcludes) > 0 {
+			excludes = append(slices.Clone(excludes), globalExcludes...)
+		}
+	}
+
 	return fetchOptions{
 		Includes:  s.Includes,
-		Excludes:  s.Excludes,
+		Excludes:  excludes,
 		Path:      s.Path,
 		SourceOpt: sOpt,
-	}
+	}, nil
 }
 
 func (s *Source) ToState(name string, sOpt SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
-	fo := s.fetchOptions(sOpt)
+	fo, err := s.fetchOptions(sOpt)
+	if err != nil {
+		return ErrorState(llb.Scratch(), err)
+	}
 	fo.Constraints = opts
 	fo.Rename = name
 	st := s.toInterface().toState(fo)
@@ -492,7 +523,10 @@ func (s *Source) ToState(name string, sOpt SourceOpts, opts ...llb.ConstraintsOp
 }
 
 func (s *Source) ToMount(sOpt SourceOpts, constraints ...llb.ConstraintsOpt) (llb.State, []llb.MountOption) {
-	fo := s.fetchOptions(sOpt)
+	fo, err := s.fetchOptions(sOpt)
+	if err != nil {
+		return ErrorState(llb.Scratch(), err), nil
+	}
 	fo.Constraints = append(fo.Constraints, constraints...)
 
 	st, mountOpts := s.toInterface().toMount(fo)

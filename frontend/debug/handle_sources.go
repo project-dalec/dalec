@@ -18,9 +18,9 @@ func Sources(ctx context.Context, client gwclient.Client) (*gwclient.Result, err
 			return nil, nil, err
 		}
 
-		sources := dalec.Sources(spec, sOpt)
-
 		pg := dalec.ProgressGroup("Sources for " + targetKey + " rpm build: " + spec.Name)
+
+		sources := dalec.Sources(spec, sOpt, pg)
 
 		def, err := dalec.MergeAtPath(llb.Scratch(), dalec.SortedMapValues(sources), "/", pg).Marshal(ctx)
 		if err != nil {
