@@ -51,6 +51,12 @@ type Target struct {
 
 	// Conflicts is the list of packages that this target conflicts with.
 	Conflicts PackageDependencyList `yaml:"conflicts,omitempty" json:"conflicts,omitempty"`
+
+	// Packages defines supplemental packages produced from the same build output
+	// as the primary package. Each entry produces an additional package with its
+	// own artifact selection, runtime dependencies, and metadata.
+	// The map key is used as a suffix for the default package name ("<specName>-<key>").
+	Packages map[string]SubPackage `yaml:"packages,omitempty" json:"packages,omitempty"`
 }
 
 func (t *Target) validate() error {
@@ -71,6 +77,12 @@ func (t *Target) validate() error {
 
 	if err := t.Image.validate(); err != nil {
 		errs = append(errs, errors.Wrap(err, "postinstall"))
+	}
+
+	for key, pkg := range t.Packages {
+		if err := pkg.validate(); err != nil {
+			errs = append(errs, errors.Wrapf(err, "package %s", key))
+		}
 	}
 
 	return goerrors.Join(errs...)
@@ -131,10 +143,22 @@ func (t *Target) processBuildArgs(lex *shell.Lex, args map[string]string, allowA
 		}
 	}
 
+	for key, pkg := range t.Packages {
+		if err := pkg.processBuildArgs(lex, args, allowArg); err != nil {
+			errs = append(errs, errors.Wrapf(err, "package %s", key))
+		}
+		t.Packages[key] = pkg
+	}
+
 	return goerrors.Join(errs...)
 }
 
 func (t *Target) fillDefaults() {
 	t.Dependencies.fillDefaults()
 	t.Image.fillDefaults()
+
+	for key, pkg := range t.Packages {
+		pkg.fillDefaults()
+		t.Packages[key] = pkg
+	}
 }

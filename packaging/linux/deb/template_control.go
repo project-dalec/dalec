@@ -220,6 +220,101 @@ func (w *controlWrapper) Provides() fmt.Stringer {
 	return b
 }
 
+func (w *controlWrapper) SubPackages() fmt.Stringer {
+	b := &strings.Builder{}
+
+	packages := w.Spec.GetSubPackages(w.Target)
+	if len(packages) == 0 {
+		return b
+	}
+
+	artifacts := w.Spec.GetArtifacts(w.Target)
+
+	keys := dalec.SortMapKeys(packages)
+	for _, key := range keys {
+		pkg := packages[key]
+		resolvedName := pkg.ResolvedName(w.Spec.Name, key)
+		w.writeSubPackageStanza(b, resolvedName, &pkg, artifacts.DisableAutoRequires)
+	}
+
+	return b
+}
+
+func (w *controlWrapper) writeSubPackageStanza(b *strings.Builder, resolvedName string, pkg *dalec.SubPackage, disableAutoRequires bool) {
+	fmt.Fprintf(b, "Package: %s\n", resolvedName)
+	fmt.Fprintf(b, "Architecture: %s\n", w.Architecture())
+	fmt.Fprintln(b, "Section: -")
+
+	w.subPackageDepends(b, pkg, disableAutoRequires)
+	w.subPackageRecommends(b, pkg)
+
+	if len(pkg.Replaces) > 0 {
+		ls := AppendConstraints(pkg.Replaces)
+		fmt.Fprintln(b, multiline("Replaces", ls))
+	}
+
+	if len(pkg.Conflicts) > 0 {
+		ls := AppendConstraints(pkg.Conflicts)
+		fmt.Fprintln(b, multiline("Conflicts", ls))
+	}
+
+	if len(pkg.Provides) > 0 {
+		ls := AppendConstraints(pkg.Provides)
+		fmt.Fprintln(b, multiline("Provides", ls))
+	}
+
+	if pkg.Description != "" {
+		fmt.Fprintf(b, "Description: %s\n", pkg.Description)
+	}
+	fmt.Fprintln(b)
+}
+
+func (w *controlWrapper) subPackageDepends(b *strings.Builder, pkg *dalec.SubPackage, disableAutoRequires bool) {
+	const (
+		shlibsDeps = "${shlibs:Depends}"
+		miscDeps   = "${misc:Depends}"
+	)
+
+	rtDeps := pkg.Dependencies.GetRuntime()
+	needsClone := rtDeps != nil
+
+	if !disableAutoRequires {
+		if _, exists := rtDeps[shlibsDeps]; !exists {
+			if needsClone {
+				rtDeps = maps.Clone(rtDeps)
+				needsClone = false
+			}
+			if rtDeps == nil {
+				rtDeps = make(dalec.PackageDependencyList)
+			}
+			rtDeps[shlibsDeps] = dalec.PackageConstraints{}
+		}
+	}
+
+	if _, exists := rtDeps[miscDeps]; !exists {
+		if needsClone {
+			rtDeps = maps.Clone(rtDeps)
+		}
+		if rtDeps == nil {
+			rtDeps = make(dalec.PackageDependencyList)
+		}
+		rtDeps[miscDeps] = dalec.PackageConstraints{}
+	}
+
+	deps := AppendConstraints(rtDeps)
+	fmt.Fprintln(b, multiline("Depends", deps))
+}
+
+func (w *controlWrapper) subPackageRecommends(b *strings.Builder, pkg *dalec.SubPackage) {
+	recommends := pkg.Dependencies.GetRecommends()
+	if len(recommends) == 0 {
+		return
+	}
+
+	deps := AppendConstraints(recommends)
+	fmt.Fprintln(b, multiline("Recommends", deps))
+}
+
 var (
 	//go:embed templates/debian_control.tmpl
 	controlTmplContent []byte

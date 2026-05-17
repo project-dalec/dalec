@@ -1126,3 +1126,447 @@ func TestTemplate_TargetSpecificOverrides(t *testing.T) {
 		assert.Assert(t, cmp.Contains(provides, "Provides: root-pkg-p == 5.0.0"))
 	})
 }
+
+func TestTemplate_SubPackages(t *testing.T) {
+	t.Run("no supplemental packages", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{Spec: &dalec.Spec{Name: "foo"}}
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		assert.Equal(t, got.String(), "")
+	})
+
+	t.Run("single subpackage with default name", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"debug": {
+								Description: "Debug symbols for foo",
+								Artifacts: &dalec.Artifacts{
+									Binaries: map[string]dalec.ArtifactConfig{
+										"foo-debug": {},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		s := got.String()
+
+		// Should have %package with -n foo-debug (default naming: parent-key)
+		assert.Assert(t, cmp.Contains(s, "%package -n foo-debug"))
+		assert.Assert(t, cmp.Contains(s, "Summary: Debug symbols for foo"))
+		assert.Assert(t, cmp.Contains(s, "%description -n foo-debug"))
+		assert.Assert(t, cmp.Contains(s, "Debug symbols for foo"))
+		assert.Assert(t, cmp.Contains(s, "%files -n foo-debug"))
+		assert.Assert(t, cmp.Contains(s, "%{_bindir}/foo-debug"))
+	})
+
+	t.Run("subpackage with custom name", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"compat": {
+								Name:        "foo-compat-v2",
+								Description: "Backward compatibility shim",
+								Artifacts: &dalec.Artifacts{
+									Binaries: map[string]dalec.ArtifactConfig{
+										"foo-v2": {},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		s := got.String()
+
+		// Should use custom name
+		assert.Assert(t, cmp.Contains(s, "%package -n foo-compat-v2"))
+		assert.Assert(t, cmp.Contains(s, "Summary: Backward compatibility shim"))
+		assert.Assert(t, cmp.Contains(s, "%description -n foo-compat-v2"))
+		assert.Assert(t, cmp.Contains(s, "%files -n foo-compat-v2"))
+		assert.Assert(t, cmp.Contains(s, "%{_bindir}/foo-v2"))
+	})
+
+	t.Run("subpackage with dependencies", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"devel": {
+								Description: "Development files for foo",
+								Dependencies: &dalec.SubPackageDependencies{
+									Runtime: dalec.PackageDependencyList{
+										"foo": dalec.PackageConstraints{
+											Version: []string{"= %{version}-%{release}"},
+										},
+										"libfoo-headers": {},
+									},
+									Recommends: dalec.PackageDependencyList{
+										"foo-docs": {},
+									},
+								},
+								Provides: dalec.PackageDependencyList{
+									"foo-dev": {},
+								},
+								Conflicts: dalec.PackageDependencyList{
+									"foo-devel-old": {
+										Version: []string{"< 1.0"},
+									},
+								},
+								Replaces: dalec.PackageDependencyList{
+									"foo-devel-legacy": {},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		s := got.String()
+
+		// Dependencies
+		assert.Assert(t, cmp.Contains(s, "Requires: foo == %{version}-%{release}"))
+		assert.Assert(t, cmp.Contains(s, "Requires: libfoo-headers"))
+		assert.Assert(t, cmp.Contains(s, "Recommends: foo-docs"))
+		assert.Assert(t, cmp.Contains(s, "Provides: foo-dev"))
+		assert.Assert(t, cmp.Contains(s, "Conflicts: foo-devel-old < 1.0"))
+		assert.Assert(t, cmp.Contains(s, "Obsoletes: foo-devel-legacy"))
+	})
+
+	t.Run("multiple subpackages sorted", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"debug": {
+								Description: "Debug package",
+								Artifacts: &dalec.Artifacts{
+									Binaries: map[string]dalec.ArtifactConfig{
+										"foo-debug": {},
+									},
+								},
+							},
+							"contrib": {
+								Description: "Contrib package",
+								Artifacts: &dalec.Artifacts{
+									Binaries: map[string]dalec.ArtifactConfig{
+										"foo-contrib": {},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		s := got.String()
+
+		// Both subpackages should be present
+		assert.Assert(t, cmp.Contains(s, "%package -n foo-contrib"))
+		assert.Assert(t, cmp.Contains(s, "%package -n foo-debug"))
+
+		// contrib should come before debug (sorted by key)
+		contribIdx := strings.Index(s, "%package -n foo-contrib")
+		debugIdx := strings.Index(s, "%package -n foo-debug")
+		assert.Assert(t, contribIdx < debugIdx, "contrib should appear before debug (sorted)")
+	})
+
+	t.Run("subpackage with nil artifacts", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"meta": {
+								Description: "Meta package with no artifacts",
+								Dependencies: &dalec.SubPackageDependencies{
+									Runtime: dalec.PackageDependencyList{
+										"foo":       {},
+										"foo-debug": {},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		s := got.String()
+
+		assert.Assert(t, cmp.Contains(s, "%package -n foo-meta"))
+		assert.Assert(t, cmp.Contains(s, "%files -n foo-meta"))
+		// Should have requires but empty files section
+		assert.Assert(t, cmp.Contains(s, "Requires: foo\n"))
+		assert.Assert(t, cmp.Contains(s, "Requires: foo-debug\n"))
+	})
+
+	t.Run("subpackage with systemd units", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"service": {
+								Description: "Service package",
+								Artifacts: &dalec.Artifacts{
+									Systemd: &dalec.SystemdConfiguration{
+										Units: map[string]dalec.SystemdUnitConfig{
+											"foo-svc.service": {
+												Enable: true,
+												Start:  true,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		s := got.String()
+
+		// Should have service in %files
+		assert.Assert(t, cmp.Contains(s, "%{_unitdir}/foo-svc.service"))
+		// Should have %post for enabling
+		assert.Assert(t, cmp.Contains(s, "%post -n foo-service"))
+		assert.Assert(t, cmp.Contains(s, "systemctl enable --now foo-svc.service"))
+		// Should have %preun for disabling
+		assert.Assert(t, cmp.Contains(s, "%preun -n foo-service"))
+		assert.Assert(t, cmp.Contains(s, "systemctl disable --now foo-svc.service"))
+		// Should have %postun
+		assert.Assert(t, cmp.Contains(s, "%postun -n foo-service"))
+		assert.Assert(t, cmp.Contains(s, "%systemd_postun foo-svc.service"))
+	})
+
+	t.Run("subpackage docs and licenses use resolved name", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"devel": {
+								Description: "Development files",
+								Artifacts: &dalec.Artifacts{
+									Docs: map[string]dalec.ArtifactConfig{
+										"API.md": {},
+									},
+									Licenses: map[string]dalec.ArtifactConfig{
+										"LICENSE": {},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		s := got.String()
+
+		// Docs and licenses should use the subpackage's resolved name
+		assert.Assert(t, cmp.Contains(s, "%doc %{_docdir}/foo-devel/API.md"))
+		assert.Assert(t, cmp.Contains(s, "%license %{_licensedir}/foo-devel/LICENSE"))
+	})
+
+	t.Run("wrong target returns no subpackages", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"debug": {
+								Description: "Debug",
+							},
+						},
+					},
+				},
+			},
+			Target: "jammy",
+		}
+
+		got, err := w.SubPackages()
+		assert.NilError(t, err)
+		assert.Equal(t, got.String(), "")
+	})
+}
+
+func TestTemplate_SubPackageInstall(t *testing.T) {
+	t.Run("install includes subpackage artifacts", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"foo": {},
+					},
+				},
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"debug": {
+								Description: "Debug symbols",
+								Artifacts: &dalec.Artifacts{
+									Binaries: map[string]dalec.ArtifactConfig{
+										"foo-debug": {},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got := w.Install().String()
+
+		// Primary package artifact
+		assert.Assert(t, cmp.Contains(got, "cp -r foo %{buildroot}/%{_bindir}/foo"))
+		// Subpackage artifact
+		assert.Assert(t, cmp.Contains(got, "cp -r foo-debug %{buildroot}/%{_bindir}/foo-debug"))
+	})
+
+	t.Run("install subpackage docs use resolved name", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{
+			Spec: &dalec.Spec{
+				Name: "foo",
+				Targets: map[string]dalec.Target{
+					"azlinux3": {
+						Packages: map[string]dalec.SubPackage{
+							"devel": {
+								Description: "Dev files",
+								Artifacts: &dalec.Artifacts{
+									Docs: map[string]dalec.ArtifactConfig{
+										"API.md": {},
+									},
+									Licenses: map[string]dalec.ArtifactConfig{
+										"LICENSE": {},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Target: "azlinux3",
+		}
+
+		got := w.Install().String()
+
+		// Docs and licenses should be installed under the subpackage's resolved name
+		assert.Assert(t, cmp.Contains(got, "%{buildroot}/%{_docdir}/foo-devel"))
+		assert.Assert(t, cmp.Contains(got, "%{buildroot}/%{_licensedir}/foo-devel"))
+	})
+}
+
+func TestTemplate_SubPackageFullSpec(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:        "myapp",
+		Version:     "1.0.0",
+		Revision:    "1",
+		Description: "My application",
+		License:     "MIT",
+		Targets: map[string]dalec.Target{
+			"azlinux3": {
+				Packages: map[string]dalec.SubPackage{
+					"devel": {
+						Description: "Development headers for myapp",
+						Artifacts: &dalec.Artifacts{
+							Headers: map[string]dalec.ArtifactConfig{
+								"myapp.h": {},
+							},
+						},
+						Dependencies: &dalec.SubPackageDependencies{
+							Runtime: dalec.PackageDependencyList{
+								"myapp": {
+									Version: []string{"= %{version}-%{release}"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	w := &strings.Builder{}
+	err := WriteSpec(spec, "azlinux3", w)
+	assert.NilError(t, err)
+
+	s := w.String()
+
+	// Primary package should be present
+	assert.Assert(t, cmp.Contains(s, "Name: myapp"))
+	assert.Assert(t, cmp.Contains(s, "Summary: My application"))
+
+	// Subpackage should be present
+	assert.Assert(t, cmp.Contains(s, "%package -n myapp-devel"))
+	assert.Assert(t, cmp.Contains(s, "Summary: Development headers for myapp"))
+	assert.Assert(t, cmp.Contains(s, "Requires: myapp == %{version}-%{release}"))
+	assert.Assert(t, cmp.Contains(s, "%description -n myapp-devel"))
+	assert.Assert(t, cmp.Contains(s, "Development headers for myapp"))
+	assert.Assert(t, cmp.Contains(s, "%files -n myapp-devel"))
+	assert.Assert(t, cmp.Contains(s, "%{_includedir}/myapp.h"))
+
+	// Install should include subpackage headers
+	assert.Assert(t, cmp.Contains(s, "cp -r myapp.h %{buildroot}/%{_includedir}/myapp.h"))
+}
