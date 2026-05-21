@@ -66,7 +66,7 @@ target "maps-dep" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "azlinux4/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -81,7 +81,7 @@ target "maps-buildstep" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "azlinux4/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -96,7 +96,7 @@ target "maps-test" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "azlinux4/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -111,7 +111,7 @@ target "maps-source" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
-        tgt = ["azlinux3/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
+        tgt = ["azlinux3/rpm", "azlinux4/rpm", "jammy/deb", "noble/deb", "trixie/deb", "bookworm/deb", "bullseye/deb"]
     }
     target = tgt
 }
@@ -134,6 +134,7 @@ target "runc-azlinux" {
         "dalec_frontend" = "target:frontend"
     }
     matrix = {
+        // TODO(azl4): re-add azlinux4 when go-md2man is available.
         distro = ["azlinux3"]
         tgt = ["rpm", "container", "rpm/spec"]
     }
@@ -170,6 +171,7 @@ target "runc-jammy" {
 target "runc-test" {
     name = "runc-test-${distro}"
     matrix = {
+        // TODO(azl4): re-add azlinux4 when go-md2man is available.
         distro =["azlinux3", "jammy"]
     }
     contexts = {
@@ -187,7 +189,7 @@ variable "BUILD_SPEC" {
 target "build" {
     name = "build-${distro}-${tgt}"
     matrix = {
-        distro = ["azlinux3"]
+        distro = ["azlinux3", "azlinux4"]
         tgt = ["rpm", "container"]
     }
     dockerfile = BUILD_SPEC

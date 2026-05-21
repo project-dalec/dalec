@@ -51,6 +51,7 @@ x-azl: &azl
         /var/lib/rpm/rpmdb.sqlite:
 
 targets: # Distro specific build requirements
+  # TODO(azl4): add azlinux4 when go-md2man is available.
   azlinux3:
     <<: *azl
   jammy:

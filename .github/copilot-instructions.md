@@ -30,7 +30,7 @@ Always reference these instructions first and fallback to search or bash command
 - Run specific distro tests: `go test -timeout=59m -v ./test -run=TestAzlinux3` -- takes 30+ minutes. NEVER CANCEL. Set timeout to 75+ minutes.
 - Run all integration tests: `go test -timeout=59m -v ./test` -- takes 45+ minutes. NEVER CANCEL. Set timeout to 75+ minutes.
 - Tests require Docker and BuildKit to be working properly
-- Tests cover multiple Linux distributions: Azlinux3, Jammy, Noble, Bullseye, Bookworm, etc.
+- Tests cover multiple Linux distributions: Azlinux3, Azlinux4, Jammy, Noble, Bullseye, Bookworm, etc.
 
 ## Validation
 

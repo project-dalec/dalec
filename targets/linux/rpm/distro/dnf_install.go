@@ -335,7 +335,11 @@ func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetK
 		cfg.Install([]string{"dnf-utils"}, installOpts...),
 	).Root()
 
-	args := []string{"--downloaddir", "/output", "download"}
+	// NOTE: dnf4 supports specifying the download destination dir as a global option (before
+	// the verb) and offers multiple aliases for it (`--destdir`, `--downloaddir`).
+	// dnf5 requires the destination path be specified as an argument to the `download` verb
+	// and only supports the `--destdir` option name. These args work for both versions.
+	args := []string{"download", "--destdir", "/output"}
 	for name, constraint := range constraints {
 		if len(constraint.Version) == 0 {
 			args = append(args, name)

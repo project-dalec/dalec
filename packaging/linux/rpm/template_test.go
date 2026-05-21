@@ -1176,3 +1176,55 @@ func TestTemplate_TargetSpecificOverrides(t *testing.T) {
 		assert.Assert(t, cmp.Contains(provides, "Provides: root-pkg-p == 5.0.0"))
 	})
 }
+
+// TestTemplate_ProvidesUsersAndGroups verifies that declared users/groups
+// are self-Provided as `user(X)` / `group(X)` virtual capabilities. See
+// the comment on (*specWrapper).Provides() for the rpm-version-related
+// rationale.
+func TestTemplate_ProvidesUsersAndGroups(t *testing.T) {
+	t.Parallel()
+
+	t.Run("users and groups produce matching Provides", func(t *testing.T) {
+		w := &specWrapper{Spec: &dalec.Spec{
+			Artifacts: dalec.Artifacts{
+				Users: []dalec.AddUserConfig{
+					{Name: "svc"},
+					{Name: "other"},
+				},
+				Groups: []dalec.AddGroupConfig{
+					{Name: "svc"},
+				},
+			},
+		}}
+
+		got := w.Provides().String()
+		assert.Assert(t, cmp.Contains(got, "Provides: user(svc)\n"))
+		assert.Assert(t, cmp.Contains(got, "Provides: user(other)\n"))
+		assert.Assert(t, cmp.Contains(got, "Provides: group(svc)\n"))
+	})
+
+	t.Run("no users or groups produces no user/group Provides", func(t *testing.T) {
+		w := &specWrapper{Spec: &dalec.Spec{}}
+
+		got := w.Provides().String()
+		assert.Assert(t, !strings.Contains(got, "user("))
+		assert.Assert(t, !strings.Contains(got, "group("))
+	})
+
+	t.Run("explicit Provides coexist with user/group Provides", func(t *testing.T) {
+		w := &specWrapper{Spec: &dalec.Spec{
+			Provides: map[string]dalec.PackageConstraints{
+				"some-cap": {Version: []string{"= 1.0"}},
+			},
+			Artifacts: dalec.Artifacts{
+				Users:  []dalec.AddUserConfig{{Name: "svc"}},
+				Groups: []dalec.AddGroupConfig{{Name: "svc"}},
+			},
+		}}
+
+		got := w.Provides().String()
+		assert.Assert(t, cmp.Contains(got, "Provides: some-cap == 1.0"))
+		assert.Assert(t, cmp.Contains(got, "Provides: user(svc)\n"))
+		assert.Assert(t, cmp.Contains(got, "Provides: group(svc)\n"))
+	})
+}

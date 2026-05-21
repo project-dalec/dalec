@@ -13,6 +13,7 @@ When executing a build with Docker these targets can be specified with the
 DALEC includes a number of built-in targets that you can either use in your spec.
 
 - `azlinux3` - Azure Linux 3
+- `azlinux4` - Azure Linux 4 (beta status)
 - `bullseye` - Debian 11 (Bullseye) (v0.11)
 - `bookworm` - Debian 12 (Bookworm) (v0.11)
 - `trixie` - Debian 13 (Trixie) (v0.next)
@@ -255,6 +256,14 @@ build:
     - command: |
         GOOS=linux go build -o _output/bin/dalec_example
 ```
+
+### Azure Linux 4
+
+The `azlinux4` target produces packages and containers for [Azure Linux
+4](https://github.com/microsoft/azurelinux). Azure Linux 4 is currently in
+beta, and not yet supported for production use. Its base image and package
+repositories will move to new locations when it reaches general
+availability.
 
 ## Tips
 

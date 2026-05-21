@@ -94,6 +94,7 @@ jobs:
       matrix:
         suite:
           - Azlinux3
+          - Azlinux4
           - Bookworm
           - Bullseye
           - Bionic
@@ -109,7 +110,7 @@ jobs:
           - other
         include:
           - suite: other
-            skip: Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
+            skip: Azlinux3|Azlinux4|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
 
     steps:
       - name: Harden Runner

@@ -87,6 +87,64 @@ func TestAzlinux3(t *testing.T) {
 	})
 }
 
+func TestAzlinux4(t *testing.T) {
+	t.Parallel()
+
+	ctx := startTestSpan(baseCtx, t)
+	cfg := testLinuxConfig{
+		Target: targetConfig{
+			Key:                   "azlinux4",
+			Package:               "azlinux4/rpm",
+			Container:             "azlinux4/container",
+			DepsOnly:              "azlinux4/container/depsonly",
+			Worker:                "azlinux4/worker",
+			Sysext:                "azlinux4/testing/sysext",
+			ListExpectedSignFiles: azlinuxListSignFiles("azl4"),
+			PackageOverrides: map[string]string{
+				// NOTE: bazel is not presently available in azl4 base repos.
+				"bazel": noPackageAvailable,
+				// On azl4 (Fedora-derived), `cargo` is a separate package
+				// from `rust`; install both for tests that need cargo.
+				"rust": "rust cargo",
+			},
+		},
+		Libdir:     "/usr/lib64",
+		LicenseDir: "/usr/share/licenses",
+		SystemdDir: struct {
+			Units   string
+			Targets string
+		}{
+			Units:   "/usr/lib/systemd",
+			Targets: "/etc/systemd/system",
+		},
+		Worker: workerConfig{
+			ContextName:    azlinux.Azlinux4WorkerContextName,
+			CreateRepo:     createYumRepo(azlinux.Azlinux4Config),
+			SignRepo:       signRepoDnf,
+			TestRepoConfig: azlinuxTestRepoConfig,
+			SysextWorker:   azlinux.Azlinux4Config.SysextWorker,
+		},
+		Release: OSRelease{
+			ID:        "azurelinux",
+			VersionID: "4.0",
+		},
+		SupportsGomodVersionUpdate: true,
+		Platforms: []ocispecs.Platform{
+			{OS: "linux", Architecture: "amd64"},
+			{OS: "linux", Architecture: "arm64"},
+		},
+		PackageOutputPath: rpmTargetOutputPath("azl4"),
+	}
+	testLinuxDistro(ctx, t, cfg)
+	testAzlinuxExtra(ctx, t, cfg, azlinux.Azlinux4Config.ImageRef)
+
+	t.Run("ca-certs override", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		testAzlinuxCaCertsOverride(ctx, t, cfg.Target)
+	})
+}
+
 func testAzlinuxExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distroImageRef string) {
 	t.Run("base deps", func(t *testing.T) {
 		t.Parallel()
@@ -177,21 +235,29 @@ gpg --detach-sign --default-key "$ID" --armor --yes ` + repoPath + `/repodata/re
 
 func testAzlinuxBaseDeps(ctx context.Context, t *testing.T, cfg targetConfig) {
 	spec := newSimpleSpec()
+	files := map[string]dalec.FileCheckOutput{
+		"/bin/sh/": {
+			NotExist: true,
+		},
+		"/bin/bash/": {
+			NotExist: true,
+		},
+		"/etc/pki": {
+			IsDir: true,
+		},
+	}
+
+	// TODO(azl4): Azure Linux 4 doesn't presently materialize /etc/localtime
+	// in the base image. (Azure Linux 3 does via the `distroless-packages-minimal`
+	// package.)
+	if cfg.Key == azlinux.AzLinux3TargetKey {
+		files["/etc/localtime"] = dalec.FileCheckOutput{}
+	}
+
 	spec.Tests = []*dalec.TestSpec{
 		{
-			Name: "validate no shell",
-			Files: map[string]dalec.FileCheckOutput{
-				"/bin/sh/": {
-					NotExist: true,
-				},
-				"/bin/bash/": {
-					NotExist: true,
-				},
-				"/etc/pki": {
-					IsDir: true,
-				},
-				"/etc/localtime": {},
-			},
+			Name:  "validate no shell",
+			Files: files,
 		},
 	}
 
