@@ -56,6 +56,9 @@ func init() {
 	registerRoutes(azlinux.AzLinux3TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
 		return azlinux.Azlinux3Config.Routes(azlinux.AzLinux3TargetKey, spec)
 	})
+	registerRoutes(azlinux.AzLinux4TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
+		return azlinux.Azlinux4Config.Routes(azlinux.AzLinux4TargetKey, spec)
+	})
 
 	registerRoutes(flatcar.TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
 		return flatcar.DefaultConfig.Routes(flatcar.TargetKey, spec)

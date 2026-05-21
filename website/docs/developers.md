@@ -233,12 +233,13 @@ Integration tests are comprehensive and time-consuming. Run them for significant
 make test-integration
 
 # Or test a specific distribution
+make test-integration SUITE=Azlinux4
 make test-integration SUITE=Azlinux3
 make test-integration SUITE=Jammy
 make test-integration SUITE=Bookworm
 ```
 
-**Available test suites**: Azlinux3, Bookworm, Bullseye, Bionic, Focal, Jammy, Noble, Windows, Almalinux8, Almalinux9, Rockylinux8, Rockylinux9
+**Available test suites**: Azlinux3, Azlinux4, Bookworm, Bullseye, Bionic, Focal, Jammy, Noble, Windows, Almalinux8, Almalinux9, Rockylinux8, Rockylinux9
 
 ### Testing Specific Components
 

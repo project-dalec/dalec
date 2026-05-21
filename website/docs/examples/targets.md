@@ -21,6 +21,14 @@ azlinux3/rpm/debug/sources       Outputs all the sources specified in the spec f
 azlinux3/rpm/debug/spec          Outputs the generated RPM spec file
 azlinux3/testing/sysext          Builds a systemd system extension image.
 azlinux3/worker                  Builds the base worker image responsible for building the rpm
+azlinux4/container (default)     Builds a container image for Azure Linux 4
+azlinux4/container/depsonly      Builds a container image with only the runtime dependencies installed.
+azlinux4/rpm                     Builds an rpm and src.rpm.
+azlinux4/rpm/debug/buildroot     Outputs an rpm buildroot suitable for passing to rpmbuild.
+azlinux4/rpm/debug/sources       Outputs all the sources specified in the spec file in the format given to rpmbuild.
+azlinux4/rpm/debug/spec          Outputs the generated RPM spec file
+azlinux4/testing/sysext          Builds a systemd system extension image.
+azlinux4/worker                  Builds the base worker image responsible for building the rpm
 bionic/deb (default)             Builds a deb package.
 bionic/dsc                       Builds a Debian source package.
 bionic/testing/container         Builds a container image for testing purposes only.

@@ -95,16 +95,58 @@ func (w *specWrapper) Provides() fmt.Stringer {
 	b := &strings.Builder{}
 
 	provides := w.Spec.GetProvides(w.Target)
-	if len(provides) == 0 {
-		return b
-	}
 
 	ls := dalec.SortMapKeys(provides)
 
 	for _, name := range ls {
 		writeDep(b, "Provides", name, provides[name])
 	}
-	b.WriteString("\n")
+
+	// Self-Provide `user(X)` / `group(X)` for every user/group this
+	// package's scriptlets will create.
+	//
+	// Starting with rpm 4.19.0 (Sept 2023), rpm's build-time generators
+	// emit synthetic `Requires: user(NAME)` / `Requires: group(NAME)`
+	// from any non-root ownership declared via `%attr` / `%defattr` in
+	// `%files` (we emit those for symlink artifacts with explicit
+	// ownership). Older rpm versions did not emit these auto-Requires,
+	// which is why this only surfaces on rpm-4.19+ targets such as
+	// Azure Linux 4.
+	//
+	// The package's own `%post` scriptlet creates the user/group via
+	// `adduser` / `groupadd`, so declaring matching `Provides:` lines is
+	// a truthful statement about what installing this package
+	// accomplishes and lets the resolver satisfy the synthetic Requires
+	// against ourselves. This is a no-op on targets whose rpm doesn't
+	// emit the auto-Requires (extra metadata only).
+	//
+	// We only self-Provide entries the spec has explicitly declared in
+	// `artifacts.users` / `artifacts.groups`. A spec that references a
+	// user via `%attr` without declaring it will still — correctly — fail
+	// the resolver, surfacing the missing declaration.
+	//
+	// References:
+	//   - The rpm commit that introduced this behavior (in rpm 4.19.0):
+	//     "Autogenerate requires for users and groups in packages from
+	//     file data" (Mar 2023):
+	//     https://github.com/rpm-software-management/rpm/commit/19ffee4f6a03ca3b6f55aaa2d579611bc9bb6b5e
+	//   - rpm 4.19.0 release notes, "Package building → Spec":
+	//     "Generate user/group requires from %files (#1032)":
+	//     https://rpm.org/releases/4.19.0
+	//   - rpm-sysusers(7), "DEPENDENCIES" section, current doc covering
+	//     the %attr → user()/group() Requires generation:
+	//     https://rpm-software-management.github.io/rpm/man/rpm-sysusers.7
+	artifacts := w.Spec.GetArtifacts(w.Target)
+	for _, user := range artifacts.Users {
+		fmt.Fprintf(b, "Provides: user(%s)\n", user.Name)
+	}
+	for _, group := range artifacts.Groups {
+		fmt.Fprintf(b, "Provides: group(%s)\n", group.Name)
+	}
+
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
 	return b
 }
 
