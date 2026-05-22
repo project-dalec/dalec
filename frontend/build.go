@@ -140,7 +140,7 @@ func getPanicStack() error {
 
 // Like [BuildWithPlatform] but with a pre-initialized dockerui.Client
 func BuildWithPlatformFromUIClient(ctx context.Context, client gwclient.Client, dc *dockerui.Client, f PlatformBuildFunc) (*gwclient.Result, error) {
-	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (_ gwclient.Reference, _ *dalec.DockerImageSpec, _ *dalec.DockerImageSpec, retErr error) {
+	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (_ *dockerui.BuildResult, retErr error) {
 		defer func() {
 			if r := recover(); r != nil {
 				trace := getPanicStack()
@@ -151,7 +151,7 @@ func BuildWithPlatformFromUIClient(ctx context.Context, client gwclient.Client, 
 
 		spec, err := LoadSpec(ctx, dc, platform)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 
 		targetKey := GetTargetKey(dc)
@@ -161,7 +161,15 @@ func BuildWithPlatformFromUIClient(ctx context.Context, client gwclient.Client, 
 			now := time.Now()
 			cfg.Created = &now
 		}
-		return ref, cfg, nil, err
+
+		if err != nil {
+			return nil, err
+		}
+
+		return &dockerui.BuildResult{
+			Reference: ref,
+			Image:     cfg,
+		}, nil
 	})
 	if err != nil {
 		return nil, err
