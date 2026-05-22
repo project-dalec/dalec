@@ -1091,10 +1091,10 @@ func prepareGetSourceOp(ctx context.Context, t *testing.T, src *Source) SourceOp
 			// Note, we can't really test anything other than inline here because we don't have access to the actual buildkit client,
 			// so we can't extract extract the dockerfile from the input state (nor do we have any input state)
 			src := []byte(src.Build.Source.Inline.File.Contents)
-			st, _, _, _, err := dockerfile2llb.Dockerfile2LLB(ctx, src, dockerfile2llb.ConvertOpt{
+			res, err := dockerfile2llb.Dockerfile2LLB(ctx, src, dockerfile2llb.ConvertOpt{
 				MetaResolver: stubMetaResolver{},
 			})
-			return *st, err
+			return res.State, err
 		}
 	}
 

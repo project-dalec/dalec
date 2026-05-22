@@ -119,14 +119,14 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 		dc.MultiPlatformRequested = true
 	}
 
-	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (ref gwclient.Reference, retCfg, retBaseCfg *dalec.DockerImageSpec, retErr error) {
+	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (*dockerui.BuildResult, error) {
 		spec, err := frontend.LoadSpec(ctx, dc, platform)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 
 		if err := validateRuntimeDeps(spec, targetKey); err != nil {
-			return nil, nil, nil, fmt.Errorf("error validating windows spec: %w", err)
+			return nil, fmt.Errorf("error validating windows spec: %w", err)
 		}
 
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
@@ -146,34 +146,42 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 
 		def, err := out.Marshal(ctx)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 
 		res, err := client.Solve(ctx, gwclient.SolveRequest{
 			Definition: def.ToPB(),
 		})
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 
 		dt := cfgs[idx]
 
 		var baseCfg dalec.DockerImageSpec
 		if err := json.Unmarshal(cfgs[idx], &baseCfg); err != nil {
-			return nil, nil, nil, errors.Wrap(err, "error unmarshalling base image config")
+			return nil, errors.Wrap(err, "error unmarshalling base image config")
 		}
 
 		var img dalec.DockerImageSpec
 		if err := json.Unmarshal(dt, &img); err != nil {
-			return nil, nil, nil, errors.Wrap(err, "error unmarshalling base image config")
+			return nil, errors.Wrap(err, "error unmarshalling base image config")
 		}
 
 		if err := dalec.BuildImageConfig(spec, targetKey, &img); err != nil {
-			return nil, nil, nil, errors.Wrap(err, "error creating image config")
+			return nil, errors.Wrap(err, "error creating image config")
 		}
 
-		ref, err = res.SingleRef()
-		return ref, &img, &baseCfg, err
+		ref, err := res.SingleRef()
+		if err != nil {
+			return nil, err
+		}
+
+		return &dockerui.BuildResult{
+			Reference: ref,
+			Image:     &img,
+			BaseImage: &baseCfg,
+		}, nil
 	})
 	if err != nil {
 		return nil, err

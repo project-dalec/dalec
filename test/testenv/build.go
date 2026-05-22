@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/moby/buildkit/identity"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/pkg/errors"
+	"github.com/tonistiigi/fsutil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -302,11 +304,38 @@ func withProjectRoot(opts *client.SolveOpt) error {
 		return err
 	}
 
-	if opts.LocalDirs == nil {
-		opts.LocalDirs = make(map[string]string)
+	root, err := fsutil.NewFS(projectRoot)
+	if err != nil {
+		return fmt.Errorf("error loading project root fs for test context: %w", err)
 	}
-	opts.LocalDirs[dockerui.DefaultLocalNameContext] = projectRoot
-	opts.LocalDirs[dockerui.DefaultLocalNameDockerfile] = projectRoot
+
+	root, err = fsutil.NewFilterFS(root, &fsutil.FilterOpt{
+		ExcludePatterns: []string{".git", "website", "docs", "!docs/spec.schema.json", "_output", "test", "!test/fixtures", "!test/git_services"},
+	})
+	if err != nil {
+		return fmt.Errorf("error filtering project root fs for test context: %w", err)
+	}
+
+	dockerfile, err := fsutil.NewFilterFS(root, &fsutil.FilterOpt{
+		IncludePatterns: []string{dockerui.DefaultDockerfileName, dockerui.DefaultDockerignoreName},
+	})
+	if err != nil {
+		return fmt.Errorf("error filtering project root for dockerfile only: %w", err)
+	}
+
+	if opts.LocalMounts == nil {
+		opts.LocalMounts = make(map[string]fsutil.FS)
+	}
+
+	mainContext, err := fsutil.NewFilterFS(root, &fsutil.FilterOpt{
+		ExcludePatterns: []string{dockerui.DefaultDockerfileName, dockerui.DefaultDockerignoreName},
+	})
+	if err != nil {
+		return fmt.Errorf("error creating project root main filtered context for tests: %w", err)
+	}
+
+	opts.LocalMounts[dockerui.DefaultLocalNameContext] = mainContext
+	opts.LocalMounts[dockerui.DefaultLocalNameDockerfile] = dockerfile
 	return nil
 }
 
