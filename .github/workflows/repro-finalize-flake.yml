@@ -4,9 +4,7 @@ name: repro-finalize-flake
 # 10 fresh runners on a draft PR. Not for merging.
 
 on:
-  push:
-    branches:
-      - 'repro_bk_missing_snapshot_issue'
+  pull_request:
   workflow_dispatch:
 
 permissions:

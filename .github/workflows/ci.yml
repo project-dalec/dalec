@@ -11,26 +11,26 @@ on:
         description: 'Enable BuildKit source policy'
         type: boolean
         default: false
-  pull_request:
-    branches:
-      - main
-      - release/**
-    paths-ignore:
-      - 'website/**'
-      - 'docs/**'
-      - '*.md'
-      - 'CODEOWNERS'
-      - 'LICENSE'
-      - '.github/copilot-instructions.md'
-      - '.github/workflows/retag.yml'
-      - '.github/workflows/retag/**'
-      - 'cmd/retagger/**'
-      - 'cmd/worker-image-matrix/**'
-      - '.github/workflows/worker-images/**'
-      - '.github/workflows/worker-images.yml'
-      - '.github/workflows/dependabot.yml'
-      - '.github/workflows/release.yml'
-      - '.github/workflows/deploy-docs.yml'
+  # pull_request:
+  #   branches:
+  #     - main
+  #     - release/**
+  #   paths-ignore:
+  #     - 'website/**'
+  #     - 'docs/**'
+  #     - '*.md'
+  #     - 'CODEOWNERS'
+  #     - 'LICENSE'
+  #     - '.github/copilot-instructions.md'
+  #     - '.github/workflows/retag.yml'
+  #     - '.github/workflows/retag/**'
+  #     - 'cmd/retagger/**'
+  #     - 'cmd/worker-image-matrix/**'
+  #     - '.github/workflows/worker-images/**'
+  #     - '.github/workflows/worker-images.yml'
+  #     - '.github/workflows/dependabot.yml'
+  #     - '.github/workflows/release.yml'
+  #     - '.github/workflows/deploy-docs.yml'
 
   push:
     branches:
