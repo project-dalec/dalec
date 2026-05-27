@@ -12,11 +12,20 @@ permissions:
 
 jobs:
   shards:
+    # Cycle distros across shards. The narrow `negative_test/container`
+    # scope removed the racy parallel siblings that cause the finalize
+    # flake, so go wide: run the full Test<Distro> like the integration job.
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        suite:
+          - Noble
+          - Jammy
+          - Bookworm
+          - Focal
+          - Bionic
+        shard: [1, 2]
     steps:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -36,6 +45,9 @@ jobs:
       - name: download deps
         run: go mod download
 
+      - name: Setup QEMU
+        run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
+
       - name: Aggressive cleanup
         run: |
           docker system prune -af --volumes || true
@@ -49,19 +61,24 @@ jobs:
         uses: ./.github/actions/dns-spoof-ubuntu-archive
 
       - name: Pre-build base images
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
         run: |
           set -eu
           docker buildx bake frontend
-          export WORKER_TARGET=noble/worker
+          worker="${TEST_SUITE,,}"
+          export WORKER_TARGET="${worker}/worker"
           docker buildx bake worker
 
-      - name: Run focused test
+      - name: Run full Test<Distro>
         continue-on-error: true
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
         run: |
           set -ex
           mkdir -p /tmp/testlogs
-          go test -timeout=45m -v -json \
-            -run 'TestNoble/test_package_tests_cause_build_to_fail/negative_test/container' \
+          go test -timeout=59m -v -json \
+            -run "${TEST_SUITE}" \
             ./test \
             | tee /tmp/testlogs/raw.jsonl \
             | go run ./cmd/test2json2gha --slow 120s --logdir /tmp/testlogs
@@ -77,7 +94,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: repro-shard${{ matrix.shard }}
+          name: repro-${{ matrix.suite }}-shard${{ matrix.shard }}
           path: |
             /tmp/reports/*
             /tmp/testlogs/*
