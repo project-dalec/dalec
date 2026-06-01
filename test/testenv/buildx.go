@@ -25,6 +25,7 @@ import (
 	"github.com/moby/buildkit/session/sshforward/sshprovider"
 	"github.com/moby/buildkit/solver/pb"
 	spb "github.com/moby/buildkit/sourcepolicy/pb"
+	"github.com/moby/buildkit/util/stack"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/project-dalec/dalec/internal/frontendcoverage"
 	"github.com/project-dalec/dalec/sessionutil/socketprovider"
@@ -492,7 +493,7 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 
 	for status, err := range b.runTestWithStatus(ctx, t, f, opts...) {
 		if err != nil {
-			t.Error(err)
+			t.Errorf("%+v", stack.Formatter(err))
 			// drain the status channel
 			// the range itself will stop once everything is done
 			continue

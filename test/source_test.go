@@ -10,6 +10,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/util/stack"
 	"github.com/opencontainers/go-digest"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
@@ -446,7 +447,7 @@ func TestSourceHTTP(t *testing.T) {
 		}
 
 		if !strings.Contains(err.Error(), "digest mismatch") {
-			t.Fatalf("expected digest mismatch, got: %v", err)
+			t.Fatalf("expected digest mismatch, got: %+v", stack.Formatter(err))
 		}
 
 		good := newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, newSpec(url, goodDigest)))
@@ -566,7 +567,7 @@ func TestSourceGitChecksumPreservesTagMetadata(t *testing.T) {
 				t.Fatal("expected git checksum mismatch, but received none")
 			}
 			if !strings.Contains(err.Error(), "expected checksum to match") {
-				t.Fatalf("expected git checksum mismatch, got: %v", err)
+				t.Fatalf("expected git checksum mismatch, got: %+v", stack.Formatter(err))
 			}
 		})
 	})

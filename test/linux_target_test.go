@@ -25,6 +25,7 @@ import (
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
+	"github.com/moby/buildkit/util/stack"
 	"github.com/moby/go-archive/compression"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
@@ -172,7 +173,7 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 			_, err := gwc.Solve(ctx, sr)
 			var xErr *moby_buildkit_v1_frontend.ExitError
 			if !errors.As(err, &xErr) {
-				t.Fatalf("expected exit error, got %T: %v", errors.Unwrap(err), err)
+				t.Fatalf("expected exit error, got %T: %+v", errors.Unwrap(err), stack.Formatter(err))
 			}
 		})
 	})
@@ -1164,7 +1165,7 @@ echo "$BAR" > bar.txt
 				Definition: def.ToPB(),
 			})
 			if resErr != nil {
-				t.Fatal(resErr)
+				t.Fatalf("error solving: %+v", stack.Formatter(resErr))
 			}
 
 			ref, refErr = res.SingleRef()
@@ -1172,7 +1173,7 @@ echo "$BAR" > bar.txt
 				t.Fatal(refErr)
 			}
 			if evalErr := ref.Evaluate(ctx); evalErr != nil {
-				t.Fatalf("error extracting sysext: %v", evalErr)
+				t.Fatalf("error extracting sysext: %+v", stack.Formatter(evalErr))
 			}
 
 			for _, file := range []string{"/usr/bin/zsh", "/usr/bin/zstd"} {
@@ -2601,7 +2602,7 @@ func testCustomLinuxWorker(ctx context.Context, t *testing.T, targetCfg targetCo
 
 		var xErr *moby_buildkit_v1_frontend.ExitError
 		if !errors.As(err, &xErr) {
-			t.Fatalf("got unexpected error, expected error type %T: %v", xErr, err)
+			t.Fatalf("got unexpected error, expected error type %T: %+v", xErr, stack.Formatter(err))
 		}
 
 		// Build the base package
@@ -3282,10 +3283,10 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 							_, err := client.Solve(ctx, sr)
 							assert.Assert(t, err != nil)
 
-							t.Logf("Build Error: %v", err)
+							t.Logf("Build Error: %+v", stack.Formatter(err))
 
 							var exErr *moby_buildkit_v1_frontend.ExitError
-							assert.Assert(t, errors.As(err, &exErr), "expected exit error, got: %v", err)
+							assert.Assert(t, errors.As(err, &exErr), "expected exit error, got: %+v", stack.Formatter(err))
 
 							if !tc.isBuildError {
 								// the error we are looking for is in the build logs, not the exit error
