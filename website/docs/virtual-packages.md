@@ -2,19 +2,21 @@
 title: Virtual Packages
 ---
 
-In this section, we'll go over how to build virtual packages with Dalec. Virtual packages are packages that don't install any files themselves but instead reference other packages as dependencies. They are useful for creating a package that is just a collection of dependencies.
+Virtual packages are packages that don't install files themselves but reference other packages as dependencies. They're useful for creating meta-packages that group related dependencies together.
 
-In this example, we'll build a virtual package that just installs other packages as dependencies.
+## Basic Virtual Package
+
+Here's a simple virtual package that installs two dependencies:
 
 ```yaml
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 name: my-package
 version: 1.0.0
 revision: "1"
 packager: Contoso
 vendor: Contoso
 license: MIT
-description: A virtual package that, when installed, triggers other packages to be installed
+description: A virtual package that installs related dependencies
 website: http://contoso.com
 
 dependencies:
@@ -23,51 +25,57 @@ dependencies:
     my-package-bar:
 ```
 
-You can build it with:
+Build the package:
 
 ```shell
-docker build -t my-package-image:1.0.0 --target=mariner2 -f my-package.yml .
+docker build -t my-package-image:1.0.0 --target=azlinux3 -f my-package.yml .
 ```
 
+This creates a [`scratch`](https://hub.docker.com/_/scratch/) container with only the virtual package and its dependencies installed.
+
 :::tip
-You could also pass the dalec spec file via stdin `docker build -t my-package-image:1.0.0 -< my-package.yml`*
-See [docker's documentation](https://docs.docker.com/engine/reference/commandline/build/) for more details on how you can pass the spec file to docker.
+You can also pass the spec via stdin: `docker build -t my-package-image:1.0.0 -< my-package.yml`
 :::
 
-This will produce a container image named `my-package-image:1.0.0` that has the `my-package` virtual package installed along with its runtime dependencies. By default, the produced container image is a [`scratch`](https://hub.docker.com/_/scratch/) container image that only contains the package and its dependencies. You can customize the base image to use for the produced container. Below is an example that uses the Azure Linux `core` image as the base image which includes a shell and other tools.
+## Customizing the Base Image
+
+Use a different base image instead of scratch:
 
 ```yaml
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 name: my-package
 version: 1.0.0
 revision: "1"
 packager: Contoso
 vendor: Contoso
 license: MIT
-description: A virtual package that, when installed, triggers other packages to be installed
+description: A virtual package with a custom base image
 website: http://contoso.com
 
 dependencies:
   runtime:
-    - my-package-foo
-    - my-package-bar
+    my-package-foo:
+    my-package-bar:
 
 targets:
-  mariner2:
+  azlinux3:
     image:
-      base: mcr.microsoft.com/cbl-mariner/base/core:2.0
+      base: mcr.microsoft.com/azurelinux/base/core:3.0
 ```
 
-You can also set other image settings like entrypoint/cmd, environment variables, working directory, labels, and more. Below is an example that sets the entrypoint to `/bin/sh -c`.
+## Image Configuration
+
+Set image properties like entrypoint, environment variables, and working directory:
 
 ```yaml
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 name: my-package
 version: 1.0.0
+revision: "1"
 packager: Contoso
 vendor: Contoso
 license: MIT
-description: A virtual package that, when installed, triggers other packages to be installed
+description: A virtual package with custom image settings
 website: http://contoso.com
 
 dependencies:
@@ -76,14 +84,20 @@ dependencies:
     my-package-bar:
 
 image:
-    entrypoint: /bin/sh -c
+  entrypoint: /bin/sh
+  cmd: ["-c"]
 ```
 
-Note how this is at the top level of the spec and not under a build target. This means that it applies to all targets, but can also be customized per target by adding it under a target.
+### Target-Specific Configuration
+
+Override image settings for specific targets:
 
 ```yaml
 targets:
-  mariner2:
+  azlinux3:
     image:
-      entrypoint: /bin/sh -c
+      entrypoint: /bin/bash
+      base: mcr.microsoft.com/azurelinux/base/core:3.0
 ```
+
+This allows different configurations per build target while maintaining common defaults.

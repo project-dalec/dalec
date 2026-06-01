@@ -6,20 +6,20 @@ import (
 	"io"
 	"io/fs"
 	"path"
-
-	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/tonistiigi/fsutil/types"
-
-	"github.com/tonistiigi/fsutil"
+	"strings"
 
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/tonistiigi/fsutil"
+	"github.com/tonistiigi/fsutil/types"
 )
 
 var (
-	_ fs.DirEntry  = (*stateRefDirEntry)(nil)
-	_ fs.ReadDirFS = (*StateRefFS)(nil)
-	_ io.ReaderAt  = (*stateRefFile)(nil)
-	_ fs.ReadDirFS = (*nullFS)(nil)
+	_ fs.DirEntry    = (*stateRefDirEntry)(nil)
+	_ fs.ReadDirFS   = (*StateRefFS)(nil)
+	_ io.ReaderAt    = (*stateRefFile)(nil)
+	_ fs.ReadDirFile = (*stateRefFile)(nil)
+	_ fs.ReadDirFS   = (*nullFS)(nil)
 )
 
 type StateRefFS struct {
@@ -35,11 +35,19 @@ func FromRef(ctx context.Context, ref gwclient.Reference) *StateRefFS {
 }
 
 func FromState(ctx context.Context, state *llb.State, client gwclient.Client, opts ...llb.ConstraintsOpt) (fs.ReadDirFS, error) {
+	return fromState(ctx, state, client, false, opts...)
+}
+
+func EvalFromState(ctx context.Context, state *llb.State, client gwclient.Client, opts ...llb.ConstraintsOpt) (fs.ReadDirFS, error) {
+	return fromState(ctx, state, client, true, opts...)
+}
+
+func fromState(ctx context.Context, state *llb.State, client gwclient.Client, eval bool, opts ...llb.ConstraintsOpt) (fs.ReadDirFS, error) {
 	if state == nil {
 		return &nullFS{}, nil
 	}
 
-	res, err := fetchRef(client, *state, ctx, opts...)
+	res, err := fetchRef(ctx, client, *state, eval, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +60,7 @@ func FromState(ctx context.Context, state *llb.State, client gwclient.Client, op
 	return FromRef(ctx, ref), nil
 }
 
-func fetchRef(client gwclient.Client, st llb.State, ctx context.Context, opts ...llb.ConstraintsOpt) (*gwclient.Result, error) {
+func fetchRef(ctx context.Context, client gwclient.Client, st llb.State, eval bool, opts ...llb.ConstraintsOpt) (*gwclient.Result, error) {
 	def, err := st.Marshal(ctx, opts...)
 	if err != nil {
 		return nil, err
@@ -60,6 +68,7 @@ func fetchRef(client gwclient.Client, st llb.State, ctx context.Context, opts ..
 
 	res, err := client.Solve(ctx, gwclient.SolveRequest{
 		Definition: def.ToPB(),
+		Evaluate:   eval,
 	})
 	if err != nil {
 		return nil, err
@@ -167,6 +176,26 @@ func (s *stateRefFile) Stat() (fs.FileInfo, error) {
 	return info, nil
 }
 
+func (s *stateRefFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	contents, err := s.ref.ReadDir(s.ctx, gwclient.ReadDirRequest{
+		Path: s.path,
+	})
+	if err != nil {
+		return nil, &fs.PathError{Op: "readdir", Path: s.path, Err: err}
+	}
+
+	entries := make([]fs.DirEntry, 0, len(contents))
+	for _, stat := range contents {
+		entries = append(entries, &stateRefDirEntry{stat: stat})
+	}
+
+	if n > 0 && len(entries) > n {
+		entries = entries[:n]
+	}
+
+	return entries, nil
+}
+
 func (st *StateRefFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Err: fs.ErrInvalid, Path: name, Op: "open"}
@@ -176,6 +205,9 @@ func (st *StateRefFS) Open(name string) (fs.File, error) {
 		Path: name,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "no such file or directory") {
+			err = fmt.Errorf("%w: %w", fs.ErrNotExist, err)
+		}
 		return nil, &fs.PathError{Err: err, Op: "open", Path: name}
 	}
 

@@ -1,10 +1,10 @@
 package main
 
 import (
-	"github.com/Azure/dalec/linters"
+	"github.com/project-dalec/dalec/linters"
 	"golang.org/x/tools/go/analysis/singlechecker"
 )
 
 func main() {
-	singlechecker.Main(linters.YamlJSONTagsMatch)
+	singlechecker.Main(linters.NewYamlJSONTagsAnalyzer())
 }

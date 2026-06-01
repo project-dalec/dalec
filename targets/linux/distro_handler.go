@@ -2,19 +2,19 @@ package linux
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
-	"github.com/pkg/errors"
-
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/internal/testrunner"
 )
 
 type DistroConfig interface {
@@ -22,27 +22,34 @@ type DistroConfig interface {
 	Validate(*dalec.Spec) error
 
 	// Worker returns the worker image for the particular distro
-	Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error)
+	Worker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State
+	SysextWorker(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State
 
 	// BuildPkg returns an llb.State containing the built package
 	// which the passed in spec describes. This should be composable with
 	// BuildContainer(), which can consume the returned state.
 	BuildPkg(ctx context.Context,
 		client gwclient.Client,
-		worker llb.State,
 		sOpt dalec.SourceOpts,
-		spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error)
+		spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.State
+
+	// ExtractPkg consumes an llb.State containing the built package from the
+	// given *dalec.Spec, and extracts it in a scratch container, along with any
+	// dependencies listed under sysext. The package manager is not used, so no
+	// further dependency resolution is performed.
+	ExtractPkg(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts,
+		spec *dalec.Spec, targetKey string,
+		pkgState llb.State, opts ...llb.ConstraintsOpt) llb.State
 
 	// BuildContainer consumes an llb.State containing the built package from the
 	// given *dalec.Spec, and installs it in a target container.
-	BuildContainer(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts,
+	BuildContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts,
 		spec *dalec.Spec, targetKey string,
-		pkgState llb.State, opts ...llb.ConstraintsOpt) (llb.State, error)
+		pkgState llb.State, opts ...llb.ConstraintsOpt) llb.State
 
 	// RunTests runts the tests specified in a dalec spec against a built container, which may be the target container.
 	// Some distros may need to pass in a separate worker before mounting the target container.
-	RunTests(ctx context.Context, client gwclient.Client, worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State,
-		targetKey string, opts ...llb.ConstraintsOpt) (gwclient.Reference, error)
+	RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, target string, opts ...llb.ConstraintsOpt) llb.StateOption
 }
 
 func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
@@ -69,7 +76,9 @@ func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec,
 	}
 
 	dt, err := bi.ResolveImageConfig(ctx, sOpt, sourceresolver.Opt{
-		Platform: platform,
+		ImageOpt: &sourceresolver.ResolveImageOpt{
+			Platform: platform,
+		},
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error resolving base image config")
@@ -94,20 +103,11 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			opts = append(opts, dalec.ProgressGroup(spec.Name))
 			opts = append(opts, dalec.Platform(platform))
 
-			worker, err := c.Worker(sOpt, opts...)
-			if err != nil {
-				return nil, nil, err
-			}
-
 			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
 
 			// Pre-built package wasn't found so we need to build it.
 			if !foundPrebuiltPkg {
-				var err error
-				pkgSt, err = c.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, opts...)
-				if err != nil {
-					return nil, nil, err
-				}
+				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
 			}
 
 			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
@@ -115,13 +115,107 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			ctr, err := c.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, opts...)
+			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
+
+			def, err := ctr.With(runTests).Marshal(ctx, opts...)
 			if err != nil {
 				return nil, nil, err
 			}
 
-			ref, err := c.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, opts...)
+			res, err := client.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+
+			ref, err := res.SingleRef()
+			if err != nil {
+				return nil, nil, err
+			}
+
 			return ref, img, err
+		})
+	}
+}
+
+//go:embed build_sysext.sh
+var buildSysextSh []byte
+
+func HandleSysext(c DistroConfig) gwclient.BuildFunc {
+	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
+			sOpt, err := frontend.SourceOptFromClient(ctx, client, platform)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			pc := dalec.Platform(platform)
+			var opts []llb.ConstraintsOpt
+			opts = append(opts, dalec.ProgressGroup(spec.Name))
+			opts = append(opts, pc)
+
+			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
+
+			// Pre-built package wasn't found so we need to build it.
+			if !foundPrebuiltPkg {
+				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
+			}
+
+			extracted := c.ExtractPkg(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+
+			if platform == nil {
+				p := platforms.DefaultSpec()
+				platform = &p
+			}
+
+			scriptPath := "/tmp/dalec/internal/sysext/build.sh"
+
+			scriptFile := llb.Scratch().File(
+				llb.Mkfile("build_sysext.sh", 0o755, []byte(buildSysextSh)),
+				dalec.WithConstraints(opts...),
+			)
+
+			rev := spec.Revision
+			if rev == "" {
+				rev = "1"
+			}
+
+			erofs := c.SysextWorker(sOpt, opts...).Run(
+				llb.Args([]string{scriptPath, spec.Name, fmt.Sprintf("v%s-%s-%s", spec.Version, rev, targetKey), platform.Architecture}),
+				llb.AddMount(scriptPath, scriptFile, llb.SourcePath("build_sysext.sh"), llb.Readonly),
+				llb.AddMount("/input", extracted, llb.Readonly),
+				dalec.WithConstraints(opts...),
+			).AddMount("/output", llb.Scratch())
+
+			// The input to the test runner needs to be the output of the container builder.
+			// In order to accomplish this while still outputing the sysext image, we need to
+			// create a dependency chain from tests back to erofs.
+			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+			withTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
+			withFinalState := testrunner.WithFinalState(erofs, frontend.TestWithClientFrontend(client), testrunner.WithConstraints(opts...))
+
+			erofs = ctr.With(withTests).With(withFinalState)
+
+			def, err := erofs.Marshal(ctx, opts...)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			res, err := client.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+
+			ref, err := res.SingleRef()
+			if err != nil {
+				return nil, nil, err
+			}
+
+			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, nil
 		})
 	}
 }
@@ -179,17 +273,20 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			}
 
 			pc := dalec.Platform(platform)
-			worker, err := cfg.Worker(sOpt, pg, pc)
-			if err != nil {
-				return nil, nil, errors.Wrap(err, "error building worker container")
-			}
+			opts := []llb.ConstraintsOpt{pg, pc}
 
-			pkgSt, err := cfg.BuildPkg(ctx, client, worker, sOpt, spec, targetKey, pg, pc)
-			if err != nil {
-				return nil, nil, err
-			}
+			pkgSt := cfg.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
 
-			def, err := pkgSt.Marshal(ctx, pc)
+			// The input to the test runner needs to be the output of the container builder.
+			// In order to accomplish this while still outputing the package, we need to
+			// create a dependency chain from tests back to pkgSt.
+			ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+			withTests := cfg.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
+			withFinalState := testrunner.WithFinalState(pkgSt, frontend.TestWithClientFrontend(client), testrunner.WithConstraints(opts...))
+
+			pkgSt = ctr.With(withTests).With(withFinalState)
+
+			def, err := pkgSt.Marshal(ctx, opts...)
 			if err != nil {
 				return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
 			}
@@ -204,19 +301,6 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			ref, err := res.SingleRef()
 			if err != nil {
 				return nil, nil, err
-			}
-			if err := ref.Evaluate(ctx); err != nil {
-				return ref, nil, err
-			}
-
-			ctr, err := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, pkgSt, pg, pc)
-			if err != nil {
-				return ref, nil, err
-			}
-
-			if ref, err := cfg.RunTests(ctx, client, worker, spec, sOpt, ctr, targetKey, pg, pc); err != nil {
-				cfg, _ := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
-				return ref, cfg, err
 			}
 
 			if platform == nil {

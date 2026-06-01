@@ -5,6 +5,12 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
+    inputs:
+      source_policy:
+        description: 'Enable BuildKit source policy'
+        type: boolean
+        default: false
   pull_request:
     branches:
       - main
@@ -15,12 +21,16 @@ on:
       - '*.md'
       - 'CODEOWNERS'
       - 'LICENSE'
+      - '.github/copilot-instructions.md'
       - '.github/workflows/retag.yml'
       - '.github/workflows/retag/**'
       - 'cmd/retagger/**'
       - 'cmd/worker-image-matrix/**'
       - '.github/workflows/worker-images/**'
       - '.github/workflows/worker-images.yml'
+      - '.github/workflows/dependabot.yml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/deploy-docs.yml'
 
   push:
     branches:
@@ -32,6 +42,7 @@ on:
       - '*.md'
       - 'CODEOWNERS'
       - 'LICENSE'
+      - '.github/copilot-instructions.md'
       - '.github/workflows/retag.yml'
       - '.github/workflows/retag/**'
       - 'cmd/retagger/**'
@@ -48,32 +59,31 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.12.2
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache: false
       # Use the golang-ci lint action which automattically sets up GHA caching and other things
       # Note: There is also a "lint" target in docker-bake.hcl for local linting
       # If you make changes to this, please make sure to also update the local linting target
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.1.6
+          version: v2.8.0
           args: --timeout=30m
       - name: custom linters
         run: go run ./cmd/lint ./...
       - name: validate generated files
         run: |
-          go generate || exit $?
-          git diff --exit-code
-          if [ $? -ne 0 ]; then
-            echo "::error::Missing updates to generated files. Please run 'go generate' and commit the changes"
+          go generate ./... || exit $?
+          if ! git diff --exit-code; then
+            echo "::error::Missing updates to generated files. Please run 'go generate ./...' and commit the changes"
             exit 1
           fi
 
@@ -83,7 +93,6 @@ jobs:
       fail-fast: false
       matrix:
         suite:
-          - Mariner2
           - Azlinux3
           - Bookworm
           - Bullseye
@@ -96,94 +105,272 @@ jobs:
           - Almalinux9
           - Rockylinux8
           - Rockylinux9
+          - Trixie
           - other
         include:
           - suite: other
-            skip: Mariner2|Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9
+            skip: Azlinux3|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
 
-    # TODO: support diff/merge
-    # Right now this is handled by the e2e suite, but we can migrate that here.
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.12.2
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache: false
 
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Update Docker
+        run: |
+          set -e
+          docker version
+          docker info
+
+          sudo apt update
+          sudo apt install -y moby-engine=29.4.* moby-buildx=0.33.* moby-cli=29.4.* moby-containerd=2.3.*
+
+          docker version
+          docker info
 
       - uses: ./.github/actions/enable-containerd
 
-      - name: Setup jaeger
-        run: |
-          set -e
-          docker run -d --net=host --restart=always --name jaeger -e COLLECTOR_OTLP_ENABLED=true jaegertracing/all-in-one:1.62.0
-          docker0_ip="$(ip -f inet addr show docker0 | grep -Po 'inet \K[\d.]+')"
-          echo "OTEL_EXPORTER_OTLP_ENDPOINT=http://${docker0_ip}:4318" >> "${GITHUB_ENV}"
-          echo "OTEL_SERVICE_NAME=dalec-integration-test" >> "${GITHUB_ENV}"
-
-          tmp="$(mktemp)"
-          echo "[Service]" > "${tmp}"
-          echo "Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=http://${docker0_ip}:4318\"" >> "${tmp}"
-
-          sudo mkdir -p /etc/systemd/system/docker.service.d
-          sudo mkdir -p /etc/systemd/system/containerd.service.d
-          sudo cp "${tmp}" /etc/systemd/system/docker.service.d/otlp.conf
-          sudo cp "${tmp}" /etc/systemd/system/containerd.service.d/otlp.conf
-
-          sudo systemctl daemon-reload
-          sudo systemctl restart containerd
-          sudo systemctl restart docker
-
-      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         name: Login to GHCR
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup otel-collector
+        run: |
+          set -e
+          mkdir -p /tmp/otel-traces
+          chmod 777 /tmp/otel-traces
+
+          if ! docker run -d --net=host --restart=always --name otel-collector \
+            -v ${{ github.workspace }}/.github/otel-collector-ci.yaml:/etc/otelcol-contrib/config.yaml:ro \
+            -v /tmp/otel-traces:/data:rw \
+            otel/opentelemetry-collector-contrib:0.144.0; then
+            echo "::warning::Failed to start otel-collector for tracing, skipping trace configuration"
+            exit 0
+          fi
+
+          echo "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" >> "${GITHUB_ENV}"
+          echo "OTEL_SERVICE_NAME=dalec-integration-test" >> "${GITHUB_ENV}"
+
+          tmp="$(mktemp)"
+          echo "[Service]" > "${tmp}"
+          echo "Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318\"" >> "${tmp}"
+
+          sudo mkdir -p /etc/systemd/system/docker.service.d
+          sudo mkdir -p /etc/systemd/system/containerd.service.d
+          sudo cp "${tmp}" /etc/systemd/system/docker.service.d/otlp.conf
+          sudo cp "${tmp}" /etc/systemd/system/containerd.service.d/otlp.conf
+
+          if ! sudo systemctl daemon-reload; then
+            echo "::warning::Failed to reload systemd daemon for tracing configuration"
+          fi
+          if ! sudo systemctl restart containerd; then
+            echo "::warning::Failed to restart containerd with tracing configuration"
+          fi
+          if ! sudo systemctl restart docker; then
+            echo "::warning::Failed to restart docker with tracing configuration"
+          fi
+
       - name: download deps
         run: go mod download
       - name: Setup QEMU
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
       - name: Setup source policy
+        if: inputs.source_policy
         uses: ./.github/actions/setup-source-policy
-      - name: Run integration tests
+      - name: Aggressive cleanup
+        run: |
+          echo "================ INITIAL DISK USAGE ================"
+          df -h
+          echo
+
+          echo "================ DOCKER: SYSTEM PRUNE (IMAGES + VOLUMES) ================"
+          echo "Removing stopped containers, unused images, networks, and volumes..."
+          docker system prune -f --all --volumes || true
+          df -h
+          echo
+
+          echo "================ REMOVE JAVA (JDKs) ================"
+          echo "Removing all JDKs from /usr/lib/jvm"
+          sudo rm -rf /usr/lib/jvm || true
+          df -h
+          echo
+
+          echo "================ REMOVE .NET SDKs ================"
+          echo "Removing .NET SDKs from /usr/share/dotnet"
+          sudo rm -rf /usr/share/dotnet || true
+          df -h
+          echo
+
+          echo "================ REMOVE SWIFT TOOLCHAIN ================"
+          echo "Removing Swift from /usr/share/swift"
+          sudo rm -rf /usr/share/swift || true
+          df -h
+          echo
+
+          echo "================ REMOVE HASKELL (GHCUP) ================"
+          echo "Removing GHC toolchains from /usr/local/.ghcup"
+          sudo rm -rf /usr/local/.ghcup || true
+          df -h
+          echo
+
+          echo "================ REMOVE JULIA ================"
+          echo "Removing Julia installations from /usr/local/julia*"
+          sudo rm -rf /usr/local/julia* || true
+          df -h
+          echo
+
+          echo "================ REMOVE ANDROID SDKs ================"
+          echo "Removing Android SDKs from /usr/local/lib/android"
+          sudo rm -rf /usr/local/lib/android || true
+          df -h
+          echo
+
+          echo "================ REMOVE CHROMIUM ================"
+          echo "Removing Chromium from /usr/local/share/chromium"
+          sudo rm -rf /usr/local/share/chromium || true
+          df -h
+          echo
+
+          echo "================ REMOVE EDGE & CHROME BUILDS ================"
+          echo "Removing Microsoft Edge and Google Chrome from /opt"
+          sudo rm -rf /opt/microsoft /opt/google || true
+          df -h
+          echo
+
+          echo "================ REMOVE POWERSHELL ================"
+          echo "Removing PowerShell from /usr/local/share/powershell"
+          sudo rm -rf /usr/local/share/powershell || true
+          df -h
+          echo
+
+          # Optional – huge space saver on GitHub runners
+          # echo "================ REMOVE HOSTED TOOLCACHE ================"
+          # echo "Removing GitHub hosted toolcache"
+          # sudo rm -rf /opt/hostedtoolcache || true
+          # df -h
+          # echo
+
+          du -d1 -h /opt/hostedtoolcache | sort -h -k1
+
+          echo "================ DOCKER: FINAL CLEANUP ================"
+          echo "Removing dangling build cache and leftover images..."
+          docker system prune -af || true
+          docker builder prune -af || true
+          df -h
+          echo
+
+          echo "================ CLEANUP COMPLETE ================"
+      - name: Use azure ubuntu archive
+        uses: ./.github/actions/dns-spoof-ubuntu-archive
+      - name: Pre-build base images
+        run: |
+          set -eu
+
+          docker buildx bake frontend
+
+          if [ "${TEST_SUITE}" = "other" ]; then
+            exit 0
+          fi
+
+          # downcase the test suite to get the worker target
+          worker="${TEST_SUITE,,}"
+          if [ "${worker}" = "windows" ]; then
+            worker="windowscross"
+          fi
+          export WORKER_TARGET=${worker}/worker
+          docker buildx bake worker
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
+      - name: Run integration tests (with coverage tracking)
         run: |
           set -ex
-          if [ -n "${TEST_SUITE}" ] && [ ! "${TEST_SUITE}" = "other" ]; then
+          mkdir -p coverage
+
+          # The frontend covdata files (covmeta/covcounters) are written by the test harness
+          # (writeFrontendCovdata) on the RUNNER filesystem.
+          export DALEC_FRONTEND_GOCOVERDIR="${GITHUB_WORKSPACE}/coverage/frontend-${TEST_SUITE}"
+          rm -rf "${DALEC_FRONTEND_GOCOVERDIR}"
+          mkdir -p "${DALEC_FRONTEND_GOCOVERDIR}"
+
+          run=""
+          skip=""
+          if [ -n "${TEST_SUITE}" ] && [ "${TEST_SUITE}" != "other" ]; then
             run="-run=${TEST_SUITE}"
           fi
           if [ -n "${TEST_SKIP}" ]; then
             skip="-skip=${TEST_SKIP}"
           fi
-          go test -timeout=59m -v -json ${run} ${skip} ./test | go run ./cmd/test2json2gha --slow 120s --logdir /tmp/testlogs
+
+          go test -timeout=59m -v -json \
+            -covermode=atomic -coverpkg=./... \
+            -coverprofile="coverage/integration-${TEST_SUITE}.out" \
+            ${run} ${skip} ./test \
+            | go run ./cmd/test2json2gha --slow 120s --logdir /tmp/testlogs
+
+          # Convert frontend covdata -> legacy coverprofile
+          if ! ls "${DALEC_FRONTEND_GOCOVERDIR}"/covmeta.* >/dev/null 2>&1; then
+            echo "::group::frontend coverage debug"
+            echo "DALEC_FRONTEND_GOCOVERDIR=${DALEC_FRONTEND_GOCOVERDIR}"
+            echo "Contents:"
+            ls -la "${DALEC_FRONTEND_GOCOVERDIR}" || true
+            echo "Searching workspace for covmeta/covcounters..."
+            find "${GITHUB_WORKSPACE}" \( -name 'covmeta.*' -o -name 'covcounters.*' \) 2>/dev/null | head -n 200 || true
+            echo "::endgroup::"
+            echo "::error::No frontend coverage covmeta.* found in ${DALEC_FRONTEND_GOCOVERDIR} (frontend coverage not collected)"
+            exit 1
+          fi
+
+          go tool covdata textfmt \
+            -i="${DALEC_FRONTEND_GOCOVERDIR}" \
+            -o="coverage/frontend-${TEST_SUITE}.out"
         env:
           TEST_SUITE: ${{ matrix.suite }}
           TEST_SKIP: ${{ matrix.skip }}
+
+
+      - name: Upload integration coverage profile
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-integration-${{ matrix.suite }}
+          path: |
+            coverage/integration-${{ matrix.suite }}.out
+            coverage/frontend-${{ matrix.suite }}.out  
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Get traces
         if: always()
         run: |
           set -ex
           mkdir -p /tmp/reports
-          curl -sSLf localhost:16686/api/traces?service=${OTEL_SERVICE_NAME} > /tmp/reports/jaeger-tests.json
-          curl -sSLf localhost:16686/api/traces?service=containerd > /tmp/reports/jaeger-containerd.json
-          curl -sSLf localhost:16686/api/traces?service=docker > /tmp/reports/jaeger-docker.json
+          if [ -f /tmp/otel-traces/traces.jsonl ]; then
+            cp /tmp/otel-traces/traces.jsonl /tmp/reports/traces.jsonl
+          else
+            echo "::warning::No traces file found"
+          fi
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: integration-test-reports-${{matrix.suite}}
           path: /tmp/reports/*
           retention-days: 1
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: integration-test-logs-${{matrix.suite}}
           path: /tmp/testlogs/*
@@ -200,7 +387,7 @@ jobs:
           sudo journalctl -u docker > "${f}"
       - name: Upload buildkit logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-dockerd-logs-${{ matrix.suite }}
           path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
@@ -210,20 +397,39 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.12.2
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache: false
       - name: download deps
         run: go mod download
-      - name: Run unit tests
-        run: go test -v --test.short --json ./... | go run ./cmd/test2json2gha
+      - name: Run unit tests (with coverage tracking)
+        run: |
+          set -eux
+          mkdir -p coverage
+
+          pkgs="$(go list ./... | grep -v '/test$' | grep -v '/test/' )"
+          go test -v --test.short --json \
+            -covermode=atomic \
+            -coverprofile="coverage/unit.out" \
+            ${pkgs} \
+            | go run ./cmd/test2json2gha
+      - name: Upload unit coverage profile
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-unit
+          path: coverage/unit.out
+          if-no-files-found: ignore
+          retention-days: 7
+
+
 
   e2e:
     runs-on: ubuntu-22.04
@@ -237,21 +443,22 @@ jobs:
       FRONTEND_REF: localhost:5000/dalec/frontend
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.12.2
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           # We need to fetch all commits so that we can diff against the base branch
           fetch-depth: 0
 
       - name: Expose GitHub tokens for caching
-        uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3.1.0
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Setup source policy
+        if: inputs.source_policy
         uses: ./.github/actions/setup-source-policy
-      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         name: Login to GHCR
         with:
           registry: ghcr.io
@@ -259,12 +466,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/format-repo
         id: format-repo
+      - name: Use azure ubuntu archive
+        uses: ./.github/actions/dns-spoof-ubuntu-archive
       - name: Setup builder
         run: |
           # Sometimes the builder runs out of space... so cleanup anything we can first.
           docker image prune -a -f
 
-          docker run -d --net=host ghcr.io/${{ steps.format-repo.outputs.result }}/dockerhub/mirror/library/registry:latest
+          docker run -d --net=host ghcr.io/${{ steps.format-repo.outputs.result }}/mirror/dockerhub/library/registry:latest
 
           # If diff/merge are enabled we need to use a buildx builder to make sure the feature is supported.
           # Otherwise we can just use the default docker builder.
@@ -283,9 +492,7 @@ jobs:
           docker buildx bake test
       - name: Build go-md2man example in docs
         run: |
-          version=$(cat docs/examples/go-md2man.yml | yq .version)
-          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=mariner2/rpm --output=_output .
-          docker build -t go-md2man:$version -f docs/examples/go-md2man.yml --target=mariner2 .
+          docker buildx bake examples
       - name: dump logs
         if: failure()
         id: dump-logs
@@ -302,9 +509,87 @@ jobs:
           fi
       - name: Upload buildkit logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-dockerd-logs-diffmerge=${{ matrix.disable_diff_merge }}
           path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
           retention-days: 1
+  coverage-report:
+    runs-on: ubuntu-22.04
+    needs:
+      - unit
+      - integration
 
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.25"
+          cache: false
+
+      - name: Download deps
+        run: go mod download
+
+      - name: Download unit coverage artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: coverage-unit
+          path: coverage
+
+      - name: Download integration coverage artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: coverage/_integration
+
+      - name: Merge coverage + generate report
+        run: |
+          set -eux
+          go install github.com/wadey/gocovmerge@latest
+
+          integration_profiles="$(find coverage/_integration -type f -name 'integration-*.out' | sort | tr '\n' ' ')"
+          frontend_profiles="$(find coverage/_integration -type f -name 'frontend-*.out' | sort | tr '\n' ' ')"
+          if [ -z "${integration_profiles}" ]; then
+            echo "::error::No integration coverage profiles found"
+            exit 1
+          fi
+
+          if [ -z "${frontend_profiles}" ]; then
+            echo "::error::No frontend coverage profiles found"
+            exit 1
+          fi
+
+          if [ ! -f coverage/unit.out ]; then
+            echo "::error::Unit coverage profile not found (coverage/unit.out)"
+            exit 1
+          fi
+
+          "$(go env GOPATH)/bin/gocovmerge" coverage/unit.out ${integration_profiles} ${frontend_profiles} > coverage/all.out
+
+          go tool cover -func=coverage/all.out | tee coverage/summary.txt
+          go tool cover -html=coverage/all.out -o coverage/index.html
+
+          total="$(tail -n 1 coverage/summary.txt | awk '{print $3}')"
+          {
+            echo "## Coverage"
+            echo
+            echo "- Total: **${total}**"
+            echo "- Profiles merged: $(echo "${integration_profiles}" | wc -w) integration + $(echo "${frontend_profiles}" | wc -w) frontend"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload merged coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: |
+            coverage/all.out
+            coverage/summary.txt
+            coverage/index.html
+          retention-days: 14

@@ -2,9 +2,16 @@
 
 Dalec welcomes contributions and suggestions!
 
-## Terms
+## For Developers
 
-Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+If you're looking to contribute code to Dalec, please see the [Developer Guide](https://project-dalec.github.io/dalec/developers) for detailed information about:
+
+- Setting up your development environment
+- Recommended dev/test workflows
+- Running tests and validation
+- Using the Makefile for common tasks
+
+## Terms
 
 ## Code of Conduct
 
@@ -16,7 +23,8 @@ Dalec has adopted the CNCF Code of Conduct. Refer to our [Community Code of Cond
 2. Fork the desired repository, then develop and test your code changes.
 3. Submit a pull request.
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
+When you submit a pull request all commits must include a [DCO signed-off](https://wiki.linuxfoundation.org/dco).
+The CNCF-operated `dco-2` GitHub App enforces this policy on every branch, blocking merges until the status check passes.
 
 ## Issue and pull request management
 

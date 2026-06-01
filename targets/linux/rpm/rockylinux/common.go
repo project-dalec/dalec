@@ -3,9 +3,9 @@ package rockylinux
 import (
 	"context"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 var (
@@ -47,7 +47,7 @@ func basePackages(name string) []dalec.Spec {
 			License:     license,
 			Description: "DALEC base packages for " + name,
 			Dependencies: &dalec.PackageDependencies{
-				Runtime: map[string]dalec.PackageConstraints{
+				Runtime: dalec.PackageDependencyList{
 					"rocky-release": {},
 					"tzdata":        {},
 				},

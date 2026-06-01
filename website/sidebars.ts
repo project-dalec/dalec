@@ -15,18 +15,20 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Getting Started',
+      collapsed: false,
       items: [
-        'intro',
-        'build',
+        'overview',
         'quickstart',
         'container-only-builds',
         'virtual-packages',
         'buildkit-drivers',
+        'system-extensions',
       ],
     },
     {
       type: 'category',
       label: 'Specifications',
+      collapsed: false,
       items: [
         'spec',
         'sources',
@@ -41,9 +43,27 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Features',
+      collapsed: false,
       items: [
         'signing',
         'editor-support',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Operations',
+      collapsed: false,
+      items: [
+        'verifying-images',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Contributing',
+      collapsed: false,
+      items: [
+        'architecture',
+        'developers',
       ],
     },
   ],

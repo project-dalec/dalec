@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   tagList:
@@ -19,6 +18,13 @@ jobs:
     outputs:
       tags: ${{ steps.tags.outputs.OUTPUT_TAGS }}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - name: Get image tag list
         id: tags
         run: |
@@ -27,17 +33,35 @@ jobs:
           # Remove leading "v" from tag name
           TRIMMED_REF_NAME="${REF_NAME#v}"
 
-          # Creates a comma separated list of tags
-          # - latest
-          # - <major>.<minor>
-          # - <major>.<minor>.<patch>
-          OUTPUT_TAGS="latest,${TRIMMED_REF_NAME%.*},${TRIMMED_REF_NAME}"
-          
-          echo "OUTPUT_TAGS=${OUTPUT_TAGS}" >> "$GITHUB_OUTPUT" && cat "$GITHUB_OUTPUT"
+          OUTPUT_TAGS=(
+            "type=raw,value=${TRIMMED_REF_NAME%.*}"
+            "type=raw,value=${TRIMMED_REF_NAME}"
+          )
+
+          # Check if this tag is the latest release by fetching the latest release and comparing the tag to the tag being built.
+          LATEST_TAG="$(gh release view --json tagName -q .tagName)"
+          if [ "$REF_NAME" = "$LATEST_TAG" ]; then
+            OUTPUT_TAGS=("type=raw,value=latest" "${OUTPUT_TAGS[@]}")
+          fi
+
+          {
+            echo "OUTPUT_TAGS<<EOF"
+            printf '%s\n' "${OUTPUT_TAGS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
         env:
           REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
+
   build:
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # Required for cosign OIDC signing
+      attestations: write  # Required for GitHub attestations
+
     needs: tagList
     uses: ./.github/workflows/frontend-image.yml
     with:

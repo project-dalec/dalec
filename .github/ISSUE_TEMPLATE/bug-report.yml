@@ -8,7 +8,7 @@ body:
     attributes:
       value: |
         Please search to see if an issue already exists for your bug before continuing.
-        > If you need to report a security issue please see https://github.com/Azure/dalec/security/policy instead.
+        > If you need to report a security issue please see https://github.com/project-dalec/dalec/security/policy instead.
   - type: textarea
     attributes:
       label: Expected Behavior

@@ -63,3 +63,8 @@ import MsftAzlCNRepo from './examples/repos/msft-azl-cloud-native.yml.md'
 <summary>Microsoft Azure Linux cloud-native repository (DNF)</summary>
 <MsftAzlCNRepo />
 </details>
+
+
+:::note
+For yum repos backed by the local filesystem, you may want to set `metadata_expire=0` in the repo config to avoid caching issues.
+:::

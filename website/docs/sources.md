@@ -6,7 +6,7 @@ The source abstraction enables fetching build sources over various protocols.
 
 Some sources are considered as inherently file-based sources, like HTTP URLs or local directories.
 Other sources are considered as inherently directory-based sources, like git repositories.
-Depending on the source type, the behavior of certain things may be different, depending on the target implementation (e.g. mariner2, jammy, windows, etc).
+Depending on the source type, the behavior of certain things may be different, depending on the target implementation (e.g. azlinux3, jammy, windows, etc).
 Sources are injected into the root path of the build environment using the name of the source.
 
 Ideally the content of a source is platform agnostic (e.g. no platform specific binaries).
@@ -43,7 +43,7 @@ sources:
 
 ### Git
 
-Git sources fetch a git repository at a specific commit.
+Git sources fetch a git repository at a specific commit, branch, or tag ref.
 You can use either an SSH style git URL or an HTTPS style git URL.
 
 For SSH style git URLs, if the client (such as the docker CLI) has provided
@@ -61,12 +61,26 @@ sources:
     git:
       # This uses an HTTPS style git URL.
       url: https://github.com/myOrg/myRepo.git
-      commit: 1234567890abcdef
+      commit: v1.2.3
+      checksum: 1234567890abcdef # [Optional] Verify the ref resolves to this commit.
       keepGitDir: true # [Optional] Keep the .git directory when fetching the git source. Default: false
 ```
 
 By default, Dalec will discard the `.git` directory when fetching a git source.
 You can override this behavior by setting `keepGitDir: true` in the git configuration.
+
+When `commit` is a branch or tag, `checksum` can be used to verify that the ref
+resolves to the expected commit. This lets you fetch a tag while still pinning
+the content to a known commit. BuildKit accepts a full or short hex commit hash
+for `checksum`.
+
+`checksum` requires BuildKit v0.22.0 or later. When using Docker's embedded
+BuildKit backend, use Docker Engine v28.2.0 or later.
+
+Fetching by tag can be useful when tools inspect git metadata during the build.
+For example, Go build metadata and Kubernetes-style version tooling can use tag
+information from `.git` when `keepGitDir: true` is set, while `checksum` still
+ensures the tag resolves to the expected commit.
 
 Git repositories are considered to be "directory" sources.
 
@@ -121,7 +135,7 @@ Clients provide a build context to Dalec.
 As an example, here is how the Docker client provides a build context to Dalec:
 
 ```shell
-$ docker build <some args> .
+docker build <some args> .
 ```
 
 In this case the `.`, or current directory, is the build context.
@@ -144,9 +158,24 @@ sources:
       name: "context"
 ```
 
+
 Where `name: "context"`, not to be confused with the source type `context`, is named by convention by the docker CLI.
 Additionally contexts can be passed in from the docker cli: `docker build --build-context <name>=<path>`.
-The `<name>` would be the name to use in your yaml to access it.
+Example, for `--build-context myContext=./someDir`:
+
+```yaml
+sources:
+  someSource:
+    context:
+      name: "myContext"
+```
+
+:::note
+Note the "name" field in the context source type has nothing to do with the name
+of the source in the sources mapping (e.g. `someSource` in the above example).
+It is used to tell Dalec the name the *client* has provided the content as in
+the build request.
+:::
 
 This could also be written as below, since the `name: context` is the default and is the main build context passed in by the client:
 
@@ -300,7 +329,7 @@ sources:
     build:
       source: # Specify another source to use as the build context of this build operation
         git:
-          url: https://github.com/Azure/dalec.git
+          url: https://github.com/project-dalec/dalec.git
           commit: v0.1.0
 ```
 
@@ -338,6 +367,39 @@ Build sources are considered to be "directory" sources.
 
 Generators are used to generate a source from another source.
 Currently the generators supported are `gomod`, `cargohome`, `pip`, and `nodemod`.
+
+## Build-time source filters
+
+Dalec can load a build-time source filter configuration from a build context.
+This is useful when a packaging or signing environment must reject specific
+source files, but the package spec should not be changed.
+
+The filter config is a YAML file with a `global_excludes` list:
+
+```yaml
+global_excludes:
+  - "testdata/large-fixture.zip"
+  - "vendor/**/examples/**"
+```
+
+Pass the config path with `DALEC_SOURCE_FILTER_CONFIG_PATH`. The file is read
+from the `dalec-source-options` build context unless
+`DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME` names a different build context.
+
+Example with Docker Buildx:
+
+```console
+$ docker buildx build \
+  --build-arg DALEC_SOURCE_FILTER_CONFIG_PATH=source-filter.yml \
+  --build-context dalec-source-options=./ci/dalec \
+  ...
+```
+
+`global_excludes` patterns are evaluated relative to each source root. For
+normal directory sources this uses the same filtering path as `sources.*.excludes`;
+local context filters are pushed into BuildKit context loading. For generated
+aggregate sources such as `gomod`, patterns are relative to the generated cache
+root and are applied after generation.
 
 ### Gomod
 
@@ -398,7 +460,7 @@ sources:
   src:
     path: ./
     git:
-      url: https://github.com/Azure/dalec.git
+      url: https://github.com/project-dalec/dalec.git
       commit: main
       auth:
         token: GIT_AUTH_TOKEN
@@ -415,8 +477,62 @@ sources:
                 username: william_james_spode
 ```
 
-In the above example, there are 4 hosts that have git authorization configured. The auth configuration for the host `github.com` (from the `git` source) will automatically be applied to the gomod auth configuration (no need to repeat it). In the `gomod` generator, `gitlab.com` is configured to use the build secret `GITLAB_GIT_AUTH_HEADER`, and `dev.azure.com` will use the build secret `AZURE_GIT_AUTH_TOKEN`. Finally, `anotherhost.com` is configured to use the ssh auth socket with id `default`, and ssh username `william_james_spode`. These build secrets and/or auth sockets must be supplied at build time. See [Git](#Git) for more information on git auth in general.
+In the above example, there are 4 hosts that have git authorization configured. The auth configuration for the host `github.com` (from the `git` source) will automatically be applied to the gomod auth configuration (no need to repeat it). In the `gomod` generator, `gitlab.com` is configured to use the build secret `GITLAB_GIT_AUTH_HEADER`, and `dev.azure.com` will use the build secret `AZURE_GIT_AUTH_TOKEN`. Finally, `anotherhost.com` is configured to use the ssh auth socket with id `default`, and ssh username `william_james_spode`. These build secrets and/or auth sockets must be supplied at build time. See [Git](#git) for more information on git auth in general.
 
+#### Gomod Replace Directives
+
+The `gomod` generator supports modifying go.mod files using `replace` directives. This is useful for:
+- Replacing dependencies with local paths or forks
+- Working with multi-module repositories that have inter-module dependencies
+
+When replace directives are specified, Dalec automatically:
+1. Applies the edits using `go mod edit`
+2. Runs `go mod tidy` to update go.sum
+3. Generates a unified diff patch
+4. Applies the patch to the source before building
+
+**Example using replace directive:**
+
+```yaml
+sources:
+  myapp:
+    git:
+      url: https://github.com/example/myapp.git
+      commit: v1.0.0
+    generate:
+      - gomod:
+          edits:
+            replace:
+              # String format using Go's native syntax: "old => new"
+              - "github.com/old/pkg@v1.0.0 => github.com/new/pkg@v2.0.0"
+              # Struct format for more complex replacements
+              - old: github.com/another/pkg
+                new: ../local/path  # Can use local paths
+```
+
+**Example with multiple modules and replace directives:**
+
+```yaml
+sources:
+  monorepo:
+    git:
+      url: https://github.com/example/monorepo.git
+      commit: main
+    generate:
+      - gomod:
+          paths:
+            - module1
+            - module2
+          edits:
+            replace:
+              - "example.com/internal/shared@v0.0.0 => ../../shared"
+```
+
+The edits are applied to all modules specified in the `paths` field (or the root module if no paths are specified). This allows you to make consistent changes across a multi-module repository.
+
+:::note
+The generated patches are created during preprocessing and are treated as internal sources. You don't need to manually create or maintain these patch files - Dalec handles this automatically based on your replace directives.
+:::
 
 ### Cargohome
 
@@ -650,7 +766,7 @@ patches:
 
 ## Advanced Source Configurations
 
-You can see more advanced configurations in our [test fixtures](https://github.com/Azure/dalec/tree/main/test/fixtures).
+You can see more advanced configurations in our [test fixtures](https://github.com/project-dalec/dalec/tree/main/test/fixtures).
 These are in here to test lots of different edge cases and are only mentioned to provide examples of what might be possible
 when these simple configurations are not enough.
 The examples in that directory are not exhaustive and are not guaranteed to work in all cases or with all inputs and are

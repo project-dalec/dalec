@@ -1,0 +1,11 @@
+[[IgnoredVulns]]
+id = "GHSA-76c9-3jph-rj3q"
+reason = "Not applicable to core Dalec; used in static website generation only."
+
+[[IgnoredVulns]]
+id = "GHSA-4v9v-hfq4-rm2v"
+reason = "Not applicable to core Dalec; used in static website generation only."
+
+[[IgnoredVulns]]
+id = "GHSA-9jgg-88mc-972h"
+reason = "Not applicable to core Dalec; used in static website generation only."

@@ -10,10 +10,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
@@ -22,11 +21,16 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/internal/test"
 	"github.com/tonistiigi/fsutil/types"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"gotest.tools/v3/assert"
+	"gotest.tools/v3/assert/cmp"
 )
 
 const (
@@ -79,10 +83,14 @@ func readFile(ctx context.Context, t *testing.T, name string, res *gwclient.Resu
 		Filename: name,
 	})
 	if err != nil {
+		dir := filepath.Dir(name)
+		if strings.Contains(err.Error(), "not a directory") {
+			dir = filepath.Dir(dir)
+		}
 		stat, _ := ref.ReadDir(ctx, gwclient.ReadDirRequest{
-			Path: filepath.Dir(name),
+			Path: filepath.Dir(dir),
 		})
-		t.Fatalf("error reading file %q: %v, dir contents: \n%s", name, err, dirStatAsStringer(stat))
+		t.Fatalf("error reading file %q: %v, dir contents of %s: \n%s", name, err, dir, dirStatAsStringer(stat))
 	}
 
 	return dt
@@ -127,9 +135,7 @@ func checkFile(ctx context.Context, t *testing.T, name string, res *gwclient.Res
 	t.Helper()
 
 	dt := readFile(ctx, t, name, res)
-	if !bytes.Equal(dt, expect) {
-		t.Fatalf("expected %q, got %q", string(expect), string(dt))
-	}
+	assert.Check(t, cmp.Equal(string(dt), string(expect)))
 }
 
 func listTargets(ctx context.Context, t *testing.T, gwc gwclient.Client, spec *dalec.Spec) targets.List {
@@ -222,15 +228,22 @@ func withBuildArg(k, v string) srOpt {
 	}
 }
 
+// Since withSpec is modifying a spec, this is used
+// to prevent potential data races which, while the data being modified is harmless
+// can still cause memory corruption.
+var withSpecMu sync.Mutex
+
 func withSpec(ctx context.Context, t *testing.T, spec *dalec.Spec) srOpt {
 	return func(cfg *newSolveRequestConfig) {
 		if spec != nil && !cfg.noFillSpecFields {
+			withSpecMu.Lock()
 			if spec.Packager == "" {
 				spec.Packager = "test"
 			}
 			if spec.Website == "" {
-				spec.Website = "https://github.com/Azure/dalec"
+				spec.Website = "https://github.com/project-dalec/dalec"
 			}
+			withSpecMu.Unlock()
 		}
 		specToSolveRequest(ctx, t, spec, cfg.req)
 	}
@@ -255,7 +268,6 @@ func withIgnoreCache(refs ...string) srOpt {
 			v += ","
 		}
 		cfg.req.FrontendOpt["no-cache"] = v + strings.Join(refs, ",")
-
 	}
 }
 
@@ -276,11 +288,85 @@ func withListTargetsOnly(cfg *newSolveRequestConfig) {
 
 func solveT(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient.SolveRequest) *gwclient.Result {
 	t.Helper()
+
 	res, err := gwc.Solve(ctx, req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Unexpected error solving request: %v", err)
 	}
+
+	// Running this validation as part of this function allows us to verify most test scenarios.
+	verifyConstraintsPropagation(ctx, t, req, res)
+
 	return res
+}
+
+func verifyConstraintsPropagation(ctx context.Context, t *testing.T, req gwclient.SolveRequest, res *gwclient.Result) {
+	t.Helper()
+
+	inputOps := frontendInputOps(t, req)
+	allOps := []test.LLBOp{}
+
+	if err := res.EachRef(func(ref gwclient.Reference) error {
+		res := &gwclient.Result{
+			Ref: ref,
+		}
+
+		ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
+		if err != nil {
+			t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
+		}
+
+		allOps = append(allOps, ops...)
+
+		return nil
+	}); err != nil {
+		t.Fatalf("Unexpected error iterating over refs: %v", err)
+	}
+
+	badOps := []test.LLBOp{}
+
+	for _, op := range allOps {
+		// Frontend inputs are supplied as already-marshaled definitions. BuildKit
+		// preserves those ops as-is, so Dalec cannot apply constraints to their
+		// internal ops when consuming them as named contexts.
+		if _, ok := inputOps[op.Digest]; ok {
+			continue
+		}
+
+		// - Checking metadata for progress group presence is a good gauge for constraints propagation.
+		// - As far as observed, merge OP does not inherit constraints.
+		// - "llb.customname" property comes from current frontend context Dockerfile, where constraints cannot be applied
+		//   at the moment, so those operations won't have e.g. a progress group we can check against.
+		if op.OpMetadata.ProgressGroup != nil || op.Op.GetMerge() != nil || op.OpMetadata.Description["llb.customname"] != "" {
+			continue
+		}
+
+		badOps = append(badOps, op)
+	}
+
+	if len(badOps) == 0 {
+		return
+	}
+
+	opsJSON, err := test.LLBOpsToJSON(badOps)
+	if err != nil {
+		t.Fatalf("Unexpected error converting bad ops to JSON: %v", err)
+	}
+
+	t.Errorf("Found %d operations without progress group metadata:\n%s", len(badOps), opsJSON)
+}
+
+func frontendInputOps(t *testing.T, req gwclient.SolveRequest) map[digest.Digest]struct{} {
+	t.Helper()
+
+	ops := make(map[digest.Digest]struct{})
+	for _, def := range req.FrontendInputs {
+		for _, dt := range def.Def {
+			ops[digest.FromBytes(dt)] = struct{}{}
+		}
+	}
+
+	return ops
 }
 
 func solveTCh(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient.SolveRequest, rc chan<- *gwclient.Result, ec chan<- error) {
@@ -292,6 +378,9 @@ func solveTCh(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclie
 		if err != nil {
 			ec <- err
 		}
+
+		// Running this validation as part of this function allows us to verify most test scenarios.
+		verifyConstraintsPropagation(ctx, t, req, res)
 
 		rc <- res
 	}()
@@ -336,11 +425,32 @@ func withBuildContext(ctx context.Context, t *testing.T, name string, st llb.Sta
 
 func reqToState(ctx context.Context, gwc gwclient.Client, sr gwclient.SolveRequest, t *testing.T) llb.State {
 	t.Helper()
-	res := solveT(ctx, t, gwc, sr)
 
-	ref, err := res.SingleRef()
-	if err != nil {
-		t.Fatal(err)
+	return resultToState(t, solveT(ctx, t, gwc, sr))
+}
+
+func resultToState(t *testing.T, res *gwclient.Result) llb.State {
+	t.Helper()
+
+	var ref gwclient.Reference
+	var err error
+
+	if len(res.Refs) > 1 {
+		for _, v := range res.Refs {
+			ref = v
+			break
+		}
+	} else {
+		ref, err = res.SingleRef()
+		if err != nil {
+			t.Fatalf("Unexpected error getting single ref from a given result: %v", err)
+		}
+	}
+
+	if ref == nil {
+		t.Log("No ref in result")
+
+		return llb.Scratch()
 	}
 
 	st, err := ref.ToState()

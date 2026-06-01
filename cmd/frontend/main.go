@@ -1,24 +1,28 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
-	"github.com/Azure/dalec/frontend"
-	"github.com/Azure/dalec/frontend/debug"
+	"github.com/containerd/plugin"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/util/appcontext"
 	"github.com/moby/buildkit/util/bklog"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/internal/frontendapi"
+	"github.com/project-dalec/dalec/internal/plugins"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/grpclog"
+
+	_ "github.com/project-dalec/dalec/internal/commands"
 )
 
 const (
-	Package = "github.com/Azure/dalec/cmd/frontend"
-
-	credHelperSubcmd = "credential-helper"
+	Package = "github.com/project-dalec/dalec/cmd/frontend"
 )
 
 func init() {
@@ -27,42 +31,70 @@ func init() {
 }
 
 func main() {
-	fs := flag.CommandLine
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `usage: %s [subcommand [args...]]`, os.Args[0])
-	}
+	flags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
 
-	if err := fs.Parse(os.Args); err != nil {
+	if err := flags.Parse(os.Args[1:]); err != nil {
 		bklog.L.WithError(err).Fatal("error parsing frontend args")
 		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
-
 	}
 
-	subCmd := fs.Arg(1)
-
-	// each "sub-main" function handles its own exit
-	switch subCmd {
-	case credHelperSubcmd:
-		args := flag.Args()[2:]
-		// skip os.Args[0] and "credential-helper"
-		gomodMain(args)
-	default:
-		dalecMain()
+	ctx := appcontext.Context()
+	if flags.NArg() == 0 {
+		dalecMain(ctx)
+		return
 	}
+
+	h, err := lookupCmd(ctx, flags.Arg(0))
+	if err != nil {
+		bklog.L.WithError(err).Fatal("error handling command")
+		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
+	}
+
+	if h == nil {
+		fmt.Fprintln(os.Stderr, "unknown subcommand:", flags.Arg(0))
+		fmt.Fprintln(os.Stderr, "full args:", flags.Args())
+		fmt.Fprintln(os.Stderr, "If you see this message this is probably a bug in dalec.")
+		os.Exit(64) // 64 is EX_USAGE, meaning command line usage error
+	}
+
+	h.HandleCmd(ctx, flags.Args()[1:])
 }
 
-func dalecMain() {
-	ctx := appcontext.Context()
-
-	var mux frontend.BuildMux
-	mux.Add(debug.DebugRoute, debug.Handle, nil)
-
-	if err := loadPlugins(ctx, &mux); err != nil {
-		bklog.L.WithError(err).Fatal("error loading plugins")
-		os.Exit(1)
+func lookupCmd(ctx context.Context, cmd string) (plugins.CmdHandler, error) {
+	set := plugin.NewPluginSet()
+	filter := func(r *plugins.Registration) bool {
+		return r.Type != plugins.TypeCmd || r.ID != cmd
 	}
 
-	if err := grpcclient.RunFromEnvironment(ctx, mux.Handler(frontend.WithTargetForwardingHandler)); err != nil {
+	for _, r := range plugins.Graph(filter) {
+		cfg := plugin.NewContext(ctx, set, nil)
+
+		p := r.Init(cfg)
+
+		v, err := p.Instance()
+		if plugin.IsSkipPlugin(err) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return v.(plugins.CmdHandler), nil
+	}
+
+	return nil, nil
+}
+
+func dalecMain(ctx context.Context) {
+	mux, err := frontendapi.NewBuildRouter(ctx)
+	if err != nil {
+		bklog.L.WithError(err).Fatal("error creating frontend router")
+	}
+	handler := mux.Handler(frontend.WithTargetForwardingHandler)
+	handler = wrapWithCoverage(handler)
+
+	if err := grpcclient.RunFromEnvironment(ctx, handler); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(70) // 70 is EX_SOFTWARE, meaning internal software error occurred
 	}

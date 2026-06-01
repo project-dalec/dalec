@@ -2,24 +2,40 @@ import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+const algoliaAppId = process.env.ALGOLIA_APP_ID;
+const algoliaApiKey = process.env.ALGOLIA_API_KEY;
+const algoliaIndexName = process.env.ALGOLIA_INDEX_NAME;
+const algoliaSiteVerification = process.env.ALGOLIA_SITE_VERIFICATION;
+
 const config: Config = {
   title: 'Dalec',
   tagline: 'Exterminate!',
   favicon: 'img/favicon.ico',
 
+  headTags: algoliaSiteVerification
+    ? [
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'algolia-site-verification',
+        content: algoliaSiteVerification,
+      }
+    },
+  ]
+  : undefined,
+
   // Set the production url of your site here
-  url: 'https://Azure.github.io',
+  url: 'https://project-dalec.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/dalec/',
+  baseUrl: process.env.DOCUSAURUS_BASE_URL || '/dalec/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'Azure', // Usually your GitHub org/user name.
+  organizationName: 'project-dalec', // Usually your GitHub org/user name.
   projectName: 'dalec', // Usually your repo name.
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -39,7 +55,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/Azure/dalec/blob/main/website/',
+            'https://github.com/project-dalec/dalec/blob/main/website/',
         },
         theme: {
           customCss: './src/css/custom.css',
@@ -47,6 +63,15 @@ const config: Config = {
       } satisfies Preset.Options,
     ],
   ],
+
+  themes: ['@docusaurus/theme-mermaid'],
+
+  markdown: {
+    mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: 'warn'
+    },
+  },
 
   themeConfig: {
     // Replace with your project's social card
@@ -59,7 +84,7 @@ const config: Config = {
       },
       items: [
         {
-          href: 'https://github.com/Azure/dalec',
+          href: 'https://github.com/project-dalec/dalec',
           position: 'right',
           className: 'header-github-link',
           'aria-label': 'GitHub repository',
@@ -69,7 +94,8 @@ const config: Config = {
     footer: {
       style: 'dark',
       links: [],
-      copyright: `Copyright © ${new Date().getFullYear()} Azure Container Upstream.`,
+      copyright: `Copyright Dalec a Series of LF Projects, LLC
+      For website terms of use, trademark policy and other project policies please see lfprojects.org/policies/.`
     },
     prism: {
       theme: prismThemes.github,
@@ -77,19 +103,21 @@ const config: Config = {
       additionalLanguages: ['bash', 'json', 'yaml'],
     },
     colorMode: {
-      defaultMode: 'light',
+      defaultMode: 'dark',
       disableSwitch: false,
       respectPrefersColorScheme: true,
     },
     announcementBar: {
       id: 'announcementBar-1', // Increment on change
-      content: `⭐️ If you like Dalec, please give it a star on <a target="_blank" rel="noopener noreferrer" href="https://github.com/Azure/dalec">GitHub</a>!</a>`,
+      content: `⭐️ If you like Dalec, please give it a star on <a target="_blank" rel="noopener noreferrer" href="https://github.com/project-dalec/dalec">GitHub</a>!</a>`,
     },
-    algolia: {
-      appId: 'QB3RJK7I77',
-      apiKey: '2889aa0d888bd13d73eeb460f7b0f479',
-      indexName: 'azureio',
-    },
+    algolia: algoliaApiKey && algoliaAppId && algoliaIndexName
+      ? {
+          appId: algoliaAppId,
+          apiKey: algoliaApiKey,
+          indexName: algoliaIndexName,
+        }
+      : undefined,
   } satisfies Preset.ThemeConfig,
 };
 

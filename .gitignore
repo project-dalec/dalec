@@ -1,3 +1,4 @@
 _output
 .vscode
 .vim-lsp-settings
+contrib/traces/traces

@@ -1,8 +1,11 @@
 - source: "busybox:latest"
   dest: mirror/dockerhub/library/busybox:latest
 
-- source: "golang:1.23"
-  dest: mirror/dockerhub/library/golang:1.23
+- source: "golang:1.25"
+  dest: mirror/dockerhub/library/golang:1.25
+
+- source: "golang:1.24"
+  dest: mirror/dockerhub/library/golang:1.24
 
 - source: "registry:latest"
   dest: mirror/dockerhub/library/registry:latest
@@ -12,6 +15,9 @@
 
 - source: "debian:bookworm"
   dest: mirror/dockerhub/library/debian:bookworm
+
+- source: "debian:trixie"
+  dest: mirror/dockerhub/library/debian:trixie
 
 - source: "ubuntu:bionic"
   dest: mirror/dockerhub/library/ubuntu:bionic
@@ -61,8 +67,6 @@
 - source: "mcr.microsoft.com/azurelinux/distroless/base:3.0"
   dest: mirror/mcr/azurelinux/distroless/base:3.0
 
-- source: "mcr.microsoft.com/cbl-mariner/base/core:2.0"
-  dest: mirror/mcr/cbl-mariner/base/core:2.0
+- source: "mcr.microsoft.com/oss/go/microsoft/golang:1.24"
+  dest: mirror/mcr/oss/go/microsoft/golang:1.24
 
-- source: "mcr.microsoft.com/oss/go/microsoft/golang:1.23"
-  dest: mirror/mcr/oss/go/microsoft/golang:1.23

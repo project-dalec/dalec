@@ -1,30 +1,37 @@
 package testenv
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/Azure/dalec/sessionutil/socketprovider"
+	"github.com/cpuguy83/dockercfg"
 	"github.com/moby/buildkit/client"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/session/auth"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
 	"github.com/moby/buildkit/session/sshforward/sshprovider"
 	"github.com/moby/buildkit/solver/pb"
 	spb "github.com/moby/buildkit/sourcepolicy/pb"
-	"github.com/opencontainers/go-digest"
 	pkgerrors "github.com/pkg/errors"
+	"github.com/project-dalec/dalec/internal/frontendcoverage"
+	"github.com/project-dalec/dalec/sessionutil/socketprovider"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"gotest.tools/v3/assert"
 )
@@ -50,6 +57,20 @@ func (b *BuildxEnv) WithBuilder(builder string) *BuildxEnv {
 	return b
 }
 
+// Close closes the underlying buildkit client connection, which triggers
+// cleanup of the dial-stdio process.
+func (b *BuildxEnv) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.client != nil {
+		err := b.client.Close()
+		b.client = nil
+		return err
+	}
+	return nil
+}
+
 // Load loads the output of the specified [gwclient.BuildFunc] into the buildkit instance.
 func (b *BuildxEnv) Load(ctx context.Context, id string, f gwclient.BuildFunc) error {
 	if b.refs == nil {
@@ -72,23 +93,50 @@ func (b *BuildxEnv) supportsDialStdio(ctx context.Context) (bool, error) {
 
 var errDialStdioNotSupported = errors.New("buildx dial-stdio not supported")
 
-type connCloseWrapper struct {
+// cmdConn wraps a net.Conn and replaces generic pipe errors with the
+// actual error from the underlying command when it has exited.
+type cmdConn struct {
 	net.Conn
-	close func()
+	close   func()
+	cmdWait <-chan error
 }
 
-func (c *connCloseWrapper) Close() error {
+func (c *cmdConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if err != nil {
+		// If the command has exited with an error, surface that instead
+		// of the generic pipe closed error.
+		select {
+		case cmdErr := <-c.cmdWait:
+			if cmdErr != nil {
+				return n, fmt.Errorf("%v: %w", cmdErr, err)
+			}
+		default:
+		}
+	}
+
+	return n, err
+}
+
+func (c *cmdConn) Close() error {
 	if c.close != nil {
 		c.close()
 	}
-	if err := c.Conn.Close(); err != nil {
-		return err
-	}
-	return nil
+	return c.Conn.Close()
 }
 
 func (b *BuildxEnv) dialStdio(ctx context.Context) error {
-	c, err := client.New(ctx, "", client.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+	// Use gRPC keepalive to detect when the dial-stdio connection goes dead.
+	// Without this, if the Docker daemon restarts, dial-stdio hangs until
+	// something is written to its stdin. The keepalive pings force periodic
+	// writes through the net.Pipe, which causes dial-stdio to notice the
+	// broken upstream connection and exit.
+	keepaliveOpt := client.WithGRPCDialOption(grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:    10 * time.Second,
+		Timeout: 5 * time.Second,
+	}))
+
+	c, err := client.New(ctx, "", keepaliveOpt, client.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		args := []string{"buildx", "dial-stdio", "--progress=plain"}
 		if b.builder != "" {
 			args = append(args, "--builder="+b.builder)
@@ -100,73 +148,87 @@ func (b *BuildxEnv) dialStdio(ctx context.Context) error {
 		// the buildx dial-stdio process from cleaning up its resources properly.
 		cmd := exec.Command("docker", args...)
 		cmd.Env = os.Environ()
+		setSysProcAttr(cmd)
 
-		c1, c2 := net.Pipe()
-		cmd.Stdin = c1
-		cmd.Stdout = c1
+		dialStdioConn, clientConn := net.Pipe()
+		cmd.Stdout = dialStdioConn
 
-		// Use a pipe to check when the connection is actually complete
-		// Also write all of stderr to an error buffer so we can have more details
-		// in the error message when the command fails.
-		r, w := io.Pipe()
-		errBuf := bytes.NewBuffer(nil)
-		ww := io.MultiWriter(w, errBuf)
-		cmd.Stderr = ww
+		// Capture stderr so we can include it in error messages
+		// when the command fails.
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		// Use StdinPipe instead of setting cmd.Stdin directly.
+		// When cmd.Stdin is set to a non-*os.File (like net.Conn),
+		// exec creates an internal goroutine to copy data into the
+		// process's stdin pipe, and cmd.Wait blocks until that
+		// goroutine finishes. If the process exits immediately (e.g.
+		// bad arguments), the goroutine is stuck reading from
+		// dialStdioConn (nobody is writing yet), so cmd.Wait hangs.
+		// StdinPipe avoids the internal goroutine entirely.
+		stdinPipe, err := cmd.StdinPipe()
+		if err != nil {
+			_, _ = dialStdioConn.Close(), clientConn.Close()
+
+			return nil, fmt.Errorf("creating stdin pipe: %w", err)
+		}
 
 		if err := cmd.Start(); err != nil {
-			return nil, err
+			_, _, _ = stdinPipe.Close(), dialStdioConn.Close(), clientConn.Close()
+
+			if s := strings.TrimSpace(stderr.String()); s != "" {
+				return nil, fmt.Errorf("starting buildx dial-stdio: %s: %w", strings.TrimSpace(stderr.String()), err)
+			}
+
+			return nil, fmt.Errorf("starting buildx dial-stdio: %w", err)
 		}
 
-		chWait := make(chan struct{})
+		// Copy client writes to the process's stdin.
+		// This goroutine stops when dialStdioConn is closed (read
+		// returns error) or stdinPipe is closed (write returns error).
 		go func() {
-			err := cmd.Wait()
-			c1.Close()
-			// pkgerrors.Wrap will return nil if err is nil, otherwise it will give
-			// us a wrapped error with the buffered stderr from he command.
-			w.CloseWithError(pkgerrors.Wrapf(err, "%s", errBuf))
+			io.Copy(stdinPipe, dialStdioConn) //nolint:errcheck
+			stdinPipe.Close()
 		}()
 
-		defer r.Close()
-
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			txt := strings.ToLower(scanner.Text())
-
-			if strings.HasPrefix(txt, "#1 dialing builder") && strings.HasSuffix(txt, "done") {
-				go func() {
-					// Continue draining stderr so the process does not get blocked
-					_, _ = io.Copy(io.Discard, r)
-				}()
-				break
+		// cmdWait is closed when cmd.Wait() returns, signaling the cleanup
+		// function that the process has exited.
+		// waitErr is written before cmdWait is closed, so it is safe to
+		// read after receiving from cmdWait.
+		cmdWait := make(chan error, 1)
+		cmdDone := make(chan struct{})
+		go func() {
+			err := cmd.Wait()
+			if stderr.Len() > 0 && err != nil {
+				err = fmt.Errorf("%v: %w", strings.TrimSpace(stderr.String()), err)
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, err
-		}
+			cmdWait <- err
+			close(cmdWait)
+			dialStdioConn.Close()
+			close(cmdDone)
+		}()
 
-		out := &connCloseWrapper{
-			Conn: c2,
+		out := &cmdConn{
+			Conn:    clientConn,
+			cmdWait: cmdWait,
 			close: sync.OnceFunc(func() {
-				// Send 2 interrupt signals to the process to ensure it exits gracefully
-				// This is how buildx/docker plugins handle termination
-
-				cmd.Process.Signal(os.Interrupt) //nolint:errcheck // We don't care about this error, we are going to send another one anyway
-				if err := cmd.Process.Signal(os.Interrupt); err != nil {
-					cmd.Process.Kill() //nolint:errcheck //  Force kill if interrupt fails
-				}
+				// Close the pipe to the process. This sends EOF on stdin
+				// (like Ctrl+D), which triggers closeWrite(conn) on the
+				// buildkit connection and starts the chain reaction for the
+				// docker CLI process to exit.
+				dialStdioConn.Close()
 
 				select {
-				case <-chWait:
+				case <-cmdDone:
 				case <-time.After(10 * time.Second):
-					// If it still doesn't exit, force kill
-					cmd.Process.Kill() //nolint:errcheck // Force kill if it doesn't exit after interrupt
+					killProcessGroup(cmd)
+					<-cmdWait
 				}
 			}),
 		}
 
 		return out, nil
 	}))
-
 	if err != nil {
 		return err
 	}
@@ -309,16 +371,107 @@ func WithHostNetworking(trc *TestRunnerConfig) {
 	})
 }
 
-// This function just puts the opts before the function argument, which makes
-// it harder to miss what's happening with the opts for those unfamiliar with
-// the pattern.
-func (b *BuildxEnv) RunTestOptsFirst(ctx context.Context, t *testing.T, opts []TestRunnerOpt, f TestFunc) {
-	b.RunTest(ctx, t, f, opts...)
-}
-
 func WithSocketProxies(proxies ...socketprovider.ProxyConfig) TestRunnerOpt {
 	return func(cfg *TestRunnerConfig) {
 		cfg.SocketProxies = append(cfg.SocketProxies, proxies...)
+	}
+}
+
+func setSolveOpts(cfg TestRunnerConfig, so *client.SolveOpt) error {
+	if err := withProjectRoot(so); err != nil {
+		return err
+	}
+
+	withResolveLocal(so)
+	err := withSocketProxies(cfg.SocketProxies)(so)
+	if err != nil {
+		return err
+	}
+	withDockerAuth(so)
+
+	err = withSourcePolicy(so)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range cfg.SolveOptFns {
+		f(so)
+	}
+
+	return nil
+}
+
+func (b *BuildxEnv) runTestWithStatus(ctx context.Context, t *testing.T, f TestFunc, opts ...TestRunnerOpt) iter.Seq2[*client.SolveStatus, error] {
+	var cfg TestRunnerConfig
+
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	ch := make(chan *client.SolveStatus)
+	errCh := make(chan error, 1)
+
+	c, err := b.Buildkit(ctx)
+	assert.NilError(t, err)
+
+	var so client.SolveOpt
+	err = setSolveOpts(cfg, &so)
+	assert.NilError(t, err)
+
+	ctx, cancel := context.WithCancel(ctx)
+
+	go func() {
+		_, err := c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (_ *gwclient.Result, retErr error) {
+			defer func() {
+				if r := recover(); r != nil {
+					retErr = fmt.Errorf("panic in test build function: %v", r)
+				}
+			}()
+
+			gwc = &clientForceDalecWithInput{gwc}
+			b.mu.Lock()
+			for id, f := range b.refs {
+				gwc = wrapWithInput(gwc, id, f)
+			}
+			b.mu.Unlock()
+			f(ctx, gwc)
+			return gwclient.NewResult(), nil
+		}, ch)
+
+		if err != nil {
+			errCh <- err
+			return
+		}
+	}()
+
+	return func(yield func(*client.SolveStatus, error) bool) {
+		defer cancel()
+
+		for {
+			select {
+			case <-ctx.Done():
+				yield(nil, ctx.Err())
+				return
+			case err := <-errCh:
+				if err != nil {
+					if !yield(nil, err) {
+						return
+					}
+				}
+				// there may still be statuses to read, so continue
+			case status, ok := <-ch:
+				if status != nil {
+					if !yield(status, nil) {
+						return
+					}
+					continue
+				}
+
+				if !ok {
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -329,107 +482,33 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 		o(&cfg)
 	}
 
-	c, err := b.Buildkit(ctx)
-	if err != nil {
-		t.Fatalf("%+v", err)
-	}
+	statusFn, cancelOutput := outputStreamStatusFn(ctx, t)
+	defer cancelOutput()
 
-	var (
-		ch   chan *client.SolveStatus
-		done <-chan struct{}
-	)
+	ch := make(chan *client.SolveStatus)
+	go fowardToSolveStatusFn(ctx, ch, statusFn, cfg.SolveStatusFn)
 
-	if cfg.SolveStatusFn != nil {
-		chDone := make(chan struct{})
+	defer close(ch)
 
-		ch = make(chan *client.SolveStatus, 1)
-		done = chDone
-		go func() {
-			defer close(chDone)
-
-			for msg := range ch {
-				cfg.SolveStatusFn(msg)
-			}
-		}()
-	} else {
-		ch, done = displaySolveStatus(ctx, t)
-	}
-
-	var so client.SolveOpt
-	withProjectRoot(t, &so)
-	withResolveLocal(&so)
-	withSocketProxies(t, cfg.SocketProxies)(&so)
-
-	err = withSourcePolicy(&so)
-	assert.NilError(t, err)
-
-	for _, f := range cfg.SolveOptFns {
-		f(&so)
-	}
-
-	_, err = c.Build(ctx, so, "", func(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, error) {
-		gwc = &clientForceDalecWithInput{gwc}
-
-		b.mu.Lock()
-		for id, f := range b.refs {
-			gwc = wrapWithInput(gwc, id, f)
-		}
-		b.mu.Unlock()
-		f(ctx, gwc)
-		return gwclient.NewResult(), nil
-	}, ch)
-
-	// Make sure the display goroutine has finished.
-	// Ensures there's no test output after the test has finished (which the test runner will complain about)
-	<-done
-
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-var (
-	netHostTestEnv            *BuildxEnv
-	netHostTestEnvOnce        sync.Once
-	netHostTestEnvCleanupOnce sync.Once
-)
-
-// `NewWithNetHostBuildxInstance` creates a buildx instance with host networking enabled.
-func NewWithNetHostBuildxInstance(ctx context.Context, t *testing.T) *BuildxEnv {
-	dgst := digest.Canonical.FromString(t.Name()).Encoded()
-	name := "dalec_integration_test_" + dgst[:12]
-
-	netHostTestEnvOnce.Do(func() {
-		netHostTestEnv = New().WithBuilder(name)
-		ctxT, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		if err := netHostTestEnv.bootstrap(ctxT); err != nil {
-			cmd := exec.CommandContext(ctx, "docker", "buildx", "create", "--name", name, "--driver", "docker-container", "--driver-opt", "network=host", "--buildkitd-flags", "'--allow-insecure-entitlement=network.host'")
-			out, err := cmd.CombinedOutput()
-			assert.NilError(t, err, "failed to create buildx builder: %s", string(out))
-
-			t.Cleanup(func() {
-				netHostTestEnvCleanupOnce.Do(func() {
-					ctx := context.WithoutCancel(ctx)
-					cmd := exec.CommandContext(ctx, "docker", "buildx", "rm", name)
-					out, err := cmd.CombinedOutput()
-					assert.NilError(t, err, "failed to remove buildx builder: %s", string(out))
-				})
-			})
-
-			cmd = exec.CommandContext(ctx, "docker", "buildx", "inspect", name, "--bootstrap")
-			out, err = cmd.CombinedOutput()
-			assert.NilError(t, err, "failed to create buildx builder: %s", string(out))
-
-			netHostTestEnv = New().WithBuilder(name)
-			if err := netHostTestEnv.bootstrap(ctx); err != nil {
-				t.Fatalf("failed to bootstrap buildx environment: %v", err)
-			}
+	for status, err := range b.runTestWithStatus(ctx, t, f, opts...) {
+		if err != nil {
+			t.Error(err)
+			// drain the status channel
+			// the range itself will stop once everything is done
+			continue
 		}
 
-	})
+		if status == nil {
+			continue
+		}
 
-	return netHostTestEnv
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+			return
+		case ch <- status:
+		}
+	}
 }
 
 // clientForceDalecWithInput is a gwclient.Client that forces the solve request to use the main dalec frontend.
@@ -438,6 +517,7 @@ type clientForceDalecWithInput struct {
 }
 
 func (c *clientForceDalecWithInput) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
+	covRoot := os.Getenv("DALEC_FRONTEND_GOCOVERDIR")
 	if req.Definition == nil {
 		// Only inject the frontend when there is no "definition" set.
 		// If a definition is set, it is intended for this to go directly to the buildkit solver.
@@ -445,7 +525,27 @@ func (c *clientForceDalecWithInput) Solve(ctx context.Context, req gwclient.Solv
 			return nil, err
 		}
 	}
-	return c.Client.Solve(ctx, req)
+
+	// IMPORTANT: set this *after* withDalecInput, since it may replace/normalize FrontendOpt.
+	if covRoot != "" {
+		if req.FrontendOpt == nil {
+			req.FrontendOpt = map[string]string{}
+		}
+		// Frontend-only toggle (NOT a dalec build arg)
+		req.FrontendOpt[frontendcoverage.OptKey] = "1"
+	}
+	res, err := c.Client.Solve(ctx, req)
+
+	if covRoot != "" {
+		if covErr := writeFrontendCovdata(filepath.Clean(covRoot), res, err); covErr != nil {
+			if err != nil {
+				return res, errors.Join(err, covErr)
+			}
+			return res, covErr
+		}
+	}
+
+	return res, err
 }
 
 // gwClientInputInject is a gwclient.Client that injects the result of a build func into the solve request as an input named by the id.
@@ -502,15 +602,60 @@ func withSourcePolicy(so *client.SolveOpt) error {
 	return nil
 }
 
-func withSocketProxies(t *testing.T, proxies []socketprovider.ProxyConfig) func(*client.SolveOpt) {
-	return func(so *client.SolveOpt) {
-		t.Helper()
+func withSocketProxies(proxies []socketprovider.ProxyConfig) func(*client.SolveOpt) error {
+	return func(so *client.SolveOpt) error {
 		if len(proxies) == 0 {
-			return
+			return nil
 		}
 
 		handler, err := socketprovider.NewProxyHandler(proxies)
-		assert.NilError(t, err)
+		if err != nil {
+			return err
+		}
 		so.Session = append(so.Session, handler)
+		return nil
 	}
+}
+
+func withDockerAuth(so *client.SolveOpt) {
+	so.Session = append(so.Session, &authProvider{})
+}
+
+type authProvider struct{}
+
+func (ap *authProvider) FetchToken(ctx context.Context, req *auth.FetchTokenRequest) (rr *auth.FetchTokenResponse, err error) {
+	return nil, status.Error(codes.Unimplemented, "token fetch not supported")
+}
+
+func (ap *authProvider) Credentials(ctx context.Context, req *auth.CredentialsRequest) (*auth.CredentialsResponse, error) {
+	host := strings.TrimSpace(req.GetHost())
+	if host == "" {
+		return &auth.CredentialsResponse{}, nil
+	}
+
+	resolved := dockercfg.ResolveRegistryHost(host)
+	username, secret, err := dockercfg.GetRegistryCredentials(resolved)
+	if err != nil {
+		if errors.Is(err, dockercfg.ErrCredentialsMissingServerURL) {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		return nil, status.Errorf(codes.Internal, "get credentials for %s: %v", resolved, err)
+	}
+
+	return &auth.CredentialsResponse{
+		Username: username,
+		Secret:   secret,
+	}, nil
+}
+
+func (ap *authProvider) GetTokenAuthority(ctx context.Context, req *auth.GetTokenAuthorityRequest) (*auth.GetTokenAuthorityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "token authority not supported")
+}
+
+func (ap *authProvider) VerifyTokenAuthority(ctx context.Context, req *auth.VerifyTokenAuthorityRequest) (*auth.VerifyTokenAuthorityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "token authority not supported")
+}
+
+func (ap *authProvider) Register(server *grpc.Server) {
+	auth.RegisterAuthServer(server, ap)
 }

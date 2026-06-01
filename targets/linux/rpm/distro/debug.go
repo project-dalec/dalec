@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
-	"github.com/Azure/dalec/packaging/linux/rpm"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/packaging/linux/rpm"
 )
 
 // DebugWorker returns a worker image with the build dependencies specified in `spec` installed,
@@ -21,16 +21,14 @@ import (
 // It is most useful for `HandleSources` handler in which we aren't building a full worker image with
 // build dependencies because we aren't executing build steps, but we may still have source generators
 // which depend on `build` dependencies in the spec in order to run.
-func (c *Config) DebugWorker(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
-	worker, err := c.Worker(sOpt, opts...)
-	if err != nil {
-		return llb.Scratch(), err
-	}
+func (c *Config) DebugWorker(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
+	worker := c.Worker(sOpt, opts...)
 
-	deps := dalec.SortMapKeys(spec.GetBuildDeps(targetKey))
+	deps := spec.GetPackageDeps(targetKey).GetBuild()
+	pkgNames := dalec.SortMapKeys(deps)
 	if spec.HasGomods() {
 		if !dalec.HasGolang(spec, targetKey) {
-			return llb.Scratch(), errors.New("spec contains go modules but does not have golang in build deps")
+			return dalec.ErrorState(worker, errors.New("spec contains go modules but does not have golang in build deps"))
 		}
 	}
 
@@ -38,19 +36,19 @@ func (c *Config) DebugWorker(ctx context.Context, client gwclient.Client, spec *
 		hasRust := func(s string) bool {
 			return s == "rust"
 		}
-		if !slices.ContainsFunc(deps, hasRust) {
-			return llb.Scratch(), errors.New("spec contains go modules but does not have golang in build deps")
+		if !slices.ContainsFunc(pkgNames, hasRust) {
+			return dalec.ErrorState(worker, errors.New("spec contains cargo homes but does not have rust in build deps"))
 		}
 	}
 
 	if spec.HasNodeMods() {
 		if !dalec.HasNpm(spec, targetKey) {
-			return llb.Scratch(), errors.New("spec contains node modules but does not have npm in build deps")
+			return dalec.ErrorState(worker, errors.New("spec contains node modules but does not have npm in build deps"))
 		}
 	}
 
-	worker = worker.With(c.InstallBuildDeps(ctx, client, spec, sOpt, targetKey))
-	return worker, nil
+	worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey))
+	return worker
 }
 
 func (c *Config) HandleBuildroot(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
@@ -66,17 +64,11 @@ func (c *Config) HandleBuildroot(ctx context.Context, client gwclient.Client) (*
 		}
 
 		pc := dalec.Platform(platform)
-		worker, err := c.Worker(sOpt, pg, pc)
-		if err != nil {
-			return nil, nil, errors.Wrap(err, "error building worker container")
-		}
+		worker := c.Worker(sOpt, pg, pc)
 
-		worker = worker.With(c.InstallBuildDeps(ctx, client, spec, sOpt, targetKey, pg, pc))
+		worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, pg, pc))
 
-		br, err := rpm.SpecToBuildrootLLB(worker, spec, sOpt, targetKey, pg)
-		if err != nil {
-			return nil, nil, err
-		}
+		br := rpm.BuildRoot(worker, spec, sOpt, targetKey, pg)
 
 		def, err := br.Marshal(ctx, pc)
 		if err != nil {
@@ -112,18 +104,15 @@ func (c *Config) HandleSources(ctx context.Context, client gwclient.Client) (*gw
 		}
 
 		pc := dalec.Platform(platform)
-		worker, err := c.DebugWorker(ctx, client, spec, targetKey, sOpt, pc)
-		if err != nil {
-			return nil, nil, err
-		}
 
-		sources, err := rpm.ToSourcesLLB(worker, spec, sOpt, pc)
-		if err != nil {
-			return nil, nil, err
-		}
+		pg := dalec.ProgressGroup("Handling sources for " + targetKey + " rpm build: " + spec.Name)
+
+		worker := c.DebugWorker(ctx, client, spec, targetKey, sOpt, pc, pg)
+
+		sources := rpm.Sources(worker, spec, sOpt, pc, pg)
 
 		// Now we can merge sources into the desired path
-		st := dalec.MergeAtPath(llb.Scratch(), sources, "/SOURCES")
+		st := dalec.MergeAtPath(llb.Scratch(), sources, "/SOURCES", pg)
 
 		def, err := st.Marshal(ctx, pc)
 		if err != nil {
@@ -148,10 +137,7 @@ func (c *Config) HandleSources(ctx context.Context, client gwclient.Client) (*gw
 func (c *Config) HandleSpec(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		pc := dalec.Platform(platform)
-		st, err := rpm.ToSpecLLB(spec, llb.Scratch(), targetKey, "", pc)
-		if err != nil {
-			return nil, nil, err
-		}
+		st := rpm.RPMSpec(spec, llb.Scratch(), targetKey, "", pc)
 
 		def, err := st.Marshal(ctx, pc)
 		if err != nil {

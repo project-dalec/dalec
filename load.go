@@ -1,6 +1,8 @@
 package dalec
 
 import (
+	"bytes"
+	"context"
 	goerrors "errors"
 	"fmt"
 	"os"
@@ -9,8 +11,8 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
 	"github.com/goccy/go-yaml/parser"
-	"github.com/goccy/go-yaml/token"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
+	"github.com/moby/buildkit/solver/errdefs"
 	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 )
@@ -36,6 +38,10 @@ func knownArg(key string) bool {
 	case "DALEC_SIGNING_CONFIG_PATH":
 		return true
 	case "DALEC_SKIP_TESTS":
+		return true
+	case "DALEC_SOURCE_FILTER_CONFIG_PATH":
+		return true
+	case "DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME":
 		return true
 	case KeyDalecTarget:
 		return true
@@ -94,8 +100,6 @@ type SubstituteConfig struct {
 	AllowArg func(string) bool
 }
 
-type SubstituteOpt func(*SubstituteConfig)
-
 // AllowAnyArg can be used to set [SubstituteConfig.AllowArg] to allow any arg
 // to be substituted regardless of whether it is declared in the spec.
 func AllowAnyArg(s string) bool {
@@ -114,6 +118,9 @@ func WithAllowAnyArg(cfg *SubstituteConfig) {
 func DisallowAllUndeclared(s string) bool {
 	return false
 }
+
+// SubstituteOpt is a functional option for SubstituteArgs
+type SubstituteOpt func(*SubstituteConfig)
 
 func (s *Spec) SubstituteArgs(env map[string]string, opts ...SubstituteOpt) error {
 	var cfg SubstituteConfig
@@ -268,7 +275,7 @@ func (s *Spec) SubstituteArgs(env map[string]string, opts ...SubstituteOpt) erro
 		for i, ver := range v.Version {
 			updated, err := expandArgs(lex, ver, args, cfg.AllowArg)
 			if err != nil {
-				appendErr(errors.Wrapf(err, "replaces %s version %d", k, i))
+				appendErr(errors.Wrapf(err, "conflicts %s version %d", k, i))
 			}
 			s.Conflicts[k].Version[i] = updated
 		}
@@ -279,10 +286,14 @@ func (s *Spec) SubstituteArgs(env map[string]string, opts ...SubstituteOpt) erro
 
 // LoadSpec loads a spec from the given data.
 func LoadSpec(dt []byte) (*Spec, error) {
+	return loadSpec(context.TODO(), dt)
+}
+
+func loadSpec(ctx context.Context, dt []byte) (*Spec, error) {
 	var spec Spec
 
 	spec.decodeOpts = append(spec.decodeOpts, yaml.Strict())
-	if err := yaml.Unmarshal(dt, &spec); err != nil {
+	if err := yaml.UnmarshalContext(ctx, dt, &spec, append(spec.decodeOpts, yaml.AllowFieldPrefixes("x-", "X-"))...); err != nil {
 		return nil, errors.Wrap(err, "error unmarshalling spec")
 	}
 
@@ -294,128 +305,92 @@ func LoadSpec(dt []byte) (*Spec, error) {
 	return &spec, nil
 }
 
-// rawYAML is similar to json.RawMessage
-// We use this to store the raw yaml data for extension fields
-type rawYAML []byte
+// LoadSpecWithSourceMap loads a spec from the given data and attaches source map information to the spec.
+func LoadSpecWithSourceMap(filename string, dt []byte) (*Spec, error) {
+	ctx := context.WithValue(context.TODO(), sourceMapContextKey{}, sourceMapContext{
+		fileName: filename,
+		data:     dt,
+		language: "yaml",
+	})
 
-func (y rawYAML) MarshalYAML() ([]byte, error) {
-	return y, nil
-}
-
-func (y *rawYAML) UnmarshalYAML(dt []byte) error {
-	*y = dt
-	return nil
-}
-
-func (f *extensionFields) UnmarshalYAML(dt []byte) error {
-	// We need to store the raw yaml data for each extension key.
-	// Parse the yaml, grab all the extension keys and store the raw values in f.
-
-	parsed, err := parser.ParseBytes(dt, parser.ParseComments)
+	spec, err := loadSpec(ctx, dt)
 	if err != nil {
-		return errors.Wrapf(err, "error parsing yaml: \n%s", string(dt))
+		return nil, err
 	}
+	return spec, nil
+}
 
-	if len(parsed.Docs) != 1 {
-		return errors.New("expected exactly one yaml document")
+type baseDocKey struct{}
+
+func withBaseDoc(ctx context.Context, node ast.Node) context.Context {
+	return context.WithValue(ctx, baseDocKey{}, node)
+}
+
+func getBaseDoc(ctx context.Context) ast.Node {
+	v := ctx.Value(baseDocKey{})
+	if v == nil {
+		return nil
 	}
+	return v.(ast.Node)
+}
 
-	doc := parsed.Docs[0]
-	if doc.Body == nil {
+type decodeOptsKey struct{}
+
+func contextWithDecodeOpts(ctx context.Context, opts []yaml.DecodeOption) context.Context {
+	if len(opts) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, decodeOptsKey{}, opts)
+}
+
+func decodeOpts(ctx context.Context) []yaml.DecodeOption {
+	v := ctx.Value(decodeOptsKey{})
+	if v == nil {
+		return nil
+	}
+	return v.([]yaml.DecodeOption)
+}
+
+func getDecoder(ctx context.Context) *yaml.Decoder {
+	opts := decodeOpts(ctx)
+	base := getBaseDoc(ctx)
+	if base != nil {
+		opts = append(opts, yaml.ReferenceReaders(base))
+	}
+	return yaml.NewDecoder(bytes.NewBuffer(nil), opts...)
+}
+
+// UnmarshalYAML implements the [yaml.NodeUnmarshaler] interface to provide custom unmarshalling.
+func (s *Spec) UnmarshalYAML(ctx context.Context, node ast.Node) error {
+	if node.Type() == ast.NullType {
+		*s = Spec{}
 		return nil
 	}
 
-	body, ok := doc.Body.(*ast.MappingNode)
-	if !ok {
-		return errors.Errorf("expected a mapping node, got %T", body)
-	}
-
-	var ext extensionFields
-	for _, v := range body.Values {
-		key := v.Key.String()
-		if !strings.HasPrefix(key, "x-") && !strings.HasPrefix(key, "X-") {
-			return errors.Errorf("extension mapping key %q must not start with x-", key)
-		}
-
-		if ext == nil {
-			ext = make(extensionFields)
-		}
-		ext[key] = rawYAML(v.Value.String())
-	}
-
-	if ext != nil {
-		*f = ext
-	}
-	return nil
-}
-
-func (s *Spec) UnmarshalYAML(dt []byte) error {
-	parsed, err := parser.ParseBytes(dt, parser.ParseComments)
-	if err != nil {
-		return errors.Wrapf(err, "error parsing yaml: \n%s", string(dt))
-	}
-
-	if len(parsed.Docs) != 1 {
-		return errors.New("expected exactly one yaml document")
-	}
-
-	// Remove extension nodes from the main AST and store them so we can unmarshal
-	// them separately.
-	b := parsed.Docs[0].Body
-	body, ok := b.(*ast.MappingNode)
-	if !ok {
-		if _, ok := parsed.Docs[0].Body.(*ast.NullNode); ok {
-			return nil
-		}
-		return fmt.Errorf("unexpected type %T where *ast.MappingNode expected", b)
-	}
-
-	var extNodes []*ast.MappingValueNode
-	for i := 0; i < len(body.Values); i++ {
-		node := body.Values[i]
-		p := node.GetPath()
-		if !strings.HasPrefix(p, "$.x-") && !strings.HasPrefix(p, "$.X-") {
-			continue
-		}
-
-		// Delete the extension node from the AST.
-		body.Values = append(body.Values[:i], body.Values[i+1:]...)
-		i--
-		extNodes = append(extNodes, node)
-	}
-
-	parsed, err = parser.ParseBytes([]byte(parsed.String()), parser.ParseComments)
-	if err != nil {
-		return errors.Wrapf(err, "error parsing yaml: \n%s", parsed.String())
-	}
-
-	// Use an internal type to avoid infinite recursion of UnmarshalYAML.
 	type internalSpec Spec
 	var s2 internalSpec
 
-	dec := yaml.NewDecoder(parsed, s.decodeOpts...)
-	if err := dec.Decode(&s2); err != nil {
-		return fmt.Errorf("%w:\n\n%s", errors.Wrap(err, "error unmarshalling parsed document"), parsed.String())
+	ctx = contextWithDecodeOpts(ctx, s.decodeOpts)
+	ctx = withBaseDoc(ctx, node)
+
+	opts := append(s.decodeOpts, yaml.AllowFieldPrefixes("x-", "X-"))
+
+	var buf bytes.Buffer
+	dec := yaml.NewDecoder(&buf, opts...)
+
+	err := dec.DecodeFromNodeContext(ctx, node, &s2)
+	if err != nil {
+		return errors.Wrap(err, "error unmarshalling to spec")
 	}
 
 	*s = Spec(s2)
 
-	if len(extNodes) > 0 {
-		// Unmarshal all the extension nodes.
-
-		node := ast.Mapping(token.MappingStart("", &token.Position{}), false, extNodes...)
-		doc := ast.Document(&token.Token{Position: &token.Position{}}, node)
-
-		var ext extensionFields
-		if err := yaml.NewDecoder(doc).Decode(&ext); err != nil {
-			return errors.Wrap(err, "error unmarshalling extension nodes")
-		}
-
-		s.extensions = ext
-		if len(ext) == 0 {
-			panic("ext should not be empty")
-		}
+	var ext extensionFields
+	if err := yaml.NodeToValue(node, &ext, opts...); err != nil {
+		return errors.Wrap(err, "error unmarshalling extension nodes")
 	}
+
+	s.extensions = ext
 
 	return nil
 }
@@ -472,6 +447,10 @@ func (c *Command) processBuildArgs(lex *shell.Lex, args map[string]string, allow
 		return nil
 	}
 
+	newLex := *lex
+	newLex.SkipUnsetEnv = true // skip unset env vars so they aren't replaced with ""
+	lex = &newLex
+
 	var errs []error
 	appendErr := func(err error) {
 		errs = append(errs, err)
@@ -515,8 +494,9 @@ func (c *Command) processBuildArgs(lex *shell.Lex, args map[string]string, allow
 
 func (s *Spec) FillDefaults() {
 	for name, src := range s.Sources {
-		fillDefaults(&src)
-		s.Sources[name] = src
+		ss := &src
+		ss.fillDefaults()
+		s.Sources[name] = *ss
 	}
 
 	for k, patches := range s.Patches {
@@ -549,7 +529,7 @@ func (s Spec) Validate() error {
 			errs = append(errs, &InvalidSourceError{Name: name, Err: errSourceNamePathSeparator})
 		}
 		if err := src.validate(); err != nil {
-			errs = append(errs, &InvalidSourceError{Name: name, Err: fmt.Errorf("error validating source ref %q: %w", name, err)})
+			errs = append(errs, &InvalidSourceError{Name: name, Err: err})
 		}
 	}
 
@@ -563,12 +543,16 @@ func (s Spec) Validate() error {
 		for _, patch := range patches {
 			patchSrc, ok := s.Sources[patch.Source]
 			if !ok {
-				errs = append(errs, &InvalidPatchError{Source: src, PatchSpec: &patch, Err: errMissingSource})
+				var err error = &InvalidPatchError{Source: src, PatchSpec: &patch, Err: errMissingSource}
+				err = errdefs.WithSource(err, patch._sourceMap.GetErrdefsSource())
+				errs = append(errs, err)
 				continue
 			}
 
 			if err := validatePatch(patch, patchSrc); err != nil {
-				errs = append(errs, &InvalidPatchError{Source: src, PatchSpec: &patch, Err: err})
+				err = &InvalidPatchError{Source: src, PatchSpec: &patch, Err: err}
+				err = errdefs.WithSource(err, patch._sourceMap.GetErrdefsSource())
+				errs = append(errs, err)
 			}
 		}
 	}
@@ -593,6 +577,10 @@ func (s Spec) Validate() error {
 
 	if err := s.Build.validate(); err != nil {
 		errs = append(errs, errors.Wrap(err, "build"))
+	}
+
+	if err := s.Artifacts.validate(); err != nil {
+		errs = append(errs, errors.Wrap(err, "artifacts"))
 	}
 
 	return goerrors.Join(errs...)
@@ -621,6 +609,26 @@ func (g *SourceGenerator) Validate() error {
 		// Gomod, Cargohome, Pip, and NodeMod are the only valid generator types
 		// An empty generator is invalid
 		return fmt.Errorf("no generator type specified")
+	}
+	if err := g.Gomod.validate(); err != nil {
+		return errors.Wrap(err, "gomod generator")
+	}
+
+	return nil
+}
+
+func (g *GeneratorGomod) validate() error {
+	// Validate gomod edits if present
+	if g != nil && g.Edits != nil {
+		var errs []error
+		for i, rep := range g.Edits.Replace {
+			if _, err := rep.goModEditArg(); err != nil {
+				errs = append(errs, errors.Wrapf(err, "replace[%d]", i))
+			}
+		}
+		if err := goerrors.Join(errs...); err != nil {
+			return errors.Wrap(err, "gomod edits")
+		}
 	}
 	return nil
 }
@@ -797,16 +805,63 @@ func (b ArtifactBuild) validate() error {
 	return goerrors.Join(errs...)
 }
 
-func (step *BuildStep) validate() error {
-	var errs []error
-
-	if step.Command == "" {
-		errs = append(errs, fmt.Errorf("step must have a command"))
+// errIsOnly checks if the error is the only instance of the target error in the
+// error chain.
+// This is useful when we want to know if a specific error is the only one.
+func errorIsOnly(err error, target error) bool {
+	if err == nil {
+		return target == nil
+	}
+	if target == nil {
+		return false
 	}
 
-	if len(errs) > 0 {
-		return goerrors.Join(errs...)
+	type joinedError interface {
+		Unwrap() []error
 	}
 
+	joined, ok := err.(joinedError)
+	if !ok {
+		return errors.Is(err, target)
+	}
+
+	var count int
+	for _, e := range joined.Unwrap() {
+		if errors.Is(e, target) {
+			count++
+		}
+		if count > 1 {
+			return false
+		}
+	}
+
+	return count == 1
+}
+
+func (f *extensionFields) UnmarshalYAML(node ast.Node) error {
+	body, ok := node.(*ast.MappingNode)
+	if !ok {
+		if node.Type() == ast.NullType {
+			return nil
+		}
+		return errors.Errorf("expected a mapping node, got %T", node)
+	}
+
+	ext := *f
+	for _, v := range body.Values {
+		key := v.Key.String()
+		if !strings.HasPrefix(key, "x-") && !strings.HasPrefix(key, "X-") {
+			continue
+		}
+
+		if ext == nil {
+			ext = make(extensionFields)
+		}
+		ext[key] = v.Value
+	}
+
+	if ext != nil {
+		*f = ext
+	}
 	return nil
 }

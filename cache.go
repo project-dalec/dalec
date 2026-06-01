@@ -7,6 +7,7 @@ import (
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -17,27 +18,65 @@ const (
 	cacheMountUnset   = ""
 
 	BazelDefaultSocketID = "bazel-default" // Default ID for bazel socket
+
 )
 
+// getSccacheSource returns a Source for downloading and verifying sccache using SourceHTTP
+func getSccacheSource(p *ocispecs.Platform) Source {
+	// sccache version and download configuration
+	const (
+		sccacheVersion     = "v0.10.0"
+		sccacheDownloadURL = "https://github.com/mozilla/sccache/releases/download"
+	)
+
+	// Determine architecture string and checksum based on platform
+	var arch, checksum string
+	switch {
+	case p.Architecture == "amd64":
+		arch = "x86_64-unknown-linux-musl"
+		checksum = "1fbb35e135660d04a2d5e42b59c7874d39b3deb17de56330b25b713ec59f849b"
+	case p.Architecture == "arm64":
+		arch = "aarch64-unknown-linux-musl"
+		checksum = "d6a1ce4acd02b937cd61bc675a8be029a60f7bc167594c33d75732bbc0a07400"
+	case p.Architecture == "arm" && p.Variant == "v7":
+		arch = "armv7-unknown-linux-musleabi"
+		checksum = "ab7af4e5c78aa71f38145e7bed41dd944d99ce5a00339424d927f8bbd8b61b78"
+	default:
+		// Fallback to linux x64 for unsupported platforms
+		arch = "x86_64-unknown-linux-musl"
+		checksum = "1fbb35e135660d04a2d5e42b59c7874d39b3deb17de56330b25b713ec59f849b"
+	}
+
+	// Build download URL
+	url := fmt.Sprintf("%s/%s/sccache-%s-%s.tar.gz", sccacheDownloadURL, sccacheVersion, sccacheVersion, arch)
+
+	return Source{
+		HTTP: &SourceHTTP{
+			URL:    url,
+			Digest: digest.Digest("sha256:" + checksum),
+		},
+	}
+}
+
 // CacheConfig configures a cache to use for a build.
-//
-// Other, cache types may be added in the future, such as:
-// - rust compiler cache
-// ...
 type CacheConfig struct {
 	// Dir specifies a generic cache directory configuration.
 	Dir *CacheDir `json:"dir,omitempty" yaml:"dir,omitempty" jsonschema:"oneof_required=dir"`
 	// GoBuild specifies a cache for Go's incremental build artifacts.
 	// This should speed up repeated builds of Go projects.
 	GoBuild *GoBuildCache `json:"gobuild,omitempty" yaml:"gobuild,omitempty" jsonschema:"oneof_required=gobuild"`
+	// RustSCCache specifies a cache for Rust build artifacts.
+	// This uses sccache to cache Rust compilation artifacts.
+	RustSCCache *SCCache `json:"rustsccache,omitempty" yaml:"rustsccache,omitempty" jsonschema:"oneof_required=rustsccache"`
 	// Bazel specifies a cache for bazel builds.
 	Bazel *BazelCache `json:"bazel,omitempty" yaml:"bazel,omitempty" jsonschema:"oneof_required=bazel-local"`
 }
 
 type CacheInfo struct {
-	DirInfo CacheDirInfo
-	GoBuild GoBuildCacheInfo
-	Bazel   BazelCacheInfo
+	DirInfo     CacheDirInfo
+	GoBuild     GoBuildCacheInfo
+	RustSCCache SCCacheInfo
+	Bazel       BazelCacheInfo
 }
 
 type CacheDirInfo struct {
@@ -97,6 +136,16 @@ func (c *CacheConfig) ToRunOption(worker llb.State, distroKey string, opts ...Ca
 		}))
 	}
 
+	if c.RustSCCache != nil {
+		return c.RustSCCache.ToRunOption(distroKey, SCCacheOptionFunc(func(info *SCCacheInfo) {
+			var cacheInfo CacheInfo
+			for _, opt := range opts {
+				opt.SetCacheConfigOption(&cacheInfo)
+			}
+			*info = cacheInfo.RustSCCache
+		}))
+	}
+
 	if c.Bazel != nil {
 		return c.Bazel.ToRunOption(worker, distroKey, BazelCacheOptionFunc(func(info *BazelCacheInfo) {
 			var cacheInfo CacheInfo
@@ -123,12 +172,15 @@ func (c *CacheConfig) validate() error {
 	if c.GoBuild != nil {
 		count++
 	}
+	if c.RustSCCache != nil {
+		count++
+	}
 	if c.Bazel != nil {
 		count++
 	}
 
 	if count != 1 {
-		return fmt.Errorf("invalid cache config: exactly one of (dir, gobuild, bazel) must be set")
+		return fmt.Errorf("invalid cache config: exactly one of (dir, gobuild, rustsccache, bazel) must be set")
 	}
 
 	var errs []error
@@ -140,6 +192,11 @@ func (c *CacheConfig) validate() error {
 	if c.GoBuild != nil {
 		if err := c.GoBuild.validate(); err != nil {
 			errs = append(errs, fmt.Errorf("invalid go build cache config: %w", err))
+		}
+	}
+	if c.RustSCCache != nil {
+		if err := c.RustSCCache.validate(); err != nil {
+			errs = append(errs, fmt.Errorf("invalid rust sccache config: %w", err))
 		}
 	}
 	if c.Bazel != nil {
@@ -318,8 +375,117 @@ func (c *GoBuildCache) ToRunOption(distroKey string, opts ...GoBuildCacheOption)
 	})
 }
 
-// BazelCache sets up a cache for bazel builds.
+// SCCache is a cache for Rust build artifacts.
+// It uses sccache to speed up Rust compilation by caching build artifacts.
 //
+// NOTE: This cache downloads a pre-compiled binary from GitHub. Users must
+// explicitly include this cache in their configuration to use it, which serves
+// as acknowledgment of the external dependency.
+//
+// Future enhancement: Add support for providing sccache via build context instead of
+// downloading from GitHub. This would add Source and BinaryPath fields to allow users
+// to include their own verified sccache binary in the build context.
+type SCCache struct {
+	// Scope adds extra information to the cache key.
+	// This is useful to differentiate between different build contexts if required.
+	//
+	// This is mainly intended for internal testing purposes.
+	Scope string `json:"scope,omitempty" yaml:"scope,omitempty"`
+}
+
+func (c *SCCache) validate() error {
+	return nil
+}
+
+type SCCacheInfo struct {
+	Platform *ocispecs.Platform
+}
+
+type SCCacheOption interface {
+	SetSCCacheOption(*SCCacheInfo)
+}
+
+type SCCacheOptionFunc func(*SCCacheInfo)
+
+func (f SCCacheOptionFunc) SetSCCacheOption(info *SCCacheInfo) {
+	f(info)
+}
+
+const (
+	sccacheCacheDir = "/tmp/dalec/sccache-cache"
+	sccacheBinary   = "/tmp/internal/dalec/sccache/sccache"
+)
+
+func (c *SCCache) ToRunOption(distroKey string, opts ...SCCacheOption) llb.RunOption {
+	// TODO: Future improvement - allow pulling sccache from build context instead of GitHub
+	// This would provide better security and flexibility by allowing users to:
+	// 1. Bring their own verified sccache binary
+	// 2. Use different versions than the hardcoded v0.10.0
+	// 3. Work in offline environments
+	// 4. Avoid external downloads during build time
+	//
+	// Implementation would add Source and BinaryPath fields to SCCache struct
+	// to allow specifying a context source like: { "context": { "name": "." }, "path": "tools/sccache" }
+	return RunOptFunc(func(ei *llb.ExecInfo) {
+		var info SCCacheInfo
+		for _, opt := range opts {
+			opt.SetSCCacheOption(&info)
+		}
+
+		// Ensure platform is set
+		var platform *ocispecs.Platform
+		if ei.Platform != nil {
+			platform = ei.Platform
+		} else if info.Platform != nil {
+			platform = info.Platform
+		} else {
+			p := platforms.DefaultSpec()
+			platform = &p
+		}
+
+		key := fmt.Sprintf("%s-%s-dalec-rustsccache", distroKey, platforms.Format(*platform))
+		if c.Scope != "" {
+			key = fmt.Sprintf("%s-%s", key, c.Scope)
+		}
+
+		// Set up cache mount for sccache compilation cache
+		llb.AddMount(sccacheCacheDir, llb.Scratch(), llb.AsPersistentCacheDir(key, llb.CacheMountShared)).SetRunOption(ei)
+
+		// Set up environment variables
+		llb.AddEnv("SCCACHE_DIR", sccacheCacheDir).SetRunOption(ei)
+
+		// Always download and set up precompiled sccache for consistent behavior
+		sccacheSource := getSccacheSource(platform)
+
+		// Use HTTP download directly since we're in a RunOption context without SourceOpts
+		sccacheDownload := llb.HTTP(sccacheSource.HTTP.URL, llb.Filename("sccache.tar.gz"))
+
+		// Extract sccache binary using LLB state operations
+		extractedSccache := ei.State.Run(
+			llb.AddMount("/tmp/internal/dalec/sccache-download", sccacheDownload, llb.Readonly),
+			ShArgs(`set -e
+# Create temporary extraction directory
+mkdir -p /tmp/internal/dalec/sccache-extract
+# Extract sccache from tar.gz - the archive contains a versioned directory like sccache-v0.10.0-x86_64-unknown-linux-musl/
+tar -xzf /tmp/internal/dalec/sccache-download/sccache.tar.gz -C /tmp/internal/dalec/sccache-extract/
+# Find the sccache binary and copy it to output
+sccache_bin=$(find /tmp/internal/dalec/sccache-extract/ -name "sccache" -type f | head -1)
+if [ -n "$sccache_bin" ]; then
+	cp "$sccache_bin" /output/sccache && chmod +x /output/sccache
+	echo "sccache binary extracted successfully"
+else
+	echo "Warning: sccache binary not found in archive" >&2
+	exit 1
+fi`),
+		).AddMount("/output", llb.Scratch())
+
+		// Mount the extracted sccache binary to a temp directory
+		llb.AddMount(sccacheBinary, extractedSccache, llb.SourcePath("sccache")).SetRunOption(ei)
+
+		// Set up RUSTC_WRAPPER to point at the absolute sccache binary path (no PATH update needed)
+		llb.AddEnv("RUSTC_WRAPPER", sccacheBinary).SetRunOption(ei)
+	})
+} // BazelCache sets up a cache for bazel builds.
 // Currently this only supports setting up a *local* bazel cache.
 //
 // BazelCache relies on the *system* bazelrc file to configure the default cache location.
@@ -332,7 +498,7 @@ type BazelCache struct {
 	// This is useful to differentiate between different build contexts if required.
 	//
 	// This is mainly intended for internal testing purposes.
-	Scope string `json:"scope,omitempty" yaml:"scope,omitepty"`
+	Scope string `json:"scope,omitempty" yaml:"scope,omitempty"`
 }
 
 func (c *BazelCache) validate() error {
@@ -404,8 +570,6 @@ fetch --disk_cache=` + cacheDir + `
 			WithConstraint(info.constraints),
 		)
 
-		// Add the scope to the socket path that we check in order to avoid unexpected (buildkit) cache hits.
-		// This came up in testing, although I'm not sure why llb.IgnoreCache is not sufficient here.
 		checkSockPath := filepath.Join(filepath.Dir(sockPath), c.Scope, filepath.Base(sockPath))
 		checkScript := fmt.Sprintf(`#!/usr/bin/env sh
 
@@ -416,14 +580,15 @@ fi
 `, checkSockPath, sockPath, sockPath)
 		checkScriptSt := llb.Scratch().File(
 			llb.Mkfile("script.sh", 0o755, []byte(checkScript)),
+			WithConstraint(info.constraints),
 		)
 
 		scriptPath := "/tmp/dalec/internal/bazel/check-socket.sh"
 		rcFile = worker.Run(
 			llb.AddSSHSocket(llb.SSHID(BazelDefaultSocketID), llb.SSHSocketTarget(checkSockPath), llb.SSHOptional),
 			ShArgs(scriptPath),
-			llb.IgnoreCache,
 			llb.AddMount(scriptPath, checkScriptSt, llb.SourcePath("script.sh")),
+			WithConstraint(info.constraints),
 		).AddMount("/tmp/dalec/bazelrc", rcFile, llb.SourcePath("bazelrc"))
 
 		llb.AddMount("/etc/bazel.bazelrc", rcFile, llb.SourcePath("bazelrc")).SetRunOption(ei)

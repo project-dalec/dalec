@@ -140,7 +140,7 @@ These implement the
 [SolveOpt](https://pkg.go.dev/github.com/moby/buildkit/client#SolveOpt) in the `Session` field when starting a build.
 
 The way this works is the buildkit client is expected to provide a set of GRPC API's tunnelled through a "session".
-The buildkit solver will call those API's for a nunmber of things, including fetching files, authentication, and in this case
+The buildkit solver will call those API's for a number of things, including fetching files, authentication, and in this case
 forwarding sockets.
 The API's for forwarding sockets are designed around forwarding SSH agents, but the buildkit solver doesn't care about SSH
 or the agent protocol at all.

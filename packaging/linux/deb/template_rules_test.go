@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/dalec"
+	"github.com/project-dalec/dalec"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
 )

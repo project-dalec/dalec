@@ -8,14 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
-	"github.com/Azure/dalec/targets"
-	"github.com/Azure/dalec/targets/linux/deb/ubuntu"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/targets"
+	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 )
 
 const (
@@ -33,15 +32,9 @@ func handleZip(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 		}
 
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
-		worker, err := distroConfig.Worker(sOpt, pg)
-		if err != nil {
-			return nil, nil, err
-		}
+		worker := distroConfig.Worker(sOpt, pg)
 
-		bin, err := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
-		if err != nil {
-			return nil, nil, fmt.Errorf("unable to build binaries: %w", err)
-		}
+		bin := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
 
 		st := getZipLLB(worker, platform, spec, bin, pg)
 
@@ -67,37 +60,23 @@ const (
 	pipDepsName   = "__pipdeps"
 )
 
-func specToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (map[string]llb.State, error) {
-	out, err := dalec.Sources(spec, sOpt, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error preparign spec sources")
-	}
+func sources(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) map[string]llb.State {
+	out := dalec.Sources(spec, sOpt, opts...)
 
 	opts = append(opts, dalec.ProgressGroup("Add gomod sources"))
-	gomodSt, err := spec.GomodDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding gomod sources")
-	}
 
-	cargohomeSt, err := spec.CargohomeDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding cargohome sources")
-	}
+	gomodSt := spec.GomodDeps(sOpt, worker, opts...)
 
-	srcsWithNodeMods, err := spec.NodeModDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error preparing node deps")
-	}
+	cargohomeSt := spec.CargohomeDeps(sOpt, worker, opts...)
+
+	srcsWithNodeMods := spec.NodeModDeps(sOpt, worker, opts...)
 	sorted := dalec.SortMapKeys(srcsWithNodeMods)
 
 	for _, key := range sorted {
 		out[key] = srcsWithNodeMods[key]
 	}
 
-	pipDepsSt, err := spec.PipDeps(sOpt, worker, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error adding pip sources")
-	}
+	pipDepsSt := spec.PipDeps(sOpt, worker, opts...)
 
 	if gomodSt != nil {
 		out[gomodsName] = *gomodSt
@@ -111,36 +90,45 @@ func specToSourcesLLB(worker llb.State, spec *dalec.Spec, sOpt dalec.SourceOpts,
 		out[pipDepsName] = *pipDepsSt
 	}
 
-	return out, nil
+	return out
 }
 
-func withSourcesMounted(dst string, states map[string]llb.State, sources map[string]dalec.Source) llb.RunOption {
-	opts := make([]llb.RunOption, 0, len(states))
+func withSourcesMounted(dst string, states map[string]llb.State, sources map[string]dalec.Source, opts ...llb.ConstraintsOpt) llb.RunOption {
+	runOpts := make([]llb.RunOption, 0, len(states))
 
 	sorted := dalec.SortMapKeys(states)
-	files := []llb.State{}
+
+	var files []llb.State
 
 	for _, k := range sorted {
 		state := states[k]
 
-		// In cases where we have a generated source (e.g. gomods) we don't have a [dalec.Source] in the `sources` map.
-		// So we need to check for this.
-		src, ok := sources[k]
+		dest := filepath.Join(dst, k)
+		sourcePath := k
 
-		if ok && !dalec.SourceIsDir(src) {
-			files = append(files, state)
+		src, ok := sources[k]
+		if ok && !src.IsDir() {
+			// If this is a file, we need to have some special handling.
+			// Specifically if we just mount the file directly there are limitations
+			// on what can be done with it (e.g. it can get "device or resource busy" errors).
+			files = append(files, states[k])
 			continue
 		}
 
-		dirDst := filepath.Join(dst, k)
-		opts = append(opts, llb.AddMount(dirDst, state))
+		if !ok {
+			// In some cases we have a state that is not in the sources map (e.g. source generators)
+			// In these cases,t he data is not nested under `k` like sources are, so adjust the path accordingly
+			sourcePath = "/"
+		}
+
+		runOpts = append(runOpts, llb.AddMount(dest, state, llb.SourcePath(sourcePath)))
 	}
 
-	ordered := make([]llb.RunOption, 1, len(opts)+1)
-	ordered[0] = llb.AddMount(dst, dalec.MergeAtPath(llb.Scratch(), files, "/"))
-	ordered = append(ordered, opts...)
+	// Merge all the files into a single state that gets mounted in as a directory.
+	filesSt := dalec.MergeAtPath(llb.Scratch(), files, "/", opts...)
+	runOpts = append(runOpts, llb.AddMount(dst, filesSt))
 
-	return dalec.WithRunOptions(ordered...)
+	return dalec.WithRunOptions(runOpts...)
 }
 
 func addGoCache(spec *dalec.Spec, targetKey string) {
@@ -164,16 +152,28 @@ func addGoCache(spec *dalec.Spec, targetKey string) {
 	})
 }
 
-func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, client gwclient.Client, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, client gwclient.Client, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))
-	worker = worker.With(distroConfig.InstallBuildDeps(sOpt, spec, targetKey, opts...))
 
-	sources, err := specToSourcesLLB(worker, spec, sOpt, opts...)
-	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "could not generate sources")
+	deps := spec.GetPackageDeps(targetKey).GetBuild()
+	if len(deps) > 0 {
+		opts := append(opts, deps.GetSourceLocation(worker))
+		worker = worker.With(distroConfig.InstallBuildDeps(ctx, sOpt, spec, targetKey, opts...))
 	}
 
+	// Preprocess the spec to generate patches for gomod edits and other generators
+	// This must happen after build deps are installed so Go is available
+	if err := spec.Preprocess(sOpt, worker, opts...); err != nil {
+		return dalec.ErrorState(worker, err)
+	}
+
+	// Apply source map constraints for build steps
+	opts = append(opts, spec.Build.Steps.GetSourceLocation(worker))
+
+	sources := sources(worker, spec, sOpt, opts...)
+
 	addGoCache(spec, targetKey)
+	// No automatic cargo cache setup - cargo cache is opt-in only due to security considerations
 
 	patched := dalec.PatchSources(worker, spec, sources, opts...)
 	buildScript := createBuildScript(spec, opts...)
@@ -184,7 +184,7 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 	st := builder.Run(
 		dalec.ShArgs(script.String()),
 		llb.Dir("/build"),
-		withSourcesMounted("/build", patched, spec.Sources),
+		withSourcesMounted("/build", patched, spec.Sources, opts...),
 		llb.AddMount("/tmp/scripts", buildScript),
 		dalec.WithConstraints(opts...),
 		// We could check if we even need the var (ie there are gomods) but this

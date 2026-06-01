@@ -7,7 +7,6 @@ There are different types of artifacts which are installed to different location
 on the target system.
 What location this is depends on the target OS/distro and the kind of artifact.
 
-
 ## Artifact Configuration
 
 Most artifact types share a common data type so can be configured similarly.
@@ -20,6 +19,23 @@ Configuration options shared by most artifacts:
                      e.g. `/usr/bin/<subpath>`, where the artifact will be
                      installed to.
 - *permissions*(octal): file permissions to apply to the artifact.
+
+- *user*(string): user owner to apply to the artifact. This user must exist
+                  on the target system.
+
+- *group*(string): group owner to apply to the artifact. This group must exist
+                   on the target system.
+
+Artifacts are gathered after the [build](spec.md#build-section) phase.
+The paths provided to artifacts must be relative to the base directory used
+during the build.
+
+:::note
+Builds are not required to define a [build section](spec.md#build-section).
+In this case the build phase output is the same as the build phase input, where
+the build phase input is a directory with the [sources](spec.md#sources-section)
+added based on their source name.
+:::
 
 
 ### Binaries
@@ -49,7 +65,7 @@ though behavior may differ between different OS's/distros.
 
 Libexec files are additional executable files that may be executed by one of
 the main package executables. On Linux these would typically get installed into
-`/usr/libexec/` or `/usr/libexec/<main-executable-name>`.
+`/usr/libexec/` or `/usr/libexec/<main-executable-name>/`.
 
 Files under libexec are a mapping of file path to [artifact configuration](#artifact-configuration).
 If `subpath` is not supplied, the artifact will be installed in `/usr/libexec`
@@ -117,7 +133,8 @@ artifacts:
 Directories allows you to create new directories when installing the package.
 Two types of directory artifacts are supported:
 
-1. *config*: This is a directory where configuration files typically go, e.g. /etc/my_package2. *State*: This is directory for persistent state, typically in `/var/lib` on Linux.
+1. *config*: This is a directory where configuration files typically go, e.g. `/etc/my_package`.
+2. *State*: This is directory for persistent state, typically in `/var/lib` on Linux.
 
 
 Unlike many other artifact types, this does not reference any file produced
@@ -214,10 +231,12 @@ artifacts:
       src/contrib/init/my_service.service:
         enable: false
         name: ""
+        start: false
     dropins:
       src/contrib/init/customize-a-thing.service:
         enable: false
         name: ""
+        start: false
 ```
 
 ### Libs
@@ -252,7 +271,7 @@ ownership of the symlink itself, not the target file.
 
 User and group SHOULD be specified as names and not as UID/GID numbers.
 The user/group must exist on the target system OR be created as part of the
-package installation via the [users](#Users) and/or [groups](#Groups) section(s).
+package installation via the [users](#users) and/or [groups](#groups) section(s).
 
 Example:
 
@@ -357,3 +376,6 @@ For rpmbuild setting this to true will set `AutoReq: no` in the resulting rpm
 spec file.
 For debbuild, DALEC will not include `${shlibs:Depends}` in the control file,
 which DALEC normally includes by default.
+
+Note that this setting has no effect on sysext targets because the packages are
+installed without any dependency resolution.

@@ -1,0 +1,172 @@
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
+#
+# docs/examples/config-and-systemd.yml
+#
+# Goal:
+#   Show the "daemon package layout" patterns:
+#   - createDirectories for /etc/<name> and /var/lib/<name>
+#   - configFiles under /etc
+#   - systemd unit packaging
+#   - a tiny script "daemon" that can print config
+#
+# Try:
+#   docker build -f docs/examples/config-and-systemd.yml --target=azlinux3/rpm --output=_output .
+#   docker build -f docs/examples/config-and-systemd.yml --target=azlinux3 -t cfgd:dev .
+#   docker run --rm cfgd:dev --print-config
+
+args:
+  VERSION: 0.1.0
+
+name: cfgd
+description: "Dalec example: configFiles + createDirectories + systemd unit."
+license: Apache-2.0
+website: https://github.com/project-dalec/dalec
+version: ${VERSION}
+revision: 1
+
+targets:
+  azlinux3:
+    image:
+      base: mcr.microsoft.com/azurelinux/base/core:3.0
+      entrypoint: /usr/bin/cfgd
+      cmd: "--print-config"
+
+      # Your Dalec frontend expects env as a list (sequence), not a mapping.
+      env:
+        - CFG_D_CONFIG=/etc/cfgd/cfgd.conf
+
+dependencies:
+  test:
+    bash: {}
+    coreutils: {}
+
+sources:
+  src:
+    inline:
+      dir:
+        permissions: 0o755
+        files:
+          cfgd.sh:
+            permissions: 0o755
+            contents: |
+              #!/bin/sh
+              set -eu
+
+              CONF="${CFG_D_CONFIG:-/etc/cfgd/cfgd.conf}"
+
+              case "${1:-}" in
+                --print-config)
+                  # For the tutorial, just print whatever the config file contains.
+                  if [ -f "$CONF" ]; then
+                    cat "$CONF"
+                  else
+                    echo "missing config: $CONF" >&2
+                    exit 2
+                  fi
+                  ;;
+                --version)
+                  echo "cfgd ${VERSION}"
+                  ;;
+                *)
+                  echo "cfgd running (config=$CONF)"
+                  ;;
+              esac
+
+          cfgd.conf:
+            permissions: 0o644
+            contents: |
+              # Example config packaged under /etc/cfgd/cfgd.conf
+              port=8080
+              log_level=info
+
+          cfgd.service:
+            permissions: 0o644
+            contents: |
+              [Unit]
+              Description=cfgd (Dalec example)
+              After=network-online.target
+              Wants=network-online.target
+
+              [Service]
+              Type=simple
+              Environment=CFG_D_CONFIG=/etc/cfgd/cfgd.conf
+              ExecStart=/usr/bin/cfgd
+              Restart=on-failure
+
+              [Install]
+              WantedBy=multi-user.target
+
+build:
+  env:
+    VERSION: ${VERSION}
+  steps:
+    - command: |
+        set -euo pipefail
+        mkdir -p out
+
+        # The script contains a literal "${VERSION}" token.
+        # Dalec does NOT substitute inside file contents, so we replace it here.
+        sed "s/\\\${VERSION}/${VERSION}/g" src/cfgd.sh > out/cfgd
+        chmod 0755 out/cfgd
+
+artifacts:
+  binaries:
+    out/cfgd:
+      subpath: ""
+      permissions: 0o755
+
+  createDirectories:
+    config:
+      cfgd:
+        mode: 0o755
+    state:
+      cfgd:
+        mode: 0o755
+
+  # IMPORTANT (Dalec version detail):
+  # subpath is treated as a DIRECTORY, and Dalec appends the source filename.
+  # So this creates: /etc/cfgd/cfgd.conf  (file)
+  configFiles:
+    src/cfgd.conf:
+      subpath: "cfgd"
+      permissions: 0o644
+
+  systemd:
+    units:
+      src/cfgd.service:
+        enable: false
+        start: false
+        name: ""
+
+tests:
+  - name: cfgd installed and executable
+    files:
+      /usr/bin/cfgd:
+        permissions: 0o755
+
+  - name: config file packaged under /etc
+    files:
+      /etc/cfgd/cfgd.conf:
+        permissions: 0o644
+        contains:
+          - "port=8080"
+          - "log_level=info"
+
+  - name: print-config prints packaged config
+    steps:
+      - command: /usr/bin/cfgd --print-config
+        stdout:
+          contains:
+            - "port=8080"
+            - "log_level=info"
+        stderr:
+          empty: true
+
+  # Unit file install paths can vary slightly by distro; check both common locations.
+  - name: systemd unit installed (common locations)
+    steps:
+      - command: >
+          /bin/sh -c 'test -f /usr/lib/systemd/system/cfgd.service || test -f /lib/systemd/system/cfgd.service'
+        stderr:
+          empty: true
+

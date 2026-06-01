@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
-	"github.com/Azure/dalec/targets/linux/deb/distro"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/targets/linux/deb/distro"
 )
 
 const (
@@ -21,28 +21,26 @@ const (
 	WindowscrossWorkerContextName = "dalec-windowscross-worker"
 )
 
-var (
-	distroConfig = &distro.Config{
-		ImageRef:       workerImgRef,
-		AptCachePrefix: aptCachePrefix,
-		VersionID:      "ubuntu22.04",
-		ContextRef:     WindowscrossWorkerContextName,
-		BuilderPackages: []string{
-			"aptitude",
-			"build-essential",
-			"binutils-mingw-w64",
-			"g++-mingw-w64-x86-64",
-			"gcc",
-			"git",
-			"make",
-			"pkg-config",
-			"zip",
-			"aptitude",
-			"dpkg-dev",
-			"debhelper",
-		},
-	}
-)
+var distroConfig = &distro.Config{
+	ImageRef:       workerImgRef,
+	AptCachePrefix: aptCachePrefix,
+	VersionID:      "ubuntu22.04",
+	ContextRef:     WindowscrossWorkerContextName,
+	BuilderPackages: []string{
+		"aptitude",
+		"build-essential",
+		"binutils-mingw-w64",
+		"g++-mingw-w64-x86-64",
+		"gcc",
+		"git",
+		"make",
+		"pkg-config",
+		"zip",
+		"aptitude",
+		"dpkg-dev",
+		"debhelper",
+	},
+}
 
 func Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	var mux frontend.BuildMux
@@ -76,11 +74,9 @@ func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result
 			return nil, nil, err
 		}
 
-		st, err := distroConfig.Worker(sOpt)
-		if err != nil {
-			return nil, nil, err
-		}
+		pg := dalec.ProgressGroup("Handle windows worker")
 
+		st := distroConfig.Worker(sOpt, pg)
 		def, err := st.Marshal(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -89,7 +85,6 @@ func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result
 		res, err := client.Solve(ctx, gwclient.SolveRequest{
 			Definition: def.ToPB(),
 		})
-
 		if err != nil {
 			return nil, nil, err
 		}

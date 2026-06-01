@@ -164,6 +164,17 @@ tests:
         permissions: 0644
 ```
 
+#### Symlinks
+
+To check the target of a symlink set the `link_target` field:
+
+```yaml
+tests:
+  - name: My Test case
+    files:
+      /some/path:
+        link_target: /expected/target
+```
 
 ### Run a command
 

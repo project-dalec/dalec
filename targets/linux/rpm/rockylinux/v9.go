@@ -1,7 +1,7 @@
 package rockylinux
 
 import (
-	"github.com/Azure/dalec/targets/linux/rpm/distro"
+	"github.com/project-dalec/dalec/targets/linux/rpm/distro"
 )
 
 const (
@@ -10,7 +10,7 @@ const (
 
 	// v9Ref is the image ref used for the base worker image
 	v9Ref      = "docker.io/library/rockylinux:9"
-	v9FullName = "rockyLinux 9"
+	v9FullName = "RockyLinux 9"
 	// v9WorkerContextName is the build context name that can be used to lookup
 	v9WorkerContextName = "dalec-rockylinux9-worker"
 )
@@ -19,12 +19,14 @@ var ConfigV9 = &distro.Config{
 	ImageRef:   v9Ref,
 	ContextRef: v9WorkerContextName,
 
-	CacheName: dnfCacheNameV9,
-	CacheDir:  "/var/cache/dnf",
+	CacheName:        dnfCacheNameV9,
+	CacheDir:         []string{"/var/cache/dnf"},
+	CacheAddPlatform: true,
 
 	ReleaseVer:         "9",
 	BuilderPackages:    append(builderPackages, "systemd-rpm-macros"),
 	BasePackages:       basePackages(V9TargetKey),
 	RepoPlatformConfig: &defaultPlatformConfig,
 	InstallFunc:        distro.DnfInstall,
+	FullName:           v9FullName,
 }

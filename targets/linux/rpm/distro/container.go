@@ -5,49 +5,47 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
-	"github.com/Azure/dalec/targets/linux"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/targets"
+	"github.com/project-dalec/dalec/targets/linux"
 )
 
-func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, rpmDir llb.State, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, rpmDir llb.State, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Install RPMs"))
+	opts = append(opts, frontend.IgnoreCache(client))
+
 	const workPath = "/tmp/rootfs"
 
 	bi, err := spec.GetSingleBase(targetKey)
 	if err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(llb.Scratch(), err)
 	}
 
 	skipBase := bi != nil
-	rootfs, err := bi.ToState(sOpt, opts...)
-	if err != nil {
-		return llb.Scratch(), err
-	}
+	rootfs := bi.ToState(sOpt, opts...)
 
 	installTimeRepos := spec.GetInstallRepos(targetKey)
-	repoMounts, keyPaths, err := cfg.RepoMounts(installTimeRepos, sOpt, opts...)
-	if err != nil {
-		return llb.Scratch(), err
+	repoMounts, keyPaths := cfg.RepoMounts(installTimeRepos, sOpt, opts...)
+	importRepos := []DnfInstallOpt{
+		DnfWithMounts(repoMounts),
+		DnfImportKeys(keyPaths),
+		DnfInstallWithConstraints(opts),
 	}
-	importRepos := []DnfInstallOpt{DnfWithMounts(repoMounts), DnfImportKeys(keyPaths)}
 
 	rpmMountDir := "/tmp/rpms"
 
 	installOpts := []DnfInstallOpt{DnfAtRoot(workPath)}
 	installOpts = append(installOpts, importRepos...)
 	installOpts = append(installOpts, []DnfInstallOpt{
-		DnfNoGPGCheck,
 		IncludeDocs(spec.GetArtifacts(targetKey).HasDocs()),
-		dnfInstallWithConstraints(opts),
 	}...)
 
 	baseMountPath := rpmMountDir + "-base"
-	basePkgs := llb.Scratch().File(llb.Mkdir("/RPMS", 0o755))
+	basePkgs := llb.Scratch().File(llb.Mkdir("/RPMS", 0o755), opts...)
 	pkgs := []string{
 		filepath.Join(rpmMountDir, "**/*.rpm"),
 	}
@@ -57,35 +55,35 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, w
 
 		var basePkgStates []llb.State
 		for _, spec := range cfg.BasePackages {
-			pkg, err := cfg.BuildPkg(ctx, client, worker, sOpt, &spec, targetKey, opts...)
-			if err != nil {
-				return llb.Scratch(), errors.Wrap(err, "error building base runtime deps package")
-			}
+			pkg := cfg.BuildPkg(ctx, client, sOpt, &spec, targetKey, opts...)
 			basePkgStates = append(basePkgStates, pkg)
 		}
 
-		basePkgs = dalec.MergeAtPath(basePkgs, basePkgStates, "/")
+		basePkgs = dalec.MergeAtPath(basePkgs, basePkgStates, "/", opts...)
 		pkgs = append(pkgs, filepath.Join(baseMountPath, "**/*.rpm"))
 	}
 
+	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
+
 	rootfs = worker.Run(
+		dalec.WithConstraints(opts...), // Make sure constraints (and platform specifically) are applied before install is set
 		cfg.Install(pkgs, installOpts...),
 		llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS")),
 		llb.AddMount(baseMountPath, basePkgs, llb.SourcePath("/RPMS")),
-		dalec.WithConstraints(opts...),
+		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 	).AddMount(workPath, rootfs)
 
 	if post := spec.GetImagePost(targetKey); post != nil && len(post.Symlinks) > 0 {
 		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, opts...))
 	}
 
-	return rootfs, nil
+	return rootfs
 }
 
 func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
-		deps := spec.GetRuntimeDeps(targetKey)
-		if len(deps) == 0 {
+		rtDeps := spec.GetPackageDeps(targetKey).GetRuntime()
+		if len(rtDeps) == 0 {
 			return nil, nil, fmt.Errorf("no runtime deps found for '%s'", targetKey)
 		}
 
@@ -97,23 +95,36 @@ func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (
 		}
 
 		pc := dalec.Platform(platform)
-		worker, err := cfg.Worker(sOpt, pg, pc)
-		if err != nil {
-			return nil, nil, err
+
+		// NOTE: Deps-only allows bare specs, ie specs with just the runtime deps included.
+		// This means we may need to fill in some of the details that are required by the package manager.
+		depsSpec := &dalec.Spec{
+			Name:        spec.Name + "-runtime-deps",
+			License:     spec.License,
+			Version:     spec.Version,
+			Revision:    spec.Revision,
+			Description: "Runtime dependencies meta package",
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: rtDeps,
+			},
 		}
 
-		var rpmDir = llb.Scratch()
+		if depsSpec.Name == "-runtime-deps" {
+			// Name cannot start with "-"
+			depsSpec.Name = "dalec-user" + depsSpec.Name
+		}
+		if depsSpec.Version == "" {
+			depsSpec.Version = "0.0.1"
+		}
+		if depsSpec.Revision == "" {
+			depsSpec.Revision = "1"
+		}
+		if depsSpec.License == "" {
+			depsSpec.License = "MIT"
+		}
 
-		if len(deps) > 0 {
-			withDownloads := worker.Run(dalec.ShArgs("set -ex; mkdir -p /tmp/rpms/RPMS/$(uname -m)")).
-				Run(cfg.Install(spec.GetRuntimeDeps(targetKey),
-					DnfDownloadAllDeps("/tmp/rpms/RPMS/$(uname -m)"))).Root()
-			rpmDir = llb.Scratch().File(llb.Copy(withDownloads, "/tmp/rpms", "/", dalec.WithDirContentsOnly()))
-		}
-		ctr, err := cfg.BuildContainer(ctx, client, worker, sOpt, spec, targetKey, rpmDir, pg, pc)
-		if err != nil {
-			return nil, nil, err
-		}
+		pkg := cfg.BuildPkg(ctx, client, sOpt, depsSpec, targetKey, pg)
+		ctr := cfg.BuildContainer(ctx, client, sOpt, spec, targetKey, pkg, pg)
 
 		def, err := ctr.Marshal(ctx, pc)
 		if err != nil {

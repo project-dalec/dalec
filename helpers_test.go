@@ -3,6 +3,7 @@ package dalec
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
 )
@@ -62,7 +63,7 @@ func TestMergeDependencies(t *testing.T) {
 				Build: map[string]PackageConstraints{
 					"pkg3": {},
 				},
-				Test: []string{"test1"},
+				Test: map[string]PackageConstraints{"test1": {}},
 			},
 			expected: &PackageDependencies{
 				Build: map[string]PackageConstraints{
@@ -71,7 +72,7 @@ func TestMergeDependencies(t *testing.T) {
 				Runtime: map[string]PackageConstraints{
 					"pkg2": {},
 				},
-				Test: []string{"test1"},
+				Test: map[string]PackageConstraints{"test1": {}},
 			},
 		},
 		{
@@ -122,7 +123,8 @@ func TestMergeDependencies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := MergeDependencies(tt.base, tt.target)
-			assert.Check(t, cmp.DeepEqual(tt.expected, result))
+			ignored := cmpopts.IgnoreUnexported(PackageDependencies{}, PackageConstraints{}, PackageRepositoryConfig{}, Source{}, SourceHTTP{})
+			assert.Check(t, cmp.DeepEqual(tt.expected, result, ignored))
 		})
 	}
 }

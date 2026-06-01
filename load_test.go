@@ -42,6 +42,16 @@ func TestSourceValidation(t *testing.T) {
 			expectErr: true,
 		},
 		{
+			title: "git source checksum accepts hex",
+			src: Source{
+				Git: &SourceGit{
+					URL:      "https://example.com/repo.git",
+					Commit:   "v1.2.3",
+					Checksum: "0123456789abcdef",
+				},
+			},
+		},
+		{
 			title:     "has multiple source types in docker-image command mount",
 			expectErr: true,
 			src: Source{
@@ -496,9 +506,6 @@ func TestSourceFillDefaults(t *testing.T) {
 			src := tc.before
 			expected := tc.after
 
-			if err := src.validate(); err != nil {
-				t.Fatal(err)
-			}
 			spec := &Spec{
 				Sources: map[string]Source{
 					"test": src,
@@ -669,6 +676,7 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	const (
 		foo            = "foo"
 		bar            = "bar"
+		checksum       = "baddecaf"
 		argWithDefault = "some default value"
 		plainOleValue  = "some plain old value"
 	)
@@ -702,6 +710,14 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 		Path:     "foo/${BAR}",
 		Includes: []string{"foo/${BAR}"},
 		Excludes: []string{"foo/${BAR}"},
+		Inline:   &SourceInline{},
+	}
+	spec.Sources["git"] = Source{
+		Git: &SourceGit{
+			URL:      "https://example.com/foo/${BAR}.git",
+			Commit:   "$FOO",
+			Checksum: "$CHECKSUM",
+		},
 	}
 
 	spec.Patches = map[string][]PatchSpec{
@@ -729,6 +745,30 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 				},
 				Volumes: map[string]struct{}{
 					"": {},
+				},
+			},
+			Provides: map[string]PackageConstraints{
+				"p1": {
+					Version: []string{
+						"1.0",
+						"$FOO",
+					},
+				},
+			},
+			Replaces: map[string]PackageConstraints{
+				"p1": {
+					Version: []string{
+						"1.0",
+						"$FOO",
+					},
+				},
+			},
+			Conflicts: map[string]PackageConstraints{
+				"p1": {
+					Version: []string{
+						"1.0",
+						"$FOO",
+					},
 				},
 			},
 		},
@@ -773,13 +813,18 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	env["BAR"] = bar
 
 	spec.Args["BAR"] = ""
+	spec.Args["CHECKSUM"] = ""
 	spec.Args["VAR_WITH_DEFAULT"] = argWithDefault
+	env["CHECKSUM"] = checksum
 
 	assert.NilError(t, spec.SubstituteArgs(env))
 
 	assert.Check(t, cmp.Equal(spec.Sources["patch"].Path, "foo/"+bar))
 	assert.Check(t, cmp.Equal(spec.Sources["patch"].Includes[0], "foo/"+bar))
 	assert.Check(t, cmp.Equal(spec.Sources["patch"].Excludes[0], "foo/"+bar))
+	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.URL, "https://example.com/foo/"+bar+".git"))
+	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Commit, foo))
+	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Checksum, checksum))
 	assert.Check(t, cmp.Equal(spec.Patches["src"][0].Path, foo))
 
 	// Base package config
@@ -794,6 +839,12 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	assert.Check(t, cmp.Equal(spec.Targets["t2"].PackageConfig.Signer.Args["WHATEVER"], argWithDefault))
 	assert.Check(t, cmp.Equal(spec.Targets["t2"].PackageConfig.Signer.Args["REGULAR"], plainOleValue))
 	assert.Check(t, cmp.Equal(spec.Targets["t2"].Image.Labels["foo"], foo))
+	assert.Check(t, cmp.Equal(spec.Targets["t2"].Provides["p1"].Version[0], "1.0"))
+	assert.Check(t, cmp.Equal(spec.Targets["t2"].Provides["p1"].Version[1], "foo"))
+	assert.Check(t, cmp.Equal(spec.Targets["t2"].Replaces["p1"].Version[0], "1.0"))
+	assert.Check(t, cmp.Equal(spec.Targets["t2"].Replaces["p1"].Version[1], "foo"))
+	assert.Check(t, cmp.Equal(spec.Targets["t2"].Conflicts["p1"].Version[0], "1.0"))
+	assert.Check(t, cmp.Equal(spec.Targets["t2"].Conflicts["p1"].Version[1], "foo"))
 
 	assert.Check(t, cmp.Equal(spec.Dependencies.Build["p1"].Version[0], "1.0"))
 	assert.Check(t, cmp.Equal(spec.Dependencies.Build["p1"].Version[1], "foo"))
@@ -801,6 +852,79 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	assert.Check(t, cmp.Equal(spec.Dependencies.Runtime["p1"].Version[1], "foo"))
 	assert.Check(t, cmp.Equal(spec.Provides["p1"].Version[0], "1.0"))
 	assert.Check(t, cmp.Equal(spec.Replaces["p1"].Version[0], "1.0"))
+}
+
+func TestLoadSpec_TargetPackageMetadata(t *testing.T) {
+	dt := []byte(`
+name: test-pkg
+description: Test package
+website: https://example.com
+version: 1.0.0
+revision: 1
+license: MIT
+provides:
+  common-pkg:
+    version:
+      - "= 1.0.0"
+conflicts:
+  common-conflict:
+replaces:
+  common-replace:
+targets:
+  rpm:
+    provides:
+      rpm-virtual:
+        version:
+          - "= 2.0.0"
+    conflicts:
+      rpm-conflict:
+    replaces:
+      rpm-replace:
+  deb:
+    provides:
+      deb-virtual:
+        version:
+          - ">= 3.0.0"
+    conflicts:
+      deb-conflict:
+    replaces:
+      deb-replace:
+  empty:
+    provides: {}
+    conflicts: {}
+    replaces: {}
+`)
+
+	spec, err := LoadSpec(dt)
+	assert.NilError(t, err)
+
+	rpmProvides := spec.GetProvides("rpm")
+	assert.Check(t, cmp.Len(rpmProvides, 1))
+	assert.Check(t, cmp.DeepEqual(rpmProvides["rpm-virtual"].Version, []string{"= 2.0.0"}))
+	_, ok := spec.GetConflicts("rpm")["rpm-conflict"]
+	assert.Check(t, ok)
+	_, ok = spec.GetReplaces("rpm")["rpm-replace"]
+	assert.Check(t, ok)
+
+	debProvides := spec.GetProvides("deb")
+	assert.Check(t, cmp.Len(debProvides, 1))
+	assert.Check(t, cmp.DeepEqual(debProvides["deb-virtual"].Version, []string{">= 3.0.0"}))
+	_, ok = spec.GetConflicts("deb")["deb-conflict"]
+	assert.Check(t, ok)
+	_, ok = spec.GetReplaces("deb")["deb-replace"]
+	assert.Check(t, ok)
+
+	rootProvides := spec.GetProvides("unknown")
+	assert.Check(t, cmp.Len(rootProvides, 1))
+	assert.Check(t, cmp.DeepEqual(rootProvides["common-pkg"].Version, []string{"= 1.0.0"}))
+	_, ok = spec.GetConflicts("unknown")["common-conflict"]
+	assert.Check(t, ok)
+	_, ok = spec.GetReplaces("unknown")["common-replace"]
+	assert.Check(t, ok)
+
+	assert.Check(t, cmp.Len(spec.GetProvides("empty"), 0))
+	assert.Check(t, cmp.Len(spec.GetConflicts("empty"), 0))
+	assert.Check(t, cmp.Len(spec.GetReplaces("empty"), 0))
 }
 
 func TestCustomRepoFillDefaults(t *testing.T) {
@@ -871,6 +995,8 @@ x-vars:
       cmd:
         env:
           TEST: ${SOME_ARG}
+        steps:
+          - command: echo $TEST		
   git-src: &git-src
     git:
       url: https://${SOME_ARG}
@@ -1090,6 +1216,26 @@ targets:
 		assert.Check(t, cmp.Equal(target.PackageConfig.Signer.Args["FOO"], "test"))
 	})
 
+	t.Run("git checksum build arg loaded from yaml", func(t *testing.T) {
+		dt := []byte(`
+args:
+  COMMIT:
+sources:
+  test:
+    git:
+      url: https://example.com/repo.git
+      commit: v1.2.3
+      checksum: ${COMMIT}
+`)
+
+		spec, err := LoadSpec(dt)
+		assert.NilError(t, err)
+
+		err = spec.SubstituteArgs(map[string]string{"COMMIT": "0123456789abcdef"})
+		assert.NilError(t, err)
+		assert.Check(t, cmp.Equal(spec.Sources["test"].Git.Checksum, "0123456789abcdef"))
+	})
+
 	t.Run("default value", func(t *testing.T) {
 		dt := []byte(`
 args:
@@ -1281,6 +1427,12 @@ build:
 		})
 		assert.NilError(t, err)
 		assert.Check(t, cmp.Equal(spec.Build.Env["SOURCE_DATE_EPOCH"], "888888888"))
+	})
+
+	t.Run("null", func(t *testing.T) {
+		dt := []byte(`null`)
+		_, err := LoadSpec(dt)
+		assert.NilError(t, err)
 	})
 }
 
@@ -1891,7 +2043,7 @@ func TestArtifactBuildValidation(t *testing.T) {
 				Steps:  []BuildStep{{Command: "echo hello"}},
 				Caches: []CacheConfig{{}},
 			},
-			expectErr: "cache 0: invalid cache config: exactly one of (dir, gobuild, bazel) must be set",
+			expectErr: "cache 0: invalid cache config: exactly one of (dir, gobuild, rustsccache, bazel) must be set",
 		},
 		{
 			name: "empty dest",
@@ -1980,7 +2132,7 @@ func TestArtifactBuildValidation(t *testing.T) {
 					},
 				},
 			},
-			expectErr: "cache 0: invalid cache config: exactly one of (dir, gobuild, bazel) must be set",
+			expectErr: "cache 0: invalid cache config: exactly one of (dir, gobuild, rustsccache, bazel) must be set",
 		},
 		{
 			name: "multiple go build caches",
@@ -2031,4 +2183,184 @@ func TestArtifactBuildValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestArtifactsValidation(t *testing.T) {
+	cases := []struct {
+		name      string
+		artifacts Artifacts
+		expectErr string
+	}{
+		{
+			name: "capabilities on binaries is valid",
+			artifacts: Artifacts{
+				Binaries: map[string]ArtifactConfig{
+					"/tmp/mybinary": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true, Permitted: true},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "capabilities on libs is valid",
+			artifacts: Artifacts{
+				Libs: map[string]ArtifactConfig{
+					"/tmp/mylib.so": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "capabilities on libexec is valid",
+			artifacts: Artifacts{
+				Libexec: map[string]ArtifactConfig{
+					"/tmp/helper": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true, Permitted: true},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "capabilities on docs is invalid",
+			artifacts: Artifacts{
+				Docs: map[string]ArtifactConfig{
+					"README.md": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on docs 'README.md'",
+		},
+		{
+			name: "capabilities on configFiles is invalid",
+			artifacts: Artifacts{
+				ConfigFiles: map[string]ArtifactConfig{
+					"config.yaml": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on configFiles 'config.yaml'",
+		},
+		{
+			name: "capabilities on manpages is invalid",
+			artifacts: Artifacts{
+				Manpages: map[string]ArtifactConfig{
+					"tool.1": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on manpages 'tool.1'",
+		},
+		{
+			name: "capabilities on data_dirs is invalid",
+			artifacts: Artifacts{
+				DataDirs: map[string]ArtifactConfig{
+					"data": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on data_dirs 'data'",
+		},
+		{
+			name: "capabilities on licenses is invalid",
+			artifacts: Artifacts{
+				Licenses: map[string]ArtifactConfig{
+					"LICENSE": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on licenses 'LICENSE'",
+		},
+		{
+			name: "capabilities on headers is invalid",
+			artifacts: Artifacts{
+				Headers: map[string]ArtifactConfig{
+					"myheader.h": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on headers 'myheader.h'",
+		},
+		{
+			name: "multiple capability errors",
+			artifacts: Artifacts{
+				Docs: map[string]ArtifactConfig{
+					"README.md": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true},
+						},
+					},
+				},
+				ConfigFiles: map[string]ArtifactConfig{
+					"config.yaml": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true},
+						},
+					},
+				},
+			},
+			expectErr: "cannot set capabilities on",
+		},
+		{
+			name: "no capabilities is valid",
+			artifacts: Artifacts{
+				Binaries: map[string]ArtifactConfig{
+					"/tmp/mybinary": {},
+				},
+				Docs: map[string]ArtifactConfig{
+					"README.md": {},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.artifacts.validate()
+			if tc.expectErr == "" {
+				assert.NilError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tc.expectErr)
+			}
+		})
+	}
+}
+
+func FuzzLoad(f *testing.F) {
+	// Add some initial test cases
+	f.Add("name: test\n")
+	f.Add("name: test\nversion: 1.0.0\n")
+	f.Add("name: test\nversion: 1.0.0\ntargets:\n  foo:\n    image:\n      base: busybox:latest\n")
+
+	// Fuzz the LoadSpec function
+	f.Fuzz(func(t *testing.T, data string) {
+		_, err := LoadSpec([]byte(data))
+		if err != nil {
+			t.Skip() // Skip if the data is not valid YAML
+		}
+	})
 }

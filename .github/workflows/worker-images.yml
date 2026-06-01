@@ -14,12 +14,6 @@ on:
       - '.github/workflows/worker-images/matrix.json'
       - '.github/workflows/worker-images.yml'
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Git reference to build worker images for'
-        required: true
-        default: ''
-        type: string
 
 permissions:
   contents: read
@@ -30,14 +24,13 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout code
-        if: ${{ github.event_name != 'workflow_dispatch' }}
-        uses:  actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Checkout code (workflow_dispatch)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses:  actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
-          ref: ${{ github.event.inputs.ref }}
+          egress-policy: audit
+
+      - name: Checkout code
+        uses:  actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set matrix
         id: set-matrix
         run: |
@@ -46,8 +39,10 @@ jobs:
 
   build-worker-images:
     permissions:
-      contents: read
       packages: write
+      id-token: write  # Required for cosign OIDC signing
+      attestations: write  # Required for GitHub attestations
+      artifact-metadata: write # Required for certain parts of GitHub attestations (actions/attest complains if not set)
     needs: load-matrix
     runs-on: ubuntu-22.04
     strategy:
@@ -55,10 +50,29 @@ jobs:
       matrix: ${{ fromJson(needs.load-matrix.outputs.matrix) }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+            fulcio.sigstore.dev:443
+            ghcr.io:443
+            github.com:443
+            *.githubusercontent.com:443
+            proxy.golang.org:443
+            rekor.sigstore.dev:443
+            storage.googleapis.com:443
+            tuf-repo-cdn.sigstore.dev:443
 
-      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Cosign
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         name: Login to GHCR
         with:
           registry: ghcr.io
@@ -66,16 +80,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: ./.github/actions/enable-containerd
-      - uses: ./.github/actions/setup-source-policy
-        name: Setup Source Policy
-        id: source-policy
+      
       - name: Setup environment
         run: |
           echo MAIN_CACHE_SCOPE=main.${{ matrix.target }} >> $GITHUB_ENV
 
           tag="${{ github.ref_name }}"
           tag="${tag//\//-}" # Replace slashes with dashes
-          echo "IMAGE_REPO=${{ steps.source-policy.outputs.formatted-repo }}/${{ matrix.target }}:${tag}"  >> $GITHUB_ENV
+          tag="${tag%.*}" # Trim off patch version if it exists
+
+          # Format repository name (lowercase)
+          FORMATTED_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          BASE_REPO="${FORMATTED_REPO}/${{ matrix.target }}"
+          echo "BASE_REPO=${BASE_REPO}" >> $GITHUB_ENV
+          echo "IMAGE_REPO=${BASE_REPO}:${tag}" >> $GITHUB_ENV
       - if: ${{ github.event_name == 'pull_request' }}
         name: Setup up (PR)
         run: |
@@ -84,19 +102,35 @@ jobs:
 
           ref="localhost:5000/${IMAGE_REPO}"
           EXTRA_FLAGS="--set worker.cache-from=type=gha,scope=${MAIN_CACHE_SCOPE} --set worker.tags=${ref} --push"
+
+          # Because we sometimes add an extra ref for ":latest", let's also do that here to validate that it works
+          EXTRA_FLAGS+=" --set worker.tags=${ref}-latest"
+
           echo "EXTRA_FLAGS=${EXTRA_FLAGS}" >> $GITHUB_ENV
 
-          docker run -d --net=host ghcr.io/${{ steps.source-policy.outputs.formatted-repo }}/dockerhub/mirror/library/registry:latest
-      - if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+          # Format repository name (lowercase) for registry mirror
+          FORMATTED_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          docker run -d --net=host ghcr.io/${FORMATTED_REPO}/mirror/dockerhub/library/registry:latest
+      - if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
         name: Setup (tagged)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eux
 
           ref="ghcr.io/${IMAGE_REPO}"
 
-          # Don't need o care about cache-from in this case as this is the "prod" image, better to build it from scratch
+   
+          # Don't need to care about cache-from in this case as this is the "prod" image, better to build it from scratch
           # Inline the cache with the image so others can use it as a cache-from for their own builds.
           EXTRA_FLAGS="--set worker.cache-to=type=inline,mode=max --set worker.tags=${ref} --push"
+
+          latest="$(gh release view --json tagName -q .tagName)"
+          if [ ${{ github.ref_name }} = "${latest}" ]; then
+            # If this is the latest release, we also tag it as "latest"
+            IMAGE_REPO_LATEST="${BASE_REPO}:latest"
+            EXTRA_FLAGS+=" --set worker.tags=ghcr.io/${IMAGE_REPO_LATEST}"
+          fi
 
           echo "EXTRA_FLAGS=${EXTRA_FLAGS}" >> $GITHUB_ENV
       - if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
@@ -108,7 +142,7 @@ jobs:
       - name: Setup QEMU
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
       - name: Expose GitHub tokens for caching
-        uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3.1.0
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Build worker images
         run: |
           set -eux
@@ -118,3 +152,42 @@ jobs:
             ${EXTRA_FLAGS}
         env:
           WORKER_TARGET: ${{ matrix.target }}
+      
+      - name: Sign and attest worker images
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
+        id: sign
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          
+          ref="ghcr.io/${IMAGE_REPO}"
+          
+          # Get the digest of the pushed image
+          DIGEST=$(docker buildx imagetools inspect ${ref} --format '{{json .Manifest.Digest}}' | tr -d '"')
+          
+          # Sign the image
+          cosign sign --yes "${ref}@${DIGEST}"
+          
+          # Verify the signature
+          cosign verify "${ref}@${DIGEST}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/worker-images.yml@${{ github.ref }}"
+          
+          # If there's a latest tag, sign that too
+          latest="$(gh release view --json tagName -q .tagName || echo '')"
+          if [ "${{ github.ref_name }}" = "${latest}" ]; then
+            IMAGE_REPO_LATEST="${BASE_REPO}:latest"
+            ref_latest="ghcr.io/${IMAGE_REPO_LATEST}"
+            cosign sign --yes "${ref_latest}@${DIGEST}"
+          fi
+          
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          echo "image-name=ghcr.io/${BASE_REPO}" >> $GITHUB_OUTPUT
+      - name: Attest build provenance
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch' }}
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v2.0.0
+        with:
+          subject-name: ${{ steps.sign.outputs.image-name }}
+          subject-digest: ${{ steps.sign.outputs.digest }}
+          push-to-registry: true

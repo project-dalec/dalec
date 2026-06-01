@@ -3,11 +3,11 @@ package debug
 import (
 	"context"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 const keyCargohomeWorker = "context:cargohome-worker"
@@ -25,18 +25,17 @@ func Cargohome(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 			return nil, nil, err
 		}
 
+		pg := dalec.ProgressGroup("cargohome-deps")
+
 		// Allow the client to override the worker image
 		// This is useful for keeping pre-built worker images, especially for CI.
 		worker, ok := inputs[keyCargohomeWorker]
 		if !ok {
-			worker = llb.Image("rust:latest", llb.WithMetaResolver(client)).
-				Run(llb.Shlex("cargo --version")).Root()
+			worker = llb.Image("rust:latest", llb.WithMetaResolver(client), pg).
+				Run(llb.Shlex("cargo --version"), pg).Root()
 		}
 
-		st, err := spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform))
-		if err != nil {
-			return nil, nil, err
-		}
+		st := spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform), pg)
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

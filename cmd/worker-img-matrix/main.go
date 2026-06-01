@@ -8,8 +8,8 @@ import (
 	"os"
 	"path"
 
-	"github.com/Azure/dalec/internal/plugins"
-	_ "github.com/Azure/dalec/targets/plugin"
+	"github.com/project-dalec/dalec/internal/plugins"
+	_ "github.com/project-dalec/dalec/targets/plugin"
 )
 
 type Matrix struct {

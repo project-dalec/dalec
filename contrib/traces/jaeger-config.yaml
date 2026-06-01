@@ -1,0 +1,35 @@
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+
+extensions:
+  jaeger_storage:
+    backends:
+      memory_storage:
+        memory:
+          max_traces: 50000
+
+  jaeger_query:
+    storage:
+      traces: memory_storage
+    ui:
+      config_file: /etc/jaeger/ui-config.json
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: memory_storage

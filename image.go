@@ -157,7 +157,7 @@ func (i *ImageConfig) validate() error {
 	}
 
 	for i, base := range i.Bases {
-		if err := base.validate(); err != nil {
+		if err := base.validate(); err != nil && !errorIsOnly(err, errNoImageSourcePath) {
 			errs = append(errs, errors.Wrapf(err, "bases[%d]", i))
 		}
 	}
@@ -221,7 +221,9 @@ func (p *PostInstall) validate() error {
 }
 
 func (s *BaseImage) fillDefaults() {
-	fillDefaults(&s.Rootfs)
+	rootfs := &s.Rootfs
+	rootfs.fillDefaults()
+	s.Rootfs = *rootfs
 }
 
 func (p *PostInstall) normalizeSymlinks() {
@@ -251,11 +253,11 @@ func (bi *BaseImage) ResolveImageConfig(ctx context.Context, sOpt SourceOpts, op
 	return dt, err
 }
 
-func (bi *BaseImage) ToState(sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func (bi *BaseImage) ToState(sOpt SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
 	if bi == nil {
-		return llb.Scratch(), nil
+		return llb.Scratch()
 	}
-	return bi.Rootfs.AsState("rootfs", sOpt, opts...)
+	return bi.Rootfs.ToState("", sOpt, opts...)
 }
 
 func (s *Spec) GetImageBases(targetKey string) []BaseImage {

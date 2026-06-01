@@ -1,12 +1,10 @@
 package frontend
 
 import (
-	"bufio"
 	"context"
 	"strconv"
 	"strings"
 
-	"github.com/Azure/dalec"
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
@@ -14,6 +12,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (
@@ -143,13 +142,43 @@ func marshalDockerfile(ctx context.Context, dt []byte, opts ...llb.ConstraintsOp
 }
 
 func getSigningConfigFromContext(ctx context.Context, client gwclient.Client, cfgPath string, configCtxName string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (*dalec.PackageSigner, error) {
-	sc := dalec.SourceContext{Name: configCtxName}
-	signConfigState, err := sc.AsState(cfgPath, []string{cfgPath}, nil, sOpt, opts...)
+	dt, err := readConfigFromContext(ctx, client, cfgPath, configCtxName, sOpt, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	scDef, err := signConfigState.Marshal(ctx)
+	var pc dalec.PackageConfig
+	if err := yaml.Unmarshal(dt, &pc); err != nil {
+		return nil, err
+	}
+
+	return pc.Signer, nil
+}
+
+func getSourceFilterConfigFromContext(ctx context.Context, client gwclient.Client, cfgPath string, configCtxName string, getContext func(string, ...llb.LocalOption) (*llb.State, error), opts ...llb.ConstraintsOpt) (dalec.SourceFilterConfig, error) {
+	dt, err := readConfigFromContext(ctx, client, cfgPath, configCtxName, dalec.SourceOpts{
+		GetContext: getContext,
+	}, opts...)
+	if err != nil {
+		return dalec.SourceFilterConfig{}, err
+	}
+
+	return decodeSourceFilterConfig(ctx, dt)
+}
+
+func decodeSourceFilterConfig(ctx context.Context, dt []byte) (dalec.SourceFilterConfig, error) {
+	var cfg dalec.SourceFilterConfig
+	if err := yaml.UnmarshalContext(ctx, dt, &cfg, yaml.Strict()); err != nil {
+		return dalec.SourceFilterConfig{}, err
+	}
+	return cfg, nil
+}
+
+func readConfigFromContext(ctx context.Context, client gwclient.Client, cfgPath string, configCtxName string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) ([]byte, error) {
+	src := dalec.Source{Path: cfgPath, Context: &dalec.SourceContext{Name: configCtxName}}
+	configState := src.ToState("", dalec.SourceOpts{GetContext: sOpt.GetContext}, opts...)
+
+	scDef, err := configState.Marshal(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -166,25 +195,15 @@ func getSigningConfigFromContext(ctx context.Context, client gwclient.Client, cf
 		return nil, err
 	}
 
-	dt, err := ref.ReadFile(ctx, gwclient.ReadRequest{
+	return ref.ReadFile(ctx, gwclient.ReadRequest{
 		Filename: cfgPath,
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	var pc dalec.PackageConfig
-	if err := yaml.Unmarshal(dt, &pc); err != nil {
-		return nil, err
-	}
-
-	return pc.Signer, nil
 }
 
-func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
 	if signingDisabled(client) {
 		Warnf(ctx, client, st, "Signing disabled by build-arg %q", keySkipSigningArg)
-		return st, nil
+		return st
 	}
 
 	cfg, rootSigningSpecOverriddenByTarget := spec.GetSigner(targetKey)
@@ -192,14 +211,14 @@ func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *
 	if cfgPath == "" {
 		if cfg == nil {
 			// i.e. there's no signing config. not in the build context, not in the spec.
-			return st, nil
+			return st
 		}
 
 		if rootSigningSpecOverriddenByTarget {
 			Warnf(ctx, client, st, "Root signing spec overridden by target signing spec: target %q", targetKey)
 		}
 
-		return forwardToSigner(ctx, client, cfg, st, opts...)
+		return dalec.ErrorState(forwardToSigner(ctx, client, cfg, st, opts...))
 	}
 
 	configCtxName := getSignContextNameWithDefault(client)
@@ -207,12 +226,12 @@ func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *
 		Warnf(ctx, client, st, "Spec signing config overwritten by config at path %q in build-context %q", cfgPath, configCtxName)
 	}
 
-	cfg, err := getSigningConfigFromContext(ctx, client, cfgPath, configCtxName, sOpt)
+	cfg, err := getSigningConfigFromContext(ctx, client, cfgPath, configCtxName, sOpt, opts...)
 	if err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(llb.Scratch(), err)
 	}
 
-	return forwardToSigner(ctx, client, cfg, st, opts...)
+	return dalec.ErrorState(forwardToSigner(ctx, client, cfg, st, opts...))
 }
 
 func getSignContextNameWithDefault(client gwclient.Client) string {
@@ -244,6 +263,27 @@ func getUserSignConfigPath(client gwclient.Client) string {
 
 func getSignConfigCtxName(client gwclient.Client) string {
 	return client.BuildOpts().Opts["build-arg:"+buildArgDalecSigningConfigContextName]
+}
+
+func getSourceFilterConfigPath(client gwclient.Client) string {
+	return client.BuildOpts().Opts["build-arg:"+dalec.BuildArgDalecSourceFilterConfigPath]
+}
+
+func getSourceFilterContextNameWithDefault(client gwclient.Client) string {
+	configCtxName := dalec.DefaultSourceOptionsContextName
+	if cn := client.BuildOpts().Opts["build-arg:"+dalec.BuildArgDalecSourceFilterContextName]; cn != "" {
+		configCtxName = cn
+	}
+	return configCtxName
+}
+
+func loadSourceFilterConfig(ctx context.Context, client gwclient.Client, getContext func(string, ...llb.LocalOption) (*llb.State, error)) (dalec.SourceFilterConfig, error) {
+	cfgPath := getSourceFilterConfigPath(client)
+	if cfgPath == "" {
+		return dalec.SourceFilterConfig{}, nil
+	}
+
+	return getSourceFilterConfigFromContext(ctx, client, cfgPath, getSourceFilterContextNameWithDefault(client), getContext)
 }
 
 func forwardToSigner(ctx context.Context, client gwclient.Client, cfg *dalec.PackageSigner, s llb.State, opts ...llb.ConstraintsOpt) (llb.State, error) {
@@ -323,22 +363,17 @@ func IgnoreCache(client gwclient.Client, refs ...string) llb.ConstraintsOpt {
 		return llb.IgnoreCache
 	}
 
-	rdr := bufio.NewReader(strings.NewReader(v))
 	idx := make(map[string]struct{}, len(refs))
 
 	for _, ref := range refs {
 		idx[ref] = struct{}{}
 	}
 
-	for {
-		ref, err := rdr.ReadString(',')
-		if err != nil {
-			// The only error here should be io.EOF, meaning we got to the end of the string.
-			return dalec.ConstraintsOptFunc(func(c *llb.Constraints) {})
-		}
-
-		if _, ok := idx[ref]; ok {
+	for filter := range strings.SplitSeq(v, ",") {
+		if _, ok := idx[filter]; ok {
 			return llb.IgnoreCache
 		}
 	}
+
+	return dalec.ConstraintsOptFunc(func(c *llb.Constraints) {})
 }

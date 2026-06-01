@@ -2,11 +2,13 @@ package testenv
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/moby/buildkit/client"
@@ -16,11 +18,12 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/identity"
 	"github.com/moby/buildkit/solver/pb"
-	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 )
+
+var InlineBuildOutput bool
 
 func buildBaseFrontend(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 	dc, err := dockerui.NewClient(c)
@@ -46,10 +49,17 @@ func buildBaseFrontend(ctx context.Context, c gwclient.Client) (*gwclient.Result
 		return nil, errors.Wrap(err, "error marshaling Dockerfile context")
 	}
 
+	// If the test runner requested frontend coverage, build the frontend binary
+	// with coverage instrumentation (Dockerfile uses DALEC_FRONTEND_COVERAGE).
+	frontendOpt := map[string]string{}
+	if os.Getenv("DALEC_FRONTEND_GOCOVERDIR") != "" {
+		frontendOpt["build-arg:DALEC_FRONTEND_COVERAGE"] = "1"
+	}
+
 	defPB := def.ToPB()
 	return c.Solve(ctx, gwclient.SolveRequest{
 		Frontend:    "dockerfile.v0",
-		FrontendOpt: map[string]string{},
+		FrontendOpt: frontendOpt,
 		FrontendInputs: map[string]*pb.Definition{
 			dockerui.DefaultLocalNameContext:    defPB,
 			dockerui.DefaultLocalNameDockerfile: dockerfileDef.ToPB(),
@@ -132,28 +142,117 @@ func withDalecInput(ctx context.Context, gwc gwclient.Client, opts *gwclient.Sol
 	return nil
 }
 
-func displaySolveStatus(ctx context.Context, t *testing.T) (chan *client.SolveStatus, <-chan struct{}) {
-	ch := make(chan *client.SolveStatus)
-	done := make(chan struct{})
+type testWriter struct {
+	t   *testing.T
+	buf *bytes.Buffer
+}
+
+func (tw *testWriter) Write(p []byte) (n int, err error) {
+	n, err = tw.buf.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Flush complete lines only
+	for {
+		dt := tw.buf.Bytes()
+		idx := bytes.IndexRune(dt, '\n')
+		if idx < 0 {
+			break
+		}
+		tw.t.Log(string(dt[:idx]))
+		tw.buf.Next(idx + 1)
+	}
+
+	return n, nil
+}
+
+func (tw *testWriter) Flush() {
+	if tw.buf.Len() == 0 {
+		return
+	}
+	scanner := bufio.NewScanner(tw.buf)
+	for scanner.Scan() {
+		tw.t.Log(scanner.Text())
+	}
+	tw.buf.Reset()
+}
+
+var logBufferPool = &sync.Pool{New: func() any {
+	return bytes.NewBuffer(nil)
+}}
+
+func outputStreamStatusFn(ctx context.Context, t *testing.T) (func(*client.SolveStatus), func()) {
+	var (
+		warnings []*client.VertexWarning
+		errOnce  sync.Once
+
+		done = make(chan struct{})
+		w    = getBuildOutputStream(ctx, t, done)
+	)
+
+	fn := func(msg *client.SolveStatus) {
+		warnings = append(warnings, msg.Warnings...)
+		for _, l := range msg.Logs {
+			if _, err := w.Write(l.Data); err != nil {
+				errOnce.Do(func() {
+					// Don't spam the logs with multiple errors
+					t.Logf("error writing log data: %v", err)
+				})
+			}
+		}
+	}
+
+	return fn, func() {
+		for _, v := range warnings {
+			t.Logf("WARNING: %s", string(v.Short))
+		}
+		close(done)
+	}
+}
+
+func multiStatusFunc(fns ...func(*client.SolveStatus)) func(*client.SolveStatus) {
+	return func(msg *client.SolveStatus) {
+		for _, fn := range fns {
+			if fn == nil {
+				continue
+			}
+			fn(msg)
+		}
+	}
+}
+
+func getBuildOutputStream(ctx context.Context, t *testing.T, done <-chan struct{}) io.Writer {
+	t.Helper()
+
+	if InlineBuildOutput {
+		buf := logBufferPool.Get().(*bytes.Buffer)
+		tw := &testWriter{t: t, buf: buf}
+		t.Cleanup(func() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+			}
+			tw.Flush()
+			logBufferPool.Put(buf)
+		})
+		return tw
+	}
 
 	dir := t.TempDir()
 	f, err := os.OpenFile(filepath.Join(dir, "build.log"), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		t.Fatalf("error opening temp file: %v", err)
 	}
-	display, err := progressui.NewDisplay(f, progressui.AutoMode, progressui.WithPhase(t.Name()))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	go func() {
-		defer close(done)
-
-		_, err := display.UpdateFrom(ctx, ch)
-		if err != nil {
-			t.Log(err)
-		}
+	t.Cleanup(func() {
 		defer f.Close()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+		}
 
 		_, err = f.Seek(0, io.SeekStart)
 		if err != nil {
@@ -168,23 +267,39 @@ func displaySolveStatus(ctx context.Context, t *testing.T) (chan *client.SolveSt
 		if err := scanner.Err(); err != nil {
 			t.Log(err)
 		}
-	}()
+	})
 
-	return ch, done
+	return f
+}
+
+func fowardToSolveStatusFn(ctx context.Context, ch <-chan *client.SolveStatus, fns ...func(*client.SolveStatus)) {
+	f := multiStatusFunc(fns...)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if msg != nil {
+				f(msg)
+				continue
+			}
+			if !ok {
+				return
+			}
+		}
+	}
 }
 
 // withProjectRoot adds the current project root as the build context for the solve request.
-func withProjectRoot(t *testing.T, opts *client.SolveOpt) {
-	t.Helper()
-
+func withProjectRoot(opts *client.SolveOpt) error {
 	cwd, err := os.Getwd()
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
 	projectRoot, err := lookupProjectRoot(cwd)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
 	if opts.LocalDirs == nil {
@@ -192,6 +307,7 @@ func withProjectRoot(t *testing.T, opts *client.SolveOpt) {
 	}
 	opts.LocalDirs[dockerui.DefaultLocalNameContext] = projectRoot
 	opts.LocalDirs[dockerui.DefaultLocalNameDockerfile] = projectRoot
+	return nil
 }
 
 // lookupProjectRoot looks up the project root from the current working directory.

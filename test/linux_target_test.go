@@ -10,15 +10,16 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend/pkg/bkfs"
 	"github.com/cavaliergopher/rpm"
 	"github.com/containerd/platforms"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
@@ -26,7 +27,10 @@ import (
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/moby/go-archive/compression"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
-	pkgerrors "github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -38,22 +42,29 @@ type workerConfig struct {
 	// CreateRepo takes in a state which is the output of the sign target,
 	// as well as optional state options for additional configuration.
 	// the output [llb.StateOption] should install the repo into the worker image.
-	CreateRepo func(llb.State, ...llb.StateOption) llb.StateOption
-	SignRepo   func(llb.State) llb.StateOption
+	CreateRepo func(st llb.State, repoPath string, opts ...llb.StateOption) llb.StateOption
+	SignRepo   func(st llb.State, repoPath string) llb.StateOption
 	// ContextName is the name of the worker context that the build target will use
 	// to see if a custom worker is provided in a context
 	ContextName    string
-	TestRepoConfig func(string) map[string]dalec.Source
+	TestRepoConfig func(keyPath, repoPath string) map[string]dalec.Source
 	Platform       *ocispecs.Platform
+	SysextWorker   func(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State
 }
 
 type targetConfig struct {
+	// Key is the base name for the distribution target.
+	Key string
 	// Package is the target for creating a package.
 	Package string
 	// Container is the target for creating a container
 	Container string
-	// Target is the build target for creating the worker image.
+	// DepsOnly is the target for creating a deps-only container (no package built, only runtime deps installed).
+	DepsOnly string
+	// Worker is the target for creating the worker image.
 	Worker string
+	// Sysext is the target for creating a systemd system extension.
+	Sysext string
 
 	// FormatDepEqual, when set, alters the provided dependency version to match
 	// what is necessary for the target distro to set a dependency for an equals
@@ -90,7 +101,7 @@ type testLinuxConfig struct {
 	Worker  workerConfig
 	Release OSRelease
 
-	SkipStripTest bool
+	SupportsGomodVersionUpdate bool
 
 	Platforms         []ocispecs.Platform
 	PackageOutputPath func(spec *dalec.Spec, platform ocispecs.Platform) string
@@ -142,7 +153,7 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing builds commands that fail cause the whole build to fail",
@@ -246,7 +257,7 @@ index 0000000..5260cb1
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing container target",
@@ -666,6 +677,522 @@ echo "$BAR" > bar.txt
 		})
 	})
 
+	t.Run("sysext", func(t *testing.T) {
+		skip.If(t, testConfig.Target.Sysext == "", "skipping test as it is not supported for this config")
+
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		const src2Patch3File = "patch3"
+		src2Patch3Content := []byte(`
+diff --git a/file3 b/file3
+new file mode 100700
+index 0000000..5260cb1
+--- /dev/null
++++ b/file3
+@@ -0,0 +1,3 @@
++#!/usr/bin/env bash
++
++echo "Added another new file"
+`)
+
+		src2Patch4Content := []byte(`
+diff --git a/file4 b/file4
+new file mode 100700
+index 0000000..5260cb1
+--- /dev/null
++++ b/file4
+@@ -0,0 +1,3 @@
++#!/usr/bin/env bash
++
++echo "Added yet another new file"
+`)
+
+		src2Patch5Content := []byte(`
+diff --git a/file5 b/file5
+new file mode 100700
+index 0000000..5260cb1
+--- /dev/null
++++ b/file5
+@@ -0,0 +1,3 @@
++#!/usr/bin/env bash
++
++echo "Added yet again...another new file"
+`)
+
+		const src2Patch4File = "patches/patch4"
+		const src2Patch5File = "patches/patch5"
+		const patchContextName = "patch-context"
+
+		patchContext := llb.Scratch().
+			File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content)).
+			File(llb.Mkdir("patches", 0o755)).
+			File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content)).
+			File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content))
+
+		spec := dalec.Spec{
+			Name:        "test-sysext-build",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing sysext target",
+			Sources: map[string]dalec.Source{
+				"src1": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents:    "#!/usr/bin/env bash\necho hello world",
+							Permissions: 0o700,
+						},
+					},
+				},
+				"src2": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"file1": {Contents: "file1 contents\n"},
+							},
+						},
+					},
+				},
+				"src2-patch1": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents: `
+diff --git a/file1 b/file1
+index 84d55c5..22b9b11 100644
+--- a/file1
++++ b/file1
+@@ -1 +1 @@
+-file1 contents
++file1 contents patched
+`,
+						},
+					},
+				},
+				"src2-patch2": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"the-patch": {
+									Contents: `
+diff --git a/file2 b/file2
+new file mode 100700
+index 0000000..5260cb1
+--- /dev/null
++++ b/file2
+@@ -0,0 +1,3 @@
++#!/usr/bin/env bash
++
++echo "Added a new file"
+`,
+								},
+							},
+						},
+					},
+				},
+				"src2-patch3": {
+					Context: &dalec.SourceContext{
+						Name: patchContextName,
+					},
+				},
+				"src2-patch4": {
+					Context: &dalec.SourceContext{
+						Name: patchContextName,
+					},
+					Includes: []string{src2Patch4File},
+				},
+				"src2-patch5": {
+					Context: &dalec.SourceContext{
+						Name: patchContextName,
+					},
+					Path: src2Patch5File,
+				},
+				"src3": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents:    "#!/usr/bin/env bash\necho goodbye",
+							Permissions: 0o700,
+						},
+					},
+				},
+			},
+			Patches: map[string][]dalec.PatchSpec{
+				"src2": {
+					{Source: "src2-patch1"},
+					{Source: "src2-patch2", Path: "the-patch"},
+					{Source: "src2-patch3", Path: src2Patch3File},
+					{Source: "src2-patch4", Path: src2Patch4File},
+					{Source: "src2-patch5", Path: filepath.Base(src2Patch5File)},
+				},
+			},
+
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: map[string]dalec.PackageConstraints{
+					"bash":      {},
+					"coreutils": {},
+				},
+				Sysext: map[string]dalec.PackageConstraints{
+					"zsh":  {Version: []string{">= 3", "< 99"}},
+					"zstd": {Version: []string{">= 1.5.0"}},
+				},
+			},
+
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// These are "build" steps where we aren't really building things just verifying
+					// that sources are in the right place and have the right permissions and content
+					{
+						// file added by patch
+						Command: "test -f ./src1",
+					},
+					{
+						Command: "test -x ./src1",
+					},
+					{
+						Command: "test ! -d ./src1",
+					},
+					{
+						Command: "./src1 | grep 'hello world'",
+					},
+					{
+						// file added by patch
+						Command: "ls -lh ./src2/file2",
+					},
+					{
+						// file added by patch
+						Command: "test -f ./src2/file2",
+					},
+					{
+						// file added by patch
+						Command: "test -x ./src2/file2",
+					},
+					{
+						Command: "grep 'Added a new file' ./src2/file2",
+					},
+					{
+						// file added by patch
+						Command: "test -f ./src2/file3",
+					},
+					{
+						// file added by patch
+						Command: "test -x ./src2/file3",
+					},
+					{
+						Command: "grep 'Added another new file' ./src2/file3",
+					},
+					{
+						// Test that a multiline command works with env vars
+						Env: map[string]string{
+							"FOO": "foo",
+							"BAR": "bar",
+						},
+						Command: `
+echo "${FOO}_0" > foo0.txt
+echo "${FOO}_1" > foo1.txt
+echo "$BAR" > bar.txt
+`,
+					},
+				},
+			},
+
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"src1":       {},
+					"src2/file2": {},
+					"src3":       {},
+					// These are files we created in the build step
+					// They aren't really binaries but we want to test that they are created and have the right content
+					"foo0.txt": {},
+					"foo1.txt": {},
+					"bar.txt":  {},
+				},
+				Links: []dalec.ArtifactSymlinkConfig{
+					{
+						Source: "/usr/bin/src3",
+						Dest:   "/bin/owned-link",
+						User:   "need",
+						Group:  "coffee",
+					},
+					{
+						Source: "/usr/bin/src2/file2",
+						Dest:   "/bin/owned-link2",
+						User:   "need",
+					},
+					{
+						Source: "/usr/bin/src1",
+						Dest:   "/bin/owned-link3",
+						Group:  "coffee",
+					},
+					{
+						Source: "/usr/bin/src1",
+						Dest:   "/bin/owned-link4",
+						User:   "nobody",
+					},
+				},
+				Users: []dalec.AddUserConfig{
+					{
+						Name: "need",
+					},
+				},
+				Groups: []dalec.AddGroupConfig{
+					{
+						Name: "coffee",
+					},
+				},
+			},
+
+			Tests: []*dalec.TestSpec{
+				{
+					Name: "Verify source mounts work",
+					Mounts: []dalec.SourceMount{
+						{
+							Dest: "/foo",
+							Spec: dalec.Source{
+								Inline: &dalec.SourceInline{
+									File: &dalec.SourceInlineFile{
+										Contents: "hello world",
+									},
+								},
+							},
+						},
+						{
+							Dest: "/nested/foo",
+							Spec: dalec.Source{
+								Inline: &dalec.SourceInline{
+									File: &dalec.SourceInlineFile{
+										Contents: "hello world nested",
+									},
+								},
+							},
+						},
+						{
+							Dest: "/dir",
+							Spec: dalec.Source{
+								Inline: &dalec.SourceInline{
+									Dir: &dalec.SourceInlineDir{
+										Files: map[string]*dalec.SourceInlineFile{
+											"foo": {Contents: "hello from dir"},
+										},
+									},
+								},
+							},
+						},
+						{
+							Dest: "/nested/dir",
+							Spec: dalec.Source{
+								Inline: &dalec.SourceInline{
+									Dir: &dalec.SourceInlineDir{
+										Files: map[string]*dalec.SourceInlineFile{
+											"foo": {Contents: "hello from nested dir"},
+										},
+									},
+								},
+							},
+						},
+					},
+					Steps: []dalec.TestStep{
+						{
+							Command: "/bin/sh -c 'cat /foo'",
+							Stdout:  dalec.CheckOutput{Equals: "hello world"},
+							Stderr:  dalec.CheckOutput{Empty: true},
+						},
+						{
+							Command: "/bin/sh -c 'cat /nested/foo'",
+							Stdout:  dalec.CheckOutput{Equals: "hello world nested"},
+							Stderr:  dalec.CheckOutput{Empty: true},
+						},
+						{
+							Command: "/bin/sh -c 'cat /dir/foo'",
+							Stdout:  dalec.CheckOutput{Equals: "hello from dir"},
+							Stderr:  dalec.CheckOutput{Empty: true},
+						},
+						{
+							Command: "/bin/sh -c 'cat /nested/dir/foo'",
+							Stdout:  dalec.CheckOutput{Equals: "hello from nested dir"},
+							Stderr:  dalec.CheckOutput{Empty: true},
+						},
+					},
+				},
+				{
+					Name: "Check that the binary artifacts execute and provide the expected output",
+					Steps: []dalec.TestStep{
+						{
+							Command: "/usr/bin/src1",
+							Stdout:  dalec.CheckOutput{Equals: "hello world\n"},
+							Stderr:  dalec.CheckOutput{Empty: true},
+						},
+						{
+							Command: "/usr/bin/file2",
+							Stdout:  dalec.CheckOutput{Equals: "Added a new file\n"},
+							Stderr:  dalec.CheckOutput{Empty: true},
+						},
+					},
+				},
+				{
+					Name: "Check that multi-line command (from build step) with env vars propagates env vars to whole command",
+					Files: map[string]dalec.FileCheckOutput{
+						"/usr/bin/foo0.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_0\n"}},
+						"/usr/bin/foo1.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_1\n"}},
+						"/usr/bin/bar.txt":  {CheckOutput: dalec.CheckOutput{StartsWith: "bar\n"}},
+					},
+				},
+				{
+					Name: "Check /etc/os-release",
+					Files: map[string]dalec.FileCheckOutput{
+						"/etc/os-release": {
+							CheckOutput: dalec.CheckOutput{
+								Matches: []string{
+									// Some distros have quotes around the values
+									// Regex is to match the values with or without quotes
+									// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rather than the full document.
+									//
+									// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
+									`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
+									`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
+								},
+							},
+						},
+					},
+				},
+				{
+					Name: "Artifact symlinks should have correct ownership",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/bash -exc 'test -L /bin/owned-link'"},
+						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link)\" = \"/usr/bin/src3\"'"},
+						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/bin/bash -exc 'test -L /bin/owned-link2'"},
+						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link2)\" = \"/usr/bin/src2/file2\"'"},
+						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/bin/bash -exc 'test -L /bin/owned-link3'"},
+						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link3)\" = \"/usr/bin/src1\"'"},
+						{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						{Command: "/bin/bash -exc 'test -L /bin/owned-link4'"},
+						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link4)\" = \"/usr/bin/src1\"'"},
+						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd nobody | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link4); [ \"$LINK_OWNER\" = \"$NEED_UID:0\" ]'"},
+					},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(testConfig.Target.Sysext),
+				withBuildContext(ctx, t, patchContextName, patchContext),
+			)
+			sr.Evaluate = true
+
+			beforeBuild := time.Now()
+			res := solveT(ctx, t, gwc, sr)
+
+			dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+			assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+
+			var cfg dalec.DockerImageSpec
+			assert.Assert(t, json.Unmarshal(dt, &cfg))
+			assert.Check(t, cfg.Created.After(beforeBuild))
+			assert.Check(t, cfg.Created.Before(time.Now()))
+
+			// Make sure the test framework was actually executed by the build target.
+			// This appends a test case so that is expected to fail and as such cause the build to fail.
+			spec.Tests = append(spec.Tests, &dalec.TestSpec{
+				Name: "Test framework should be executed",
+				Steps: []dalec.TestStep{
+					{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+				},
+			})
+
+			// update the spec in the solve request
+			withSpec(ctx, t, &spec)(&newSolveRequestConfig{req: &sr})
+
+			_, solveErr := gwc.Solve(ctx, sr)
+			if solveErr == nil {
+				t.Fatal("expected test spec to run with error but got none")
+			}
+
+			// Map Docker to systemd architecture. Some (e.g. arm64) are the
+			// same and are covered by the default case.
+			var systemdArch string
+			switch cfg.Platform.Architecture {
+			case "amd64":
+				systemdArch = "x86-64"
+			default:
+				systemdArch = cfg.Platform.Architecture
+			}
+
+			ref, refErr := res.SingleRef()
+			if refErr != nil {
+				t.Fatal(refErr)
+			}
+
+			expectedPath := fmt.Sprintf("/test-sysext-build-v0.0.1-1-%s-%s.raw", testConfig.Target.Key, systemdArch)
+			_, statErr := ref.StatFile(ctx, gwclient.StatRequest{Path: expectedPath})
+			if statErr != nil {
+				t.Fatalf("expected sysext image not found: %v", statErr)
+			}
+
+			sr = newSolveRequest(withBuildTarget(testConfig.Target.Worker), withSpec(ctx, t, nil))
+
+			sOpt, err := frontend.SourceOptFromClient(ctx, gwc, &cfg.Platform)
+			assert.NilError(t, err)
+			worker := testConfig.Worker.SysextWorker(sOpt)
+
+			pc := dalec.Platform(&cfg.Platform)
+			var opts []llb.ConstraintsOpt
+			opts = append(opts, pc)
+
+			state, stateErr := ref.ToState()
+			if stateErr != nil {
+				t.Fatal(stateErr)
+			}
+
+			output := worker.Run(
+				llb.Args([]string{"fsck.erofs", "--extract=/output", "/input" + expectedPath}),
+				llb.AddMount("/input", state, llb.Readonly),
+				dalec.WithConstraints(opts...),
+			).AddMount("/output", llb.Scratch())
+
+			def, defErr := output.Marshal(ctx, pc)
+			if defErr != nil {
+				t.Fatalf("error marshalling llb: %v", defErr)
+			}
+
+			res, resErr := gwc.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+			})
+			if resErr != nil {
+				t.Fatal(resErr)
+			}
+
+			ref, refErr = res.SingleRef()
+			if refErr != nil {
+				t.Fatal(refErr)
+			}
+			if evalErr := ref.Evaluate(ctx); evalErr != nil {
+				t.Fatalf("error extracting sysext: %v", evalErr)
+			}
+
+			for _, file := range []string{"/usr/bin/zsh", "/usr/bin/zstd"} {
+				_, statErr = ref.StatFile(ctx, gwclient.StatRequest{Path: file})
+				if statErr != nil {
+					t.Fatalf("expected file in sysext not found: %v", statErr)
+				}
+			}
+
+			// zlib is required by zstd, but it shouldn't be pulled into the
+			// sysext. Its installed location varies by distro.
+			for _, file := range []string{"/usr/bin/bash", "/usr/bin/ls", "/usr/lib/libz.so.1", "/usr/lib/x86_64-linux-gnu/libz.so.1"} {
+				_, statErr = ref.StatFile(ctx, gwclient.StatRequest{Path: file})
+				if statErr == nil {
+					t.Fatalf("unexpected file in sysext found: %s", file)
+				}
+			}
+		})
+	})
+
 	t.Run("signing", linuxSigningTests(ctx, testConfig))
 
 	t.Run("test systemd unit single", func(t *testing.T) {
@@ -675,7 +1202,7 @@ echo "$BAR" > bar.txt
 		spec := &dalec.Spec{
 			Name:        "test-systemd-unit",
 			Description: "Test systemd unit",
-			Website:     "https://www.github.com/Azure/dalec",
+			Website:     "https://www.github.com/project-dalec/dalec",
 			Version:     "0.0.1",
 			Revision:    "1",
 			Vendor:      "Microsoft",
@@ -800,7 +1327,7 @@ WantedBy=multi-user.target
 		spec := &dalec.Spec{
 			Name:        "test-systemd-unit",
 			Description: "Test systemd unit",
-			Website:     "https://www.github.com/Azure/dalec",
+			Website:     "https://www.github.com/project-dalec/dalec",
 			Version:     "0.0.1",
 			Revision:    "1",
 			Vendor:      "Microsoft",
@@ -916,7 +1443,7 @@ Environment="FOO_ARGS=--some-foo-args"
 		spec := &dalec.Spec{
 			Name:        "test-systemd-unit",
 			Description: "Test systemd unit",
-			Website:     "https://www.github.com/Azure/dalec",
+			Website:     "https://www.github.com/project-dalec/dalec",
 			Version:     "0.0.1",
 			Revision:    "1",
 			Vendor:      "Microsoft",
@@ -975,7 +1502,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing container target",
@@ -1020,6 +1547,81 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		})
 	})
 
+	t.Run("go module replace", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		pg := dalec.ProgressGroup("Setup gomod replace context")
+
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0o644, []byte("module example.com/app\n\ngo 1.18\n\nrequire example.com/dep v0.0.0\n")), pg).
+			File(llb.Mkfile("/main.go", 0o644, []byte(`package main
+
+import (
+	"fmt"
+
+	"example.com/dep"
+)
+
+func main() {
+	fmt.Println(dep.Value())
+}
+`)), pg).
+			File(llb.Mkdir("/dep", 0o755), pg).
+			File(llb.Mkfile("/dep/go.mod", 0o644, []byte("module example.com/dep\n\ngo 1.18\n")), pg).
+			File(llb.Mkfile("/dep/dep.go", 0o644, []byte(`package dep
+
+func Value() string {
+	return "local dep"
+}
+`)), pg)
+
+		const contextName = "gomod-replace-package-test"
+
+		spec := &dalec.Spec{
+			Name:        "test-build-with-gomod-replace",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing package target gomod replace preprocessing",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "example.com/dep", Update: "./dep"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace example.com/dep => ./dep' ./src/go.mod"},
+					{Command: "cd ./src && go build"},
+					{Command: "test \"$(cd ./src && go run .)\" = 'local dep'"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("cargo home", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
@@ -1029,7 +1631,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing container target with Cargo",
@@ -1083,7 +1685,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing container target with pip",
@@ -1116,7 +1718,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 					{Command: "[ -f ./src/main.py ]"},
 					{Command: "[ -f ./src/requirements.txt ]"},
 					{Command: "[ -d ./src/site-packages ]"},
-					{Command: "cd ./src && python3 -c \"import sys; sys.path.insert(0, './site-packages'); import certifi; print('certifi imported successfully')\""},
+					{Command: "cd ./src; python3 -c \"import sys; sys.path.insert(0, './site-packages'); import certifi; print('certifi imported successfully')\""},
 				},
 			},
 		}
@@ -1142,7 +1744,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Should Create Specified Directories",
@@ -1195,6 +1797,8 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			if err := validatePathAndPermissions(ctx, ref, "/etc/testWithPerms", 0o700); err != nil {
 				t.Fatal(err)
 			}
+			// validatePathAndPermissions doesn't work for container-only users because it runs on the host
+			// Ownership for /etc/testWithUsers is validated in the PostInstall test above
 			if err := validatePathAndPermissions(ctx, ref, "/var/lib/one/with/slashes", 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -1209,7 +1813,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Should Create Specified Directories",
@@ -1282,7 +1886,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Should install specified data files",
@@ -1319,6 +1923,18 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 						},
 					},
 				},
+				"another_data_dir2": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"another_nested_data_file2": {
+									Contents:    "lorem ipsum dolor sit amet\n",
+									Permissions: 0o644,
+								},
+							},
+						},
+					},
+				},
 				"data_file": {
 					Inline: &dalec.SourceInline{
 						File: &dalec.SourceInlineFile{
@@ -1338,7 +1954,32 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 					"another_data_dir": {
 						SubPath: "subpath",
 					},
+					"another_data_dir2": {
+						User:        "myuser",
+						Group:       "mygroup",
+						Permissions: 0o777,
+					},
 					"data_file": {},
+				},
+				Users: []dalec.AddUserConfig{
+					{Name: "myuser"},
+				},
+				Groups: []dalec.AddGroupConfig{
+					{Name: "mygroup"},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: map[string]dalec.PackageConstraints{
+					"coreutils": {},
+				},
+			},
+			Tests: []*dalec.TestSpec{
+				{
+					Name: "Check data directory ownership in post-install",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/bash -exc 'ls -ld /usr/share/another_data_dir2 | grep -E \" myuser[[:space:]]+mygroup[[:space:]]\"'"},
+						{Command: "/bin/bash -exc 'ls -l /usr/share/another_data_dir2/another_nested_data_file2 | grep -E \" myuser[[:space:]]+mygroup[[:space:]]\"'"},
+					},
 				},
 			},
 		}
@@ -1361,6 +2002,8 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			if err := validatePathAndPermissions(ctx, ref, "/usr/share/subpath/another_data_dir/another_nested_data_file", 0o644); err != nil {
 				t.Fatal(err)
 			}
+			// validatePathAndPermissions doesn't work for container-only users because it runs on the host
+			// Ownership for another_data_dir2 is validated in the PostInstall test above
 			if err := validatePathAndPermissions(ctx, ref, "/usr/share/data_file", 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -1376,7 +2019,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Should install specified data files",
@@ -1482,7 +2125,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Should Create Specified Directories",
@@ -1575,7 +2218,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Docs should be placed",
@@ -1817,6 +2460,12 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		testAutoGobuildCache(ctx, t, testConfig.Target)
 	})
 
+	t.Run("rust cache", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testRustCache(ctx, t, testConfig.Target)
+	})
+
 	t.Run("bazel cache", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
@@ -1828,6 +2477,12 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		ctx := startTestSpan(baseCtx, t)
 		testDisableAutoRequire(ctx, t, testConfig.Target)
 	})
+
+	t.Run("artifact capabilities", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testArtifactCapabilities(ctx, t, testConfig)
+	})
 }
 
 func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetConfig, opts ...srOpt) {
@@ -1836,7 +2491,7 @@ func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetCon
 		Version:     "0.0.1",
 		Revision:    "1",
 		License:     "MIT",
-		Website:     "https://github.com/azure/dalec",
+		Website:     "https://github.com/project-dalec/dalec",
 		Vendor:      "Dalec",
 		Packager:    "Dalec",
 		Description: "Testing container target with node npm generator",
@@ -1962,7 +2617,8 @@ func testCustomLinuxWorker(ctx context.Context, t *testing.T, targetCfg targetCo
 		// Add the base package + repo to the worker
 		// This should make it so when dalec installs build deps it can use the package
 		// we built above.
-		worker = worker.With(workerCfg.CreateRepo(pkg))
+		repoPath := filepath.Join("/opt/repo", createRepoSuffix())
+		worker = worker.With(workerCfg.CreateRepo(pkg, repoPath))
 
 		// Now build again with our custom worker
 		// Note, we are solving the main spec, not depSpec here.
@@ -2083,7 +2739,8 @@ func testPinnedBuildDeps(ctx context.Context, t *testing.T, cfg testLinuxConfig)
 			pkg := reqToState(ctx, client, sr, t)
 			pkgs = append(pkgs, pkg)
 		}
-		return w.With(cfg.Worker.CreateRepo(llb.Merge(pkgs)))
+		repoPath := filepath.Join("/opt/repo", createRepoSuffix())
+		return w.With(cfg.Worker.CreateRepo(llb.Merge(pkgs), repoPath))
 	}
 
 	for _, tt := range tests {
@@ -2416,52 +3073,258 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
 
-		spec := &dalec.Spec{
-			Name:        "test-package-tests",
-			Version:     "0.0.1",
-			Revision:    "42",
-			Description: "Testing package tests",
-			License:     "MIT",
-			Tests: []*dalec.TestSpec{
-				{
-					Name: "Test that tests fail the build",
+		newSpec := func() *dalec.Spec {
+			return &dalec.Spec{
+				Name:        "test-package-tests",
+				Version:     "0.0.1",
+				Revision:    "42",
+				Description: "Testing package tests",
+				License:     "MIT",
+				Dependencies: &dalec.PackageDependencies{
+					Test: map[string]dalec.PackageConstraints{"bash": {}},
+				},
+				Image: &dalec.ImageConfig{
+					Post: &dalec.PostInstall{
+						Symlinks: map[string]dalec.SymlinkTarget{
+							"/usr/bin/a-thing-for-symlinking": {Paths: []string{"/some_symlink1"}},
+						},
+					},
+				},
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							Command: "touch a-thing-for-symlinking",
+						},
+					},
+				},
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"a-thing-for-symlinking": {},
+					},
+					Links: []dalec.ArtifactSymlinkConfig{
+						{
+							Source: "/usr/bin/a-thing-for-symlinking",
+							Dest:   "/some_symlink2",
+						},
+						{
+							Source: "/not-a-real-path3",
+							Dest:   "/some_symlink3",
+						},
+						{
+							Source: "/not-a-real-path4",
+							Dest:   "/some_symlink4",
+						},
+					},
+				},
+			}
+		}
+
+		type testCase struct {
+			err          error
+			test         *dalec.TestSpec
+			isBuildError bool
+		}
+
+		// Because buildkit solves are fail-fast (the build is cancelled on the first failure), the only way to deterministically test
+		// multiple failure cases is to have separate builds for each expected failure.
+		expectedErrs := []testCase{
+			{
+				err: (&dalec.CheckOutputError{Path: "/non-existing-file", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}),
+				test: &dalec.TestSpec{
+					Name: "Test that non-existing file with no options fails the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/non-existing-file": {},
 					},
 				},
-				{
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFilePermissionsKind, Expected: "-rw-r--r--", Actual: "-rwxr-xr-x"}),
+				test: &dalec.TestSpec{
 					Name: "Test that permissions check fails the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/": {Permissions: 0o644, IsDir: true},
 					},
 				},
-				{
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/", Kind: dalec.CheckFileIsDirKind, Expected: "is_dir=false", Actual: "is_dir=true"}),
+				test: &dalec.TestSpec{
 					Name: "Test that dir check fails the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/": {IsDir: false},
 					},
 				},
 			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink1", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path1", Actual: "/usr/bin/a-thing-for-symlinking"}),
+				test: &dalec.TestSpec{
+					Name: "Test that image post symlink target check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink1": {
+							LinkTarget: "/not-a-real-path1",
+						},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink2", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/not-a-real-path2", Actual: "/usr/bin/a-thing-for-symlinking"}),
+				test: &dalec.TestSpec{
+					Name: "Test that artifact symlink target check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink2": {
+							LinkTarget: "/not-a-real-path2",
+						},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink3", Kind: dalec.CheckFileNotExistsKind, Expected: "exists=true", Actual: "exists=false"}),
+				test: &dalec.TestSpec{
+					Name: "Test that artifact symlink to non-existing file check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink3": {},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "/some_symlink4", Kind: dalec.CheckFileLinkTargetPathKind, Expected: "/incorrect-target", Actual: "/not-a-real-path4"}),
+				test: &dalec.TestSpec{
+					Name: "Test that artifact symlink nofollow link target check fails the build",
+					Files: map[string]dalec.FileCheckOutput{
+						"/some_symlink4": {
+							NoFollow:   true,
+							LinkTarget: "/incorrect-target",
+						},
+					},
+				},
+			},
+			{
+				err:          &moby_buildkit_v1_frontend.ExitError{ExitCode: 42, Err: fmt.Errorf("step did not complete successfully")},
+				isBuildError: true,
+				test: &dalec.TestSpec{
+					Name: "Test that command exit code check fails the build",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'exit 42'"},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "stdout", Kind: dalec.CheckOutputEqualsKind, Expected: "stdout not hello", Actual: "hello\n"}),
+				test: &dalec.TestSpec{
+					Name: "Test that stdout check fails the build",
+					Steps: []dalec.TestStep{
+						{
+							Command: "/bin/sh -ec 'echo hello'",
+							Stdout: dalec.CheckOutput{
+								Equals: "stdout not hello",
+							},
+						},
+					},
+				},
+			},
+			{
+				err: (&dalec.CheckOutputError{Path: "stderr", Kind: dalec.CheckOutputEqualsKind, Expected: "stderr not hello", Actual: "hello\n"}),
+				test: &dalec.TestSpec{
+					Name: "Test that stderr check fails the build",
+					Steps: []dalec.TestStep{
+						{
+							Command: "/bin/sh -ec 'echo hello >&2'",
+							Stderr: dalec.CheckOutput{
+								Equals: "stderr not hello",
+							},
+						},
+					},
+				},
+			},
 		}
 
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
-			_, err := client.Solve(ctx, sr)
-			assert.ErrorContains(t, err, "lstat /non-existing-file: no such file or directory")
-			assert.ErrorContains(t, err, "expected \"/\" permissions \"-rw-r--r--\", got \"-rwxr-xr-x\"")
-			assert.ErrorContains(t, err, "expected \"/\" mode \"ModeFile\", got \"ModeDir\"")
+		newLogFile := func(t *testing.T) *os.File {
+			t.Helper()
+			dir := t.TempDir()
+			f, err := os.OpenFile(filepath.Join(dir, "solve-status-log.txt"), os.O_CREATE|os.O_RDWR, 0o644)
+			assert.NilError(t, err)
+			t.Cleanup(func() { f.Close() })
 
-			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
-			_, err = client.Solve(ctx, sr)
-			assert.ErrorContains(t, err, "lstat /non-existing-file: no such file or directory")
-			assert.ErrorContains(t, err, "expected \"/\" permissions \"-rw-r--r--\", got \"-rwxr-xr-x\"")
-			assert.ErrorContains(t, err, "expected \"/\" mode \"ModeFile\", got \"ModeDir\"")
-		})
+			return f
+		}
+
+		runTest := func(target string) func(t *testing.T) {
+			return func(t *testing.T) {
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				for _, tc := range expectedErrs {
+					t.Run(tc.test.Name, func(t *testing.T) {
+						t.Parallel()
+						ctx := startTestSpan(ctx, t)
+
+						f := newLogFile(t)
+
+						var size int
+						solveStatusFn := testenv.WithSolveStatusFn(func(status *client.SolveStatus) {
+							if status == nil {
+								return
+							}
+
+							for _, v := range status.Logs {
+								if _, err := f.Write(v.Data); err != nil {
+									t.Error(err)
+								}
+								size += len(v.Data)
+							}
+						})
+
+						spec := newSpec()
+						spec.Tests = []*dalec.TestSpec{tc.test}
+
+						testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+							sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+							_, err := client.Solve(ctx, sr)
+							assert.Assert(t, err != nil)
+
+							t.Logf("Build Error: %v", err)
+
+							var exErr *moby_buildkit_v1_frontend.ExitError
+							assert.Assert(t, errors.As(err, &exErr), "expected exit error, got: %v", err)
+
+							if !tc.isBuildError {
+								// the error we are looking for is in the build logs, not the exit error
+								return
+							}
+
+							assert.Equal(t, exErr.ExitCode, tc.err.(*moby_buildkit_v1_frontend.ExitError).ExitCode)
+						}, solveStatusFn)
+
+						if tc.isBuildError {
+							return
+						}
+
+						_, err := f.Seek(0, io.SeekStart)
+						assert.NilError(t, err)
+
+						dt, err := io.ReadAll(f)
+						assert.NilError(t, err)
+
+						if !bytes.Contains(dt, []byte(tc.err.Error())) {
+							t.Errorf("expected error not found in logs")
+							t.Logf("Expected error:\n\t%v", tc.err)
+						}
+					})
+				}
+			}
+		}
+
+		t.Run(path.Base(cfg.Target.Package), runTest(cfg.Target.Package))
+		t.Run(path.Base(cfg.Target.Container), runTest(cfg.Target.Container))
 	})
 
 	t.Run("positive test", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
+
+		equalCheck := func(v string) dalec.CheckOutput {
+			return dalec.CheckOutput{Equals: v}
+		}
 
 		spec := &dalec.Spec{
 			Name:        "test-package-tests",
@@ -2479,14 +3342,28 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 				},
 			},
 			Dependencies: &dalec.PackageDependencies{
-				Test: []string{
-					"bash",
-					"grep",
+				Test: map[string]dalec.PackageConstraints{"bash": {}, "grep": {}},
+			},
+			Image: &dalec.ImageConfig{
+				Post: &dalec.PostInstall{
+					Symlinks: map[string]dalec.SymlinkTarget{
+						"/usr/share/test-file": {Paths: []string{"/some_symlink1"}},
+					},
 				},
 			},
 			Artifacts: dalec.Artifacts{
 				DataDirs: map[string]dalec.ArtifactConfig{
 					"test-file": {},
+				},
+				Links: []dalec.ArtifactSymlinkConfig{
+					{
+						Source: "/usr/share/test-file",
+						Dest:   "/some_symlink2",
+					},
+					{
+						Source: "/not-a-real-file",
+						Dest:   "/some_symlink3",
+					},
 				},
 			},
 			Tests: []*dalec.TestSpec{
@@ -2494,8 +3371,29 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 					Name: "Test that tests fail the build",
 					Files: map[string]dalec.FileCheckOutput{
 						"/usr/share/test-file": {},
-						// Make sure dir permissions are chcked correctly.
-						"/usr/share": {IsDir: true, Permissions: 0o755},
+						// Make sure dir permissions are checked correctly.
+						"/usr/share":     {IsDir: true, Permissions: 0o755},
+						"/some_symlink1": {LinkTarget: "/usr/share/test-file"},
+						"/some_symlink2": {LinkTarget: "/usr/share/test-file"},
+						"/some_symlink3": {LinkTarget: "/not-a-real-file", NoFollow: true},
+					},
+				},
+				{
+					Name: "Test multiple commands with no fs changes",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'echo command one'"},
+						{Command: "/bin/sh -ec 'echo command two'"},
+						{Command: "/bin/sh -ec 'echo command three'"},
+						{Command: "/bin/sh -ec 'echo command four'"},
+					},
+				},
+				{
+					Name: "Test multiple commands with stdio checks",
+					Steps: []dalec.TestStep{
+						{Command: "/bin/sh -ec 'echo command one'", Stdout: equalCheck("command one\n")},
+						{Command: "/bin/sh -ec 'echo command two'"},
+						{Command: "/bin/sh -ec 'echo command three'", Stdout: equalCheck("command three\n")},
+						{Command: "/bin/sh -ec 'echo command four'"},
 					},
 				},
 				{
@@ -2569,16 +3467,26 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			},
 		}
 
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
-			res := solveT(ctx, t, client, sr)
-			_, err := res.SingleRef()
-			assert.NilError(t, err)
+		t.Run(path.Base(cfg.Target.Package), func(t *testing.T) {
+			t.Parallel()
+			ctx = startTestSpan(baseCtx, t)
+			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+				res := solveT(ctx, t, client, sr)
+				_, err := res.SingleRef()
+				assert.NilError(t, err)
+			})
+		})
 
-			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
-			res = solveT(ctx, t, client, sr)
-			_, err = res.SingleRef()
-			assert.NilError(t, err)
+		t.Run(path.Base(cfg.Target.Container), func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(baseCtx, t)
+			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+				res := solveT(ctx, t, client, sr)
+				_, err := res.SingleRef()
+				assert.NilError(t, err)
+			})
 		})
 	})
 }
@@ -2685,13 +3593,8 @@ func testMixGlobalTargetDependencies(ctx context.Context, t *testing.T, cfg test
 }
 
 func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
-	skip.If(t, cfg.SkipStripTest, "skipping test as it is not supported for this target: "+cfg.Target.Container)
-
 	newSpec := func() *dalec.Spec {
 		spec := newSimpleSpec()
-		spec.Args = map[string]string{
-			"TARGETARCH": "",
-		}
 
 		spec.Sources = map[string]dalec.Source{
 			"src": {
@@ -2716,31 +3619,24 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 			Build: map[string]dalec.PackageConstraints{
 				cfg.GetPackage("golang"): {},
 			},
+			Test: map[string]dalec.PackageConstraints{
+				"bash":      {},
+				"coreutils": {},
+				"binutils":  {},
+			},
 		}
 		spec.Artifacts = dalec.Artifacts{
 			Binaries: map[string]dalec.ArtifactConfig{
-				"bad-executable": {},
+				"the-executable": {},
 			},
-			Libs: map[string]dalec.ArtifactConfig{
-				"bad-executable": {},
-			},
-		}
-
-		spec.Build.Env = map[string]string{
-			"TARGETARCH": "$TARGETARCH",
 		}
 
 		spec.Build.Steps = []dalec.BuildStep{
-			// Build a binary for a different architecture
-			// This should make `strip` fail.
-			//
-			// Note: The test is specifically using ppc64le as GOARCH
-			// because it seems alma/rockylinux do not error ons trip except for ppc64le.
-			// Even this is a stretch as that does not even work as expected at version < v9.
 			{
-				Command: `cd src; if [ "${TARGETARCH}" = "ppc64le" ]; then export GOARCH=amd64; else export GOARCH=ppc64le; fi; go build -o ../bad-executable main.go`,
+				Command: "cd src; go build -o ../the-executable main.go",
 			},
 		}
+
 		return spec
 	}
 
@@ -2750,10 +3646,21 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 		ctx := startTestSpan(ctx, t)
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
 			spec := newSpec()
-			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 
-			_, err := client.Solve(ctx, req)
-			assert.ErrorType(t, pkgerrors.Cause(err), &moby_buildkit_v1_frontend.ExitError{})
+			spec.Tests = append(spec.Tests, &dalec.TestSpec{
+				Name: "Check that binary IS stripped",
+				Steps: []dalec.TestStep{
+					{
+						// dalec test assertions can't handle negative checks directly,
+						// so we use exit code 42 to indicate presence of debug info and fail the test
+						Command: `/bin/bash -eo pipefail -c "grep -q '\.debug_info' < <(readelf -S /usr/bin/the-executable) && exit 42 || exit 0"`,
+					},
+				},
+			})
+
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			solveT(ctx, t, client, req)
+
 		})
 	})
 
@@ -2762,7 +3669,17 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 		ctx := startTestSpan(ctx, t)
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
 			spec := newSpec()
+
 			spec.Artifacts.DisableStrip = true
+
+			spec.Tests = append(spec.Tests, &dalec.TestSpec{
+				Name: "Check that binary is NOT stripped",
+				Steps: []dalec.TestStep{
+					{
+						Command: `/bin/bash -eo pipefail -c "grep -q '\.debug_info' < <(readelf -S /usr/bin/the-executable)"`,
+					},
+				},
+			})
 
 			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			solveT(ctx, t, client, req)
@@ -3032,7 +3949,9 @@ func testDisableAutoRequire(ctx context.Context, t *testing.T, cfg targetConfig)
 		spec := newSimpleSpec()
 		spec.Artifacts = dalec.Artifacts{
 			Binaries: map[string]dalec.ArtifactConfig{
-				"test": {},
+				"test": {
+					SubPath: "dalec",
+				},
 			},
 		}
 
@@ -3233,7 +4152,7 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Test using pre-built packages",
@@ -3303,5 +4222,205 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			assert.Assert(t, contents == nil, "marker file should not be present in the container")
 			assert.ErrorContains(t, err, "open /etc/marker.txt: no such file or directory")
 		})
+	})
+}
+
+func testArtifactCapabilities(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	rpmTarget := dalec.Target{
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+				"libcap":    {},
+			},
+			Build: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+				"libcap":    {},
+			},
+			Test: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+				"libcap":    {},
+			},
+		},
+	}
+
+	debTarget := dalec.Target{
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"libcap2-bin": {},
+			},
+			Build: map[string]dalec.PackageConstraints{
+				"libcap2-bin": {},
+			},
+		},
+	}
+
+	spec := &dalec.Spec{
+		Name:        "test-capabilities",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Description: "Testing file capabilities on artifacts",
+		Sources: map[string]dalec.Source{
+			"ping": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is a test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+			"ping2": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is another test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+			"ping3": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: `#!/bin/bash
+echo "This is a third test binary"
+`,
+						Permissions: 0o755,
+					},
+				},
+			},
+		},
+		Build: dalec.ArtifactBuild{
+			Steps: []dalec.BuildStep{
+				{
+					Command: "cp ping /tmp/ping && cp ping2 /tmp/ping2 && cp ping3 /tmp/ping3",
+				},
+			},
+		},
+		Artifacts: dalec.Artifacts{
+			Binaries: map[string]dalec.ArtifactConfig{
+				"/tmp/ping": {
+					Name: "ping",
+					LinuxCapabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_raw",
+							Effective: true,
+							Permitted: true,
+						},
+						{
+							Name:        "cap_net_admin",
+							Effective:   true,
+							Permitted:   true,
+							Inheritable: true,
+						},
+					},
+				},
+				"/tmp/ping2": {
+					Name: "ping2",
+					User: "testuser",
+					LinuxCapabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_raw",
+							Effective: true,
+							Permitted: true,
+						},
+					},
+				},
+				"/tmp/ping3": {
+					Name:  "ping3",
+					Group: "testgroup",
+					LinuxCapabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_bind_service",
+							Effective: true,
+							Permitted: true,
+						},
+					},
+				},
+			},
+			Users: []dalec.AddUserConfig{
+				{
+					Name: "testuser",
+				},
+			},
+			Groups: []dalec.AddGroupConfig{
+				{
+					Name: "testgroup",
+				},
+			},
+		},
+		Targets: map[string]dalec.Target{
+			"azlinux3":    rpmTarget,
+			"mariner2":    rpmTarget,
+			"almalinux8":  rpmTarget,
+			"almalinux9":  rpmTarget,
+			"rockylinux8": rpmTarget,
+			"rockylinux9": rpmTarget,
+			"bookworm":    debTarget,
+			"bullseye":    debTarget,
+			"bionic":      debTarget,
+			"focal":       debTarget,
+			"jammy":       debTarget,
+			"noble":       debTarget,
+			"trixie":      debTarget,
+		},
+		Tests: []*dalec.TestSpec{
+			{
+				Name: "Check binary capabilities",
+				Steps: []dalec.TestStep{
+					{
+						Command: "getcap /usr/bin/ping",
+						Stdout: dalec.CheckOutput{
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping", "cap_net_admin", "eip", "cap_net_raw", "ep",
+							},
+						},
+					},
+					{
+						Command: "getcap /usr/bin/ping2",
+						Stdout: dalec.CheckOutput{
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping2", "cap_net_raw", "ep",
+							},
+						},
+					},
+					{
+						Command: "stat -c '%U' /usr/bin/ping2",
+						Stdout: dalec.CheckOutput{
+							Equals: "testuser\n",
+						},
+					},
+					{
+						Command: "getcap /usr/bin/ping3",
+						Stdout: dalec.CheckOutput{
+							// Different distros list capabilities different ways
+							Contains: []string{
+								"/usr/bin/ping3", "cap_net_bind_service", "ep",
+							},
+						},
+					},
+					{
+						Command: "stat -c '%G' /usr/bin/ping3",
+						Stdout: dalec.CheckOutput{
+							Contains: []string{"testgroup\n"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+		res := solveT(ctx, t, client, req)
+
+		_, err := res.SingleRef()
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 }

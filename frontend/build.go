@@ -8,13 +8,13 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/Azure/dalec"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 type LoadConfig struct {
@@ -54,14 +54,15 @@ func LoadSpec(ctx context.Context, client *dockerui.Client, platform *ocispecs.P
 		o(&cfg)
 	}
 
-	src, err := client.ReadEntrypoint(ctx, "Dockerfile")
+	src, err := client.ReadEntrypoint(ctx, "dalec")
 	if err != nil {
 		return nil, fmt.Errorf("could not read spec file: %w", err)
 	}
 
-	spec, err := dalec.LoadSpec(bytes.TrimSpace(src.Data))
+	data := bytes.TrimSpace(src.Data)
+	spec, err := dalec.LoadSpecWithSourceMap(src.Filename, data)
 	if err != nil {
-		return nil, fmt.Errorf("error loading spec: %w", err)
+		return nil, errors.Wrap(err, "error loading spec")
 	}
 
 	args := dalec.DuplicateMap(client.BuildArgs)
@@ -152,6 +153,7 @@ func BuildWithPlatformFromUIClient(ctx context.Context, client gwclient.Client, 
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
 		targetKey := GetTargetKey(dc)
 
 		ref, cfg, err := f(ctx, client, platform, spec, targetKey)
@@ -216,26 +218,26 @@ func (c *clientWithPlatform) BuildOpts() gwclient.BuildOpts {
 	return opts
 }
 
-func GetCurrentFrontend(client gwclient.Client) (llb.State, error) {
+func GetCurrentFrontend(client gwclient.Client) llb.State {
+	return *getCurrentFrontend(client)
+}
+
+func getCurrentFrontend(client gwclient.Client) *llb.State {
 	f, err := client.(frontendClient).CurrentFrontend()
 	if err != nil {
-		return llb.Scratch(), err
+		panic(err)
 	}
 
 	if f == nil {
-		return llb.Scratch(), fmt.Errorf("nil frontend state returned")
+		panic("nil frontend state returned -- this should never happen")
 	}
 
-	return *f, nil
+	return f
 }
 
 func withCredHelper(c gwclient.Client) func() (llb.RunOption, error) {
 	return func() (llb.RunOption, error) {
-		f, err := GetCurrentFrontend(c)
-		if err != nil {
-			return nil, err
-		}
-
+		f := GetCurrentFrontend(c)
 		return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 			llb.AddMount("/usr/local/bin/frontend", f, llb.SourcePath("/frontend")).SetRunOption(ei)
 		}), nil

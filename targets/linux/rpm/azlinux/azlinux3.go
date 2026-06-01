@@ -1,7 +1,7 @@
 package azlinux
 
 import (
-	"github.com/Azure/dalec/targets/linux/rpm/distro"
+	"github.com/project-dalec/dalec/targets/linux/rpm/distro"
 )
 
 const (
@@ -19,12 +19,16 @@ var Azlinux3Config = &distro.Config{
 	ImageRef:   Azlinux3Ref,
 	ContextRef: Azlinux3WorkerContextName,
 
-	CacheName: tdnfCacheNameAzlinux3,
-	CacheDir:  "/var/cache/tdnf",
+	CacheName:        tdnfCacheNameAzlinux3,
+	CacheDir:         []string{"/var/cache/tdnf", "/var/cache/dnf"},
+	CacheAddPlatform: true,
 
 	ReleaseVer:         "3.0",
-	BuilderPackages:    builderPackages,
+	BuilderPackages:    append(builderPackages, "dnf"),
 	BasePackages:       basePackages(AzLinux3TargetKey),
 	RepoPlatformConfig: &defaultAzlinuxRepoPlatform,
 	InstallFunc:        distro.TdnfInstall,
+
+	SysextSupported: true,
+	FullName:        AzLinux3FullName,
 }

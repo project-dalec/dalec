@@ -2,11 +2,15 @@ package dalec
 
 import (
 	"bytes"
+	"context"
+	goerrors "errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
+	"github.com/goccy/go-yaml/ast"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	"github.com/pkg/errors"
 )
 
@@ -16,6 +20,29 @@ const (
 	// It is exported only for testing purposes.
 	GomodCacheKey = "dalec-gomod-proxy-cache"
 )
+
+func (g *GeneratorGomod) processBuildArgs(args map[string]string, allowArg func(key string) bool) error {
+	var errs []error
+	lex := shell.NewLex('\\')
+	// force the shell lexer to skip unresolved env vars so they aren't
+	// replaced with ""
+	lex.SkipUnsetEnv = true
+
+	for host, auth := range g.Auth {
+		subbed, err := expandArgs(lex, host, args, allowArg)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+
+		g.Auth[subbed] = auth
+		if subbed != host {
+			delete(g.Auth, host)
+		}
+	}
+
+	return goerrors.Join(errs...)
+}
 
 func (s *Source) isGomod() bool {
 	for _, gen := range s.Generate {
@@ -36,7 +63,7 @@ func (s *Spec) HasGomods() bool {
 	return false
 }
 
-func withGomod(g *SourceGenerator, srcSt, worker llb.State, credHelper llb.RunOption, opts ...llb.ConstraintsOpt) func(llb.State) llb.State {
+func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, credHelper llb.RunOption, opts ...llb.ConstraintsOpt) func(llb.State) llb.State {
 	return func(in llb.State) llb.State {
 		const (
 			workDir                      = "/work/src"
@@ -44,7 +71,7 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, credHelper llb.RunOp
 			gomodDownloadWrapperBasename = "go_mod_download.sh"
 		)
 
-		joinedWorkDir := filepath.Join(workDir, g.Subpath)
+		joinedWorkDir := filepath.Join(workDir, subPath, g.Subpath)
 		srcMount := llb.AddMount(workDir, srcSt)
 
 		paths := g.Gomod.Paths
@@ -55,7 +82,7 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, credHelper llb.RunOp
 		const proxyPath = "/tmp/dalec/gomod-proxy-cache"
 
 		// Pass in git auth if necessary
-		script := g.gitconfigGeneratorScript(gomodDownloadWrapperBasename)
+		script := g.gitconfigGeneratorScript(gomodDownloadWrapperBasename, opts...)
 		scriptPath := filepath.Join(scriptMountpoint, gomodDownloadWrapperBasename)
 
 		for _, path := range paths {
@@ -75,6 +102,7 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, credHelper llb.RunOp
 				srcMount,
 				llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
 				WithConstraints(opts...),
+				g.Gomod._sourceMap.GetLocation(in),
 			).AddMount(gomodCacheDir, in)
 		}
 
@@ -82,7 +110,7 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, credHelper llb.RunOp
 	}
 }
 
-func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State {
+func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string, opts ...llb.ConstraintsOpt) llb.State {
 	var script bytes.Buffer
 
 	sortedHosts := SortMapKeys(g.Gomod.Auth)
@@ -130,8 +158,8 @@ func (g *SourceGenerator) gitconfigGeneratorScript(scriptPath string) llb.State 
 
 	fmt.Fprintf(&script, "go env -w GOPRIVATE=%s", strings.Join(goPrivate, ","))
 	script.WriteRune('\n')
-	fmt.Fprintln(&script, "cat go.mod && go mod download")
-	return llb.Scratch().File(llb.Mkfile(scriptPath, 0o755, script.Bytes()))
+	fmt.Fprintln(&script, "[ -f go.mod ]; go mod download")
+	return llb.Scratch().File(llb.Mkfile(scriptPath, 0o755, script.Bytes()), opts...)
 }
 
 func (g *SourceGenerator) withGomodSecretsAndSockets() llb.RunOption {
@@ -155,7 +183,7 @@ func (g *SourceGenerator) withGomodSecretsAndSockets() llb.RunOption {
 				continue
 			}
 
-			if auth.SSH != nil && auth.SSH.ID != "" {
+			if auth.SSH != nil {
 				llb.AddSSHSocket(llb.SSHID(auth.SSH.ID)).SetRunOption(ei)
 
 				llb.AddEnv(
@@ -180,29 +208,27 @@ func (s *Spec) gomodSources() map[string]Source {
 // GomodDeps returns an [llb.State] containing all the go module dependencies for the spec
 // for any sources that have a gomod generator specified.
 // If there are no sources with a gomod generator, this will return a nil state.
-func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) (*llb.State, error) {
+func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) *llb.State {
 	sources := s.gomodSources()
 	if len(sources) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	deps := llb.Scratch()
 
 	// Get the patched sources for the go modules
 	// This is needed in case a patch includes changes to go.mod or go.sum
-	patched, err := s.getPatchedSources(sOpt, worker, func(name string) bool {
+	patched := s.getPatchedSources(sOpt, worker, func(name string) bool {
 		_, ok := sources[name]
 		return ok
 	}, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get patched sources")
-	}
 
 	sorted := SortMapKeys(patched)
 
 	credHelperRunOpt, err := sOpt.GitCredHelperOpt()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get git credential helper")
+		st := ErrorState(llb.Scratch(), errors.Wrap(err, "failed to get git credential helper"))
+		return &st
 	}
 
 	for _, key := range sorted {
@@ -211,11 +237,28 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 		opts := append(opts, ProgressGroup("Fetch go module dependencies for source: "+key))
 		deps = deps.With(func(in llb.State) llb.State {
 			for _, gen := range src.Generate {
-				in = in.With(withGomod(gen, patched[key], worker, credHelperRunOpt, opts...))
+				if gen.Gomod != nil {
+					in = in.With(withGomod(gen, patched[key], worker, key, credHelperRunOpt, opts...))
+				}
 			}
 			return in
 		})
 	}
 
-	return &deps, nil
+	deps = deps.With(sourceFilter(sOpt, opts...))
+	return &deps
+}
+
+func (gen *GeneratorGomod) UnmarshalYAML(ctx context.Context, node ast.Node) error {
+	type internal GeneratorGomod
+	var i internal
+
+	dec := getDecoder(ctx)
+	if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
+		return errors.Wrap(err, "failed to decode gomod generator")
+	}
+
+	*gen = GeneratorGomod(i)
+	gen._sourceMap = newSourceMap(ctx, node)
+	return nil
 }

@@ -57,6 +57,10 @@ func MergeSpecImage(spec *Spec, targetKey string) *ImageConfig {
 		if i.Base != "" {
 			cfg.Base = i.Base
 		}
+
+		if i.User != "" {
+			cfg.User = i.User
+		}
 	}
 
 	return &cfg

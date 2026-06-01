@@ -2,32 +2,34 @@
 package dalec
 
 import (
+	"context"
 	"encoding/json"
-	"io/fs"
 	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
 	"github.com/goccy/go-yaml/parser"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 // Spec is the specification for a package build.
 type Spec struct {
 	// Name is the name of the package.
-	Name string `yaml:"name" json:"name" jsonschema:"required"`
+	Name string `yaml:"name" json:"name,omitempty" jsonschema:"required"`
 	// Description is a short description of the package.
-	Description string `yaml:"description" json:"description" jsonschema:"required"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"required"`
 	// Website is the URL to store in the metadata of the package.
-	Website string `yaml:"website" json:"website"`
+	Website string `yaml:"website" json:"website,omitempty" jsonschema:"required"`
 
 	// Version sets the version of the package.
-	Version string `yaml:"version" json:"version" jsonschema:"required"`
+	Version string `yaml:"version" json:"version,omitempty" jsonschema:"required"`
 	// Revision sets the package revision.
 	// This will generally get merged into the package version when generating the package.
-	Revision string `yaml:"revision" json:"revision" jsonschema:"required,oneof_type=string;integer"`
+	Revision string `yaml:"revision" json:"revision,omitempty" jsonschema:"required,oneof_type=string;integer"`
 
 	// Marks the package as architecture independent.
 	// It is up to the package author to ensure that the package is actually architecture independent.
@@ -36,14 +38,14 @@ type Spec struct {
 
 	// Conflicts is the list of packages that conflict with the generated package.
 	// This will prevent the package from being installed if any of these packages are already installed or vice versa.
-	Conflicts map[string]PackageConstraints `yaml:"conflicts,omitempty" json:"conflicts,omitempty"`
+	Conflicts PackageDependencyList `yaml:"conflicts,omitempty" json:"conflicts,omitempty"`
 	// Replaces is the list of packages that are replaced by the generated package.
-	Replaces map[string]PackageConstraints `yaml:"replaces,omitempty" json:"replaces,omitempty"`
+	Replaces PackageDependencyList `yaml:"replaces,omitempty" json:"replaces,omitempty"`
 	// Provides is the list of things that the generated package provides.
 	// This can be used to satisfy dependencies of other packages.
 	// As an example, the moby-runc package provides "runc", other packages could depend on "runc" and be satisfied by moby-runc.
 	// This is an advanced use case and consideration should be taken to ensure that the package actually provides the thing it claims to provide.
-	Provides map[string]PackageConstraints `yaml:"provides,omitempty" json:"provides,omitempty"`
+	Provides PackageDependencyList `yaml:"provides,omitempty" json:"provides,omitempty"`
 
 	// Sources is the list of sources to use to build the artifact(s).
 	// The map key is the name of the source and the value is the source configuration.
@@ -70,7 +72,7 @@ type Spec struct {
 	Args map[string]string `yaml:"args,omitempty" json:"args,omitempty"`
 
 	// License is the license of the package.
-	License string `yaml:"license" json:"license"`
+	License string `yaml:"license" json:"license,omitempty" jsonschema:"required"`
 	// Vendor is the vendor of the package.
 	Vendor string `yaml:"vendor,omitempty" json:"vendor,omitempty"`
 	// Packager is the name of the person,team,company that packaged the package.
@@ -103,9 +105,12 @@ type Spec struct {
 	extensions extensionFields `yaml:"-" json:"-"`
 
 	decodeOpts []yaml.DecodeOption `yaml:"-" json:"-"`
+
+	// (previously used for side-table source maps) removed - per-object constraints stored on objects
 }
 
-type extensionFields map[string]rawYAML
+// extensionFields is a map for storing extension fields in the spec.
+type extensionFields map[string]ast.Node
 
 // PatchSpec is used to apply a patch to a source with a given set of options.
 // This is used in [Spec.Patches]
@@ -118,6 +123,8 @@ type PatchSpec struct {
 	// Optional subpath to the patch file inside the source
 	// This is only useful for directory-backed sources.
 	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+
+	_sourceMap *sourceMap `json:"-" yaml:"-"`
 }
 
 // ChangelogEntry is an entry in the changelog.
@@ -141,7 +148,7 @@ func (d Date) Compare(other Date) int {
 }
 
 func (d Date) MarshalYAML() ([]byte, error) {
-	return yaml.Marshal(d.String())
+	return yaml.Marshal(d.Format(time.DateOnly))
 }
 
 func (d *Date) UnmarshalYAML(dt []byte) error {
@@ -158,7 +165,7 @@ func (d *Date) UnmarshalYAML(dt []byte) error {
 }
 
 func (d Date) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.String())
+	return json.Marshal(d.Format(time.DateOnly))
 }
 
 func (d *Date) UnmarshalJSON(dt []byte) error {
@@ -199,203 +206,144 @@ type SymlinkTarget struct {
 	Group string `yaml:"group,omitempty" json:"group,omitempty"`
 }
 
-type SourceDockerImage struct {
-	Ref string   `yaml:"ref" json:"ref"`
-	Cmd *Command `yaml:"cmd,omitempty" json:"cmd,omitempty"`
+// GomodEdits groups the go.mod manipulation directives that can be applied
+// before downloading module dependencies.
+type GomodEdits struct {
+	// Replace applies go.mod replace directives before downloading module dependencies.
+	// Each entry can be either a string "old => new" or a struct with Old and New fields.
+	Replace []GomodReplace `yaml:"replace,omitempty" json:"replace,omitempty"`
 }
 
-type SourceGit struct {
-	URL        string  `yaml:"url" json:"url"`
-	Commit     string  `yaml:"commit" json:"commit"`
-	KeepGitDir bool    `yaml:"keepGitDir,omitempty" json:"keepGitDir,omitempty"`
-	Auth       GitAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+// GomodReplace represents a go.mod replace directive.
+// It can be specified as a string "old => new" or as a struct with Original and Update fields.
+// The string format matches Go's native go.mod syntax.
+// This allows users to substitute module dependencies before go mod download runs,
+// useful for pointing to local forks or alternate versions.
+type GomodReplace struct {
+	// Original is the module path to replace (can include @version)
+	Original string `yaml:"old" json:"old"`
+	// Update is the replacement module path or local directory
+	Update string `yaml:"new" json:"new"`
+
+	_sourceMap *sourceMap `json:"-" yaml:"-"`
 }
 
-type GitAuth struct {
-	// Header is the name of the secret that contains the git auth header.
-	// when using git auth header based authentication.
-	// Note: This should not have the *actual* secret value, just the name of
-	// the secret which was specified as a build secret.
-	Header string `yaml:"header,omitempty" json:"header,omitempty"`
-	// Token is the name of the secret which contains a git auth token when using
-	// token based authentication.
-	// Note: This should not have the *actual* secret value, just the name of
-	// the secret which was specified as a build secret.
-	Token string `yaml:"token,omitempty" json:"token,omitempty"`
-	// SSH is the name of the secret which contains the ssh auth info when using
-	// ssh based auth.
-	// Note: This should not have the *actual* secret value, just the name of
-	// the secret which was specified as a build secret.
-	SSH string `yaml:"ssh,omitempty" json:"ssh,omitempty"`
+func (r GomodReplace) String() string {
+	return r.Original + " => " + r.Update
 }
 
-type GomodGitAuth struct {
-	// Header is the name of the secret that contains the git auth header.
-	// when using git auth header based authentication.
-	// Note: This should not have the *actual* secret value, just the name of
-	// the secret which was specified as a build secret.
-	Header string `yaml:"header,omitempty" json:"header,omitempty"`
-	// Token is the name of the secret which contains a git auth token when using
-	// token based authentication.
-	// Note: This should not have the *actual* secret value, just the name of
-	// the secret which was specified as a build secret.
-	Token string `yaml:"token,omitempty" json:"token,omitempty"`
-	// SSH is a struct container the name of the ssh ID which contains the
-	// address of the ssh auth socket, plus the username to use for the git
-	// remote.
-	// Note: This should not have the *actual* socket address, just the name of
-	// the ssh ID which was specified as a build secret.
-	SSH *GomodGitAuthSSH `yaml:"ssh,omitempty" json:"ssh,omitempty"`
+func normalizeGomodReplaceTarget(target string) string {
+	at := strings.LastIndex(target, "@")
+	if at <= 0 || at == len(target)-1 {
+		return target
+	}
+
+	path := target[:at]
+	version := target[at+1:]
+
+	if !semver.IsValid(version) {
+		return target
+	}
+
+	if strings.HasSuffix(version, "+incompatible") {
+		return target
+	}
+
+	if strings.Contains(version, "+") {
+		return target
+	}
+
+	_, pathMajor, ok := module.SplitPathVersion(path)
+	if !ok || pathMajor != "" {
+		return target
+	}
+
+	switch semver.Major(version) {
+	case "v0", "v1":
+		return target
+	default:
+		return path + "@" + version + "+incompatible"
+	}
 }
 
-type GomodGitAuthSSH struct {
-	// ID is the name of the ssh socket to mount, as provided via the `--ssh`
-	// flag to `docker build`.
-	ID string `yaml:"id,omitempty" json:"id,omitempty"`
-	// Username is the username to use with this particular git remote. If none
-	// is provided, `git` will be inserted.
-	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+func (r GomodReplace) goModEditArg() (string, error) {
+	if r.Original == "" || r.Update == "" {
+		return "", errors.Errorf("invalid gomod replace, old and new must be non-empty")
+	}
+	return r.Original + "=" + normalizeGomodReplaceTarget(r.Update), nil
 }
 
-// LLBOpt returns an [llb.GitOption] which sets the auth header and token secret
-// values in LLB if they are set.
-func (a *GitAuth) LLBOpt() llb.GitOption {
-	return gitOptionFunc(func(gi *llb.GitInfo) {
-		if a == nil {
-			return
+func (r *GomodReplace) UnmarshalYAML(ctx context.Context, node ast.Node) error {
+	// Try to unmarshal as a string first (shorthand format)
+	if node.Type() == ast.StringType {
+		var raw string
+		if err := yaml.NodeToValue(node, &raw, decodeOpts(ctx)...); err != nil {
+			return err
 		}
-
-		if a.Header != "" {
-			gi.AuthHeaderSecret = a.Header
+		parts := strings.SplitN(raw, " => ", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod replace %q, expected format 'old => new'", raw)
 		}
-
-		if a.Token != "" {
-			gi.AuthTokenSecret = a.Token
+		r.Original = strings.TrimSpace(parts[0])
+		r.Update = strings.TrimSpace(parts[1])
+		if r.Original == "" || r.Update == "" {
+			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
 		}
+		r._sourceMap = newSourceMap(ctx, node)
+		return nil
+	}
 
-		if a.SSH != "" {
-			gi.MountSSHSock = a.SSH
+	// Otherwise, try to unmarshal as a struct
+	type internal GomodReplace
+	var i internal
+
+	dec := getDecoder(ctx)
+	if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
+		return err
+	}
+	*r = GomodReplace(i)
+	if r.Original == "" || r.Update == "" {
+		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
+	}
+	r._sourceMap = newSourceMap(ctx, node)
+	return nil
+}
+
+func (r *GomodReplace) MarshalYAML() ([]byte, error) {
+	return yaml.Marshal(r.String())
+}
+
+func (r *GomodReplace) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.String())
+}
+
+func (r *GomodReplace) UnmarshalJSON(b []byte) error {
+	// Try to unmarshal as a string first (shorthand format)
+	var raw string
+	if err := json.Unmarshal(b, &raw); err == nil {
+		parts := strings.SplitN(raw, " => ", 2)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid gomod replace %q, expected format 'old => new'", raw)
 		}
-	})
-}
+		r.Original = strings.TrimSpace(parts[0])
+		r.Update = strings.TrimSpace(parts[1])
+		if r.Original == "" || r.Update == "" {
+			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
+		}
+		return nil
+	}
 
-// SourceHTTP is used to download a file from an HTTP(s) URL.
-type SourceHTTP struct {
-	// URL is the URL to download the file from.
-	URL string `yaml:"url" json:"url"`
-	// Digest is the digest of the file to download.
-	// This is used to verify the integrity of the file.
-	// Form: <algorithm>:<digest>
-	Digest digest.Digest `yaml:"digest,omitempty" json:"digest,omitempty"`
-	// Permissions is the octal file permissions to set on the file.
-	Permissions fs.FileMode `yaml:"permissions,omitempty" json:"permissions,omitempty"`
-}
-
-// SourceContext is used to generate a source from a build context. The path to
-// the build context is provided to the `Path` field of the owning `Source`.
-type SourceContext struct {
-	// Name is the name of the build context. By default, it is the magic name
-	// `context`, recognized by Docker as the default context.
-	Name string `yaml:"name,omitempty" json:"name,omitempty"`
-}
-
-// SourceInlineFile is used to specify the content of an inline source.
-type SourceInlineFile struct {
-	// Contents is the content.
-	Contents string `yaml:"contents,omitempty" json:"contents,omitempty"`
-	// Permissions is the octal file permissions to set on the file.
-	Permissions fs.FileMode `yaml:"permissions,omitempty" json:"permissions,omitempty"`
-	// UID is the user ID to set on the directory and all files and directories within it.
-	// UID must be greater than or equal to 0
-	UID int `yaml:"uid,omitempty" json:"uid,omitempty"`
-	// GID is the group ID to set on the directory and all files and directories within it.
-	// UID must be greater than or equal to 0
-	GID int `yaml:"gid,omitempty" json:"gid,omitempty"`
-}
-
-// SourceInlineDir is used by by [SourceInline] to represent a filesystem directory.
-type SourceInlineDir struct {
-	// Files is the list of files to include in the directory.
-	// The map key is the name of the file.
-	//
-	// Files with path separators in the key will be rejected.
-	Files map[string]*SourceInlineFile `yaml:"files,omitempty" json:"files,omitempty"`
-	// Permissions is the octal permissions to set on the directory.
-	Permissions fs.FileMode `yaml:"permissions,omitempty" json:"permissions,omitempty"`
-
-	// UID is the user ID to set on the directory and all files and directories within it.
-	// UID must be greater than or equal to 0
-	UID int `yaml:"uid,omitempty" json:"uid,omitempty"`
-	// GID is the group ID to set on the directory and all files and directories within it.
-	// UID must be greater than or equal to 0
-	GID int `yaml:"gid,omitempty" json:"gid,omitempty"`
-}
-
-// SourceInline is used to generate a source from inline content.
-type SourceInline struct {
-	// File is the inline file to generate.
-	// File is treated as a literal single file.
-	// [SourceIsDir] will return false when this is set.
-	// This is mutually exclusive with [Dir]
-	File *SourceInlineFile `yaml:"file,omitempty" json:"file,omitempty"`
-	// Dir creates a directory with the given files and directories.
-	// [SourceIsDir] will return true when this is set.
-	// This is mutually exclusive with [File]
-	Dir *SourceInlineDir `yaml:"dir,omitempty" json:"dir,omitempty"`
-}
-
-// Command is used to execute a command to generate a source from a docker image.
-type Command struct {
-	// Dir is the working directory to run the command in.
-	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
-
-	// Mounts is the list of sources to mount into the build steps.
-	Mounts []SourceMount `yaml:"mounts,omitempty" json:"mounts,omitempty"`
-
-	// Env is the list of environment variables to set for all commands in this step group.
-	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-
-	// Steps is the list of commands to run to generate the source.
-	// Steps are run sequentially and results of each step should be cached.
-	Steps []*BuildStep `yaml:"steps" json:"steps" jsonschema:"required"`
-}
-
-// Source defines a source to be used in the build.
-// A source can be a local directory, a git repositoryt, http(s) URL, etc.
-type Source struct {
-	// This is an embedded union representing all of the possible source types.
-	// Exactly one must be non-nil, with all other cases being errors.
-	//
-	// === Begin Source Variants ===
-	DockerImage *SourceDockerImage `yaml:"image,omitempty" json:"image,omitempty"`
-	Git         *SourceGit         `yaml:"git,omitempty" json:"git,omitempty"`
-	HTTP        *SourceHTTP        `yaml:"http,omitempty" json:"http,omitempty"`
-	Context     *SourceContext     `yaml:"context,omitempty" json:"context,omitempty"`
-	Build       *SourceBuild       `yaml:"build,omitempty" json:"build,omitempty"`
-	Inline      *SourceInline      `yaml:"inline,omitempty" json:"inline,omitempty"`
-	// === End Source Variants ===
-
-	// Path is the path to the source after fetching it based on the identifier.
-	Path string `yaml:"path,omitempty" json:"path,omitempty"`
-
-	// Includes is a list of paths underneath `Path` to include, everything else is execluded
-	// If empty, everything is included (minus the excludes)
-	Includes []string `yaml:"includes,omitempty" json:"includes,omitempty"`
-	// Excludes is a list of paths underneath `Path` to exclude, everything else is included
-	Excludes []string `yaml:"excludes,omitempty" json:"excludes,omitempty"`
-
-	// Generate specifies a list of dependency generators to apply to a given source.
-	//
-	// Generators are used to generate additional sources from this source.
-	// As an example the `gomod` generator can be used to generate a go module cache from a go source.
-	// How a generator operates is dependent on the actual generator.
-	// Generators may also cause modifications to the build environment.
-	//
-	// Currently supported generators are: "gomod", "cargohome", and "pip".
-	// The "gomod" generator will generate a go module cache from the source.
-	// The "cargohome" generator will generate a cargo home from the source.
-	// The "pip" generator will generate a pip cache from the source.
-	Generate []*SourceGenerator `yaml:"generate,omitempty" json:"generate,omitempty"`
+	// Otherwise, try to unmarshal as a struct
+	type gomodReplaceAlias GomodReplace
+	var alias gomodReplaceAlias
+	if err := json.Unmarshal(b, &alias); err != nil {
+		return err
+	}
+	*r = GomodReplace(alias)
+	if r.Original == "" || r.Update == "" {
+		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
+	}
+	return nil
 }
 
 // GeneratorGomod is used to generate a go module cache from go module sources
@@ -404,12 +352,27 @@ type GeneratorGomod struct {
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	// Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host.
 	Auth map[string]GomodGitAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
+	// Edits contains go.mod manipulation directives (replace) that are applied
+	// before downloading module dependencies.
+	Edits *GomodEdits `yaml:"edits,omitempty" json:"edits,omitempty"`
+
+	_sourceMap *sourceMap `yaml:"-" json:"-"`
+}
+
+// GetReplace returns the replace directives, handling nil Edits.
+func (g *GeneratorGomod) GetReplace() []GomodReplace {
+	if g == nil || g.Edits == nil {
+		return nil
+	}
+	return g.Edits.Replace
 }
 
 // GeneratorCargohome is used to generate a cargo home from cargo sources
 type GeneratorCargohome struct {
 	// Paths is the list of paths to run the generator on. Used to generate multi-module in a single source.
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
+
+	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
 type GeneratorPip struct {
@@ -424,12 +387,16 @@ type GeneratorPip struct {
 
 	// ExtraIndexUrls specifies additional PyPI index URLs
 	ExtraIndexUrls []string `yaml:"extra_index_urls,omitempty" json:"extra_index_urls,omitempty"`
+
+	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
 // GeneratorNodeMod is used to generate a node module cache for Yarn or npm.
 type GeneratorNodeMod struct {
 	// Paths is the list of paths to run the generator on. Used to generate multi-module in a single source.
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
+
+	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
 // SourceGenerator holds the configuration for a source generator.
@@ -455,7 +422,7 @@ type SourceGenerator struct {
 type ArtifactBuild struct {
 	// Steps is the list of commands to run to build the artifact(s).
 	// Each step is run sequentially and will be cached accordingly depending on the frontend implementation.
-	Steps []BuildStep `yaml:"steps" json:"steps" jsonschema:"required"`
+	Steps BuildStepList `yaml:"steps" json:"steps" jsonschema:"required"`
 	// Env is the list of environment variables to set for all commands in this step group.
 	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 
@@ -469,24 +436,41 @@ type ArtifactBuild struct {
 	Caches []CacheConfig `yaml:"caches,omitempty" json:"caches,omitempty"`
 }
 
-// BuildStep is used to execute a command to build the artifact(s).
-type BuildStep struct {
-	// Command is the command to run to build the artifact(s).
-	// This will always be wrapped as /bin/sh -c "<command>", or whatever the equivalent is for the target distro.
-	Command string `yaml:"command" json:"command" jsonschema:"required"`
-	// Env is the list of environment variables to set for the command.
-	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+type BuildStepList []BuildStep
 
-	// Mounts is the list of sources to mount into the build step.
-	Mounts []SourceMount `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+func (ls *BuildStepList) UnmarshalYAML(ctx context.Context, node ast.Node) error {
+	seq, ok := node.(*ast.SequenceNode)
+	if !ok {
+		return errors.New("expected sequence node for build steps")
+	}
+
+	result := make([]BuildStep, 0, len(seq.Values))
+	for _, n := range seq.Values {
+		var step BuildStep
+
+		if err := yaml.NodeToValue(n, &step, decodeOpts(ctx)...); err != nil {
+			return err
+		}
+		step._sourceMap = newSourceMap(ctx, n)
+		result = append(result, step)
+	}
+
+	*ls = result
+	return nil
 }
 
-// SourceMount wraps a [Source] with a target mount point.
-type SourceMount struct {
-	// Dest is the destination directory to mount to
-	Dest string `yaml:"dest" json:"dest" jsonschema:"required"`
-	// Spec specifies the source to mount
-	Spec Source `yaml:"spec" json:"spec" jsonschema:"required"`
+func (ls BuildStepList) GetSourceLocation(st llb.State) llb.ConstraintsOpt {
+	if len(ls) == 0 {
+		return ConstraintsOptFunc(func(c *llb.Constraints) {})
+	}
+
+	locs := make([]llb.ConstraintsOpt, 0, len(ls))
+	for _, step := range ls {
+		if c := step.GetSourceLocation(st); c != nil {
+			locs = append(locs, c)
+		}
+	}
+	return MergeSourceLocations(locs...)
 }
 
 // Frontend encapsulates the configuration for a frontend to forward a build target to.
@@ -571,7 +555,7 @@ func (s *Spec) Ext(key string, target interface{}, opts ...func(*ExtDecodeConfig
 		}
 	}
 
-	return yaml.UnmarshalWithOptions(v, target, yamlOpts...)
+	return yaml.NodeToValue(v, target, yamlOpts...)
 }
 
 // WithExtension adds an extension field to the spec.
@@ -588,18 +572,18 @@ func (s *Spec) WithExtension(key string, value interface{}) error {
 
 	dt, ok := value.([]byte)
 	if ok {
-		_, err := parser.ParseBytes(dt, parseModeIgnoreComments)
+		parsed, err := parser.ParseBytes(dt, parseModeIgnoreComments)
 		if err != nil {
 			return errors.Wrap(err, "extension value provided is a []byte but is not valid YAML")
 		}
-		s.extensions[key] = dt
+		s.extensions[key] = parsed.Docs[0].Body
 		return nil
 	}
 
-	dt, err := yaml.Marshal(value)
+	node, err := yaml.ValueToNode(value)
 	if err != nil {
-		return errors.Wrapf(err, "failed to marshal extension field %q", key)
+		return errors.Wrapf(err, "failed to convert extension field %q to AST node", key)
 	}
-	s.extensions[key] = dt
+	s.extensions[key] = node
 	return nil
 }

@@ -1,10 +1,14 @@
 package dalec
 
 import (
+	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"iter"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -16,19 +20,6 @@ import (
 	"github.com/moby/buildkit/identity"
 	"github.com/moby/buildkit/util/system"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
-)
-
-const (
-	// This is used as the source name for sources in specified in `SourceMount`
-	// For any sources we need to mount we need to give the source a name.
-	// We don't actually care about the name here *except* the way file-backed
-	// sources work the name of the file becomes the source name.
-	// So we at least need to track it.
-	// Source names must also not contain path separators or it can screw up the logic.
-	//
-	// To note, the name of the source affects how the source is cached, so this
-	// should just be a single specific name so we can get maximal cache re-use.
-	internalMountSourceName = "src"
 )
 
 var disableDiffMerge atomic.Bool
@@ -78,16 +69,14 @@ func (f runOptionFunc) SetRunOption(i *llb.ExecInfo) {
 // WithMountedAptCache gives an [llb.RunOption] that mounts the apt cache directories.
 // It uses the given namePrefix as the prefix for the cache keys.
 // namePrefix should be distinct per distro version.
-func WithMountedAptCache(namePrefix string) llb.RunOption {
+func WithMountedAptCache(namePrefix string, opts ...llb.ConstraintsOpt) llb.RunOption {
 	return runOptionFunc(func(ei *llb.ExecInfo) {
 		// This is in the "official" docker image for ubuntu/debian.
 		// This file prevents us from actually caching anything.
 		// To resolve that we delete the file.
 		ei.State = ei.State.File(
 			llb.Rm("/etc/apt/apt.conf.d/docker-clean", llb.WithAllowNotFound(true)),
-			ConstraintsOptFunc(func(c *llb.Constraints) {
-				*c = ei.Constraints
-			}),
+			opts...,
 		)
 
 		llb.AddMount(
@@ -142,6 +131,10 @@ func (f ConstraintsOptFunc) SetGitOption(gi *llb.GitInfo) {
 	f(&gi.Constraints)
 }
 
+func (f ConstraintsOptFunc) SetImageBlobOption(ibi *llb.ImageBlobInfo) {
+	f(&ibi.Constraints)
+}
+
 func WithConstraints(ls ...llb.ConstraintsOpt) llb.ConstraintsOpt {
 	return ConstraintsOptFunc(func(c *llb.Constraints) {
 		for _, opt := range ls {
@@ -164,12 +157,12 @@ func withConstraints(opts []llb.ConstraintsOpt) llb.ConstraintsOpt {
 }
 
 // SortMapKeys is a convenience generic function to sort the keys of a map[string]T
-func SortMapKeys[T any](m map[string]T) []string {
-	keys := make([]string, 0, len(m))
+func SortMapKeys[K cmp.Ordered, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -183,12 +176,12 @@ func DuplicateMap[K comparable, V any](m map[K]V) map[K]V {
 }
 
 // MergeAtPath merges the given states into the given destination path in the given input state.
-func MergeAtPath(input llb.State, states []llb.State, dest string) llb.State {
+func MergeAtPath(input llb.State, states []llb.State, dest string, opts ...llb.ConstraintsOpt) llb.State {
 	if disableDiffMerge.Load() {
 		output := input
 		for _, st := range states {
 			output = output.
-				File(llb.Copy(st, "/", dest, WithCreateDestPath()))
+				File(llb.Copy(st, "/", dest, WithCreateDestPath()), opts...)
 		}
 		return output
 	}
@@ -200,11 +193,11 @@ func MergeAtPath(input llb.State, states []llb.State, dest string) llb.State {
 		st := src
 		if dest != "" && dest != "/" {
 			st = llb.Scratch().
-				File(llb.Copy(src, "/", dest, WithCreateDestPath()))
+				File(llb.Copy(src, "/", dest, WithCreateDestPath()), opts...)
 		}
-		diffs = append(diffs, llb.Diff(input, st))
+		diffs = append(diffs, llb.Diff(input, st, opts...))
 	}
-	return llb.Merge(diffs)
+	return llb.Merge(diffs, opts...)
 }
 
 type localOptionFunc func(*llb.LocalInfo)
@@ -260,35 +253,6 @@ func ProgressGroup(name string) llb.ConstraintsOpt {
 	})
 }
 
-func (s *Spec) GetRuntimeDeps(targetKey string) []string {
-	deps := s.GetPackageDeps(targetKey)
-	if deps == nil {
-		return nil
-	}
-
-	return SortMapKeys(deps.Runtime)
-}
-
-func (s *Spec) GetBuildDeps(targetKey string) map[string]PackageConstraints {
-	deps := s.GetPackageDeps(targetKey)
-	if deps == nil {
-		return nil
-	}
-
-	return deps.Build
-}
-
-func (s *Spec) GetTestDeps(targetKey string) []string {
-	deps := s.GetPackageDeps(targetKey)
-	if deps == nil {
-		return nil
-	}
-
-	out := slices.Clone(deps.Test)
-	slices.Sort(out)
-	return out
-}
-
 func (s *Spec) GetImagePost(target string) *PostInstall {
 	img := s.Targets[target].Image
 	if img != nil {
@@ -341,6 +305,7 @@ func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.Constr
 		buf.WriteString("set -ex\n")
 
 		sortedKeys := SortMapKeys(post.Symlinks)
+		var needsMount bool
 		for _, oldpath := range sortedKeys {
 			cfg := post.Symlinks[oldpath]
 			newpaths := cfg.Paths
@@ -350,22 +315,28 @@ func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.Constr
 				fmt.Fprintf(buf, "mkdir -p %q\n", filepath.Join(rootfsPath, filepath.Dir(newpath)))
 				fmt.Fprintf(buf, "ln -s %q %q\n", oldpath, filepath.Join(rootfsPath, newpath))
 				if cfg.User != "" {
+					needsMount = true
 					fmt.Fprintf(buf, "chown -h %s %q\n", cfg.User, filepath.Join(rootfsPath, newpath))
 				}
 				if cfg.Group != "" {
+					needsMount = true
 					fmt.Fprintf(buf, "chgrp -h %s %q\n", cfg.Group, filepath.Join(rootfsPath, newpath))
 				}
 			}
 		}
 
 		const name = "tmp.dalec.symlink.sh"
-		script := llb.Scratch().File(llb.Mkfile(name, 0o700, buf.Bytes()))
+		script := llb.Scratch().File(llb.Mkfile(name, 0o700, buf.Bytes()), opts...)
 
 		return worker.Run(
 			ShArgs("/tmp/add_symlink.sh"),
 			llb.AddMount("/tmp/add_symlink.sh", script, llb.SourcePath(name)),
-			llb.AddMount("/etc/group", in, llb.SourcePath("/etc/group")),
-			llb.AddMount("/etc/passwd", in, llb.SourcePath("/etc/passwd")),
+			RunOptFunc(func(ei *llb.ExecInfo) {
+				if needsMount {
+					llb.AddMount("/etc/group", in, llb.SourcePath("/etc/group")).SetRunOption(ei)
+					llb.AddMount("/etc/passwd", in, llb.SourcePath("/etc/passwd")).SetRunOption(ei)
+				}
+			}),
 			withConstraints(opts),
 			ProgressGroup("Add post-install symlinks"),
 		).AddMount(rootfsPath, in)
@@ -409,10 +380,10 @@ func SortedMapValues[T any](m map[string]T) []T {
 // MergeDependencies(nil, child) = child, MergeDependencies(parent, nil) = parent
 func MergeDependencies(base, target *PackageDependencies) *PackageDependencies {
 	var (
-		build      map[string]PackageConstraints
-		runtime    map[string]PackageConstraints
-		recommends map[string]PackageConstraints
-		test       []string
+		build      PackageDependencyList
+		runtime    PackageDependencyList
+		recommends PackageDependencyList
+		test       PackageDependencyList
 		extraRepos []PackageRepositoryConfig
 	)
 
@@ -467,16 +438,12 @@ func MergeDependencies(base, target *PackageDependencies) *PackageDependencies {
 // If the target does not have dependencies, the global dependencies are returned.
 func (s *Spec) GetPackageDeps(target string) *PackageDependencies {
 	if _, ok := s.Targets[target]; !ok {
+		if s.Dependencies == nil {
+			return &PackageDependencies{}
+		}
 		return s.Dependencies
 	}
-
 	return MergeDependencies(s.Dependencies, s.Targets[target].Dependencies)
-}
-
-type gitOptionFunc func(*llb.GitInfo)
-
-func (f gitOptionFunc) SetGitOption(gi *llb.GitInfo) {
-	f(gi)
 }
 
 type RepoPlatformConfig struct {
@@ -486,93 +453,98 @@ type RepoPlatformConfig struct {
 }
 
 // Returns a run option which mounts the data dirs for all specified repos
-func WithRepoData(repos []PackageRepositoryConfig, sOpts SourceOpts, opts ...llb.ConstraintsOpt) (llb.RunOption, error) {
-	var repoMountsOpts []llb.RunOption
+func WithRepoData(repos []PackageRepositoryConfig, sOpts SourceOpts, opts ...llb.ConstraintsOpt) llb.RunOption {
+	if len(repos) == 0 {
+		return RunOptFunc(func(ei *llb.ExecInfo) {})
+	}
+	mounts := make([]llb.RunOption, 0, len(repos))
 	for _, repo := range repos {
-		rs, err := repoDataAsMount(repo, sOpts, opts...)
-		if err != nil {
-			return nil, err
-		}
-		repoMountsOpts = append(repoMountsOpts, rs)
+		mount := repoDataAsMount(repo, sOpts, opts...)
+		mounts = append(mounts, mount)
 	}
 
-	return WithRunOptions(repoMountsOpts...), nil
+	return WithRunOptions(mounts...)
 }
 
 // Returns a run option for mounting the state (i.e., packages/metadata) for a single repo
-func repoDataAsMount(config PackageRepositoryConfig, sOpts SourceOpts, opts ...llb.ConstraintsOpt) (llb.RunOption, error) {
-	var mounts []llb.RunOption
-
-	for _, data := range config.Data {
-		repoState, err := data.Spec.AsMount(internalMountSourceName, sOpts, opts...)
-		if err != nil {
-			return nil, err
-		}
-		if SourceIsDir(data.Spec) {
-			mounts = append(mounts, llb.AddMount(data.Dest, repoState))
-		} else {
-			mounts = append(mounts, llb.AddMount(data.Dest, repoState, llb.SourcePath(internalMountSourceName)))
-		}
+func repoDataAsMount(config PackageRepositoryConfig, sOpts SourceOpts, opts ...llb.ConstraintsOpt) llb.RunOption {
+	if len(config.Data) == 0 {
+		return RunOptFunc(func(ei *llb.ExecInfo) {})
 	}
 
-	return WithRunOptions(mounts...), nil
+	mounts := make([]llb.RunOption, 0, len(config.Data))
+	for _, data := range config.Data {
+		mounts = append(mounts, data.ToRunOption(sOpts, WithConstraints(opts...)))
+	}
+
+	return WithRunOptions(mounts...)
 }
 
-func repoConfigAsMount(config PackageRepositoryConfig, platformCfg *RepoPlatformConfig, sOpt SourceOpts, opts ...llb.ConstraintsOpt) ([]llb.RunOption, error) {
-	repoConfigs := []llb.RunOption{}
-
-	for name, repoConfig := range config.Config {
-		// each of these sources represent a repo config file
-		repoConfigSt, err := repoConfig.AsMount(name, sOpt, append(opts, ProgressGroup("Importing repo config: "+name))...)
-		if err != nil {
-			return nil, err
+// SortedMap returns an iter that yields the keys and values of the map in sorted order based on the keys.
+func SortedMapIter[K cmp.Ordered, V any](m map[K]V) iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
+		keys := SortMapKeys(m)
+		for _, k := range keys {
+			if !yield(k, m[k]) {
+				return
+			}
 		}
+	}
+}
 
+func repoConfigAsMount(config PackageRepositoryConfig, platformCfg *RepoPlatformConfig, sOpt SourceOpts, opts ...llb.ConstraintsOpt) llb.RunOption {
+	if len(config.Config) == 0 {
+		return RunOptFunc(func(ei *llb.ExecInfo) {})
+	}
+
+	mounts := make([]llb.RunOption, 0, len(config.Config))
+	for name, repoConfig := range SortedMapIter(config.Config) {
 		normalized := name
 		if filepath.Ext(normalized) != platformCfg.ConfigExt {
 			normalized += platformCfg.ConfigExt
 		}
 
-		repoConfigs = append(repoConfigs,
-			llb.AddMount(filepath.Join(platformCfg.ConfigRoot, normalized), repoConfigSt, llb.SourcePath(name)))
+		// each of these sources represent a repo config file
+		to := filepath.Join(platformCfg.ConfigRoot, normalized)
+		mnt, mountOpts := repoConfig.ToMount(sOpt, append(opts, ProgressGroup("Importing repo config: "+name))...)
+		mounts = append(mounts, llb.AddMount(to, mnt, mountOpts...))
 	}
 
-	return repoConfigs, nil
+	return WithRunOptions(mounts...)
 }
 
 // Returns a run option for importing the config files for all repos
-func WithRepoConfigs(repos []PackageRepositoryConfig, cfg *RepoPlatformConfig, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.RunOption, error) {
-	configStates := []llb.RunOption{}
-	for _, repo := range repos {
-		mnts, err := repoConfigAsMount(repo, cfg, sOpt, opts...)
-		if err != nil {
-			return nil, err
-		}
-
-		configStates = append(configStates, mnts...)
+func WithRepoConfigs(repos []PackageRepositoryConfig, cfg *RepoPlatformConfig, sOpt SourceOpts, opts ...llb.ConstraintsOpt) llb.RunOption {
+	if len(repos) == 0 {
+		return RunOptFunc(func(ei *llb.ExecInfo) {})
 	}
 
-	return WithRunOptions(configStates...), nil
+	mounts := make([]llb.RunOption, 0, len(repos))
+	for _, repo := range repos {
+		mnt := repoConfigAsMount(repo, cfg, sOpt, opts...)
+		mounts = append(mounts, mnt)
+	}
+
+	return WithRunOptions(mounts...)
 }
 
-func GetRepoKeys(configs []PackageRepositoryConfig, cfg *RepoPlatformConfig, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.RunOption, []string, error) {
-	keys := []llb.RunOption{}
-	names := []string{}
+func GetRepoKeys(configs []PackageRepositoryConfig, cfg *RepoPlatformConfig, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.RunOption, []string) {
+	if len(configs) == 0 {
+		return RunOptFunc(func(ei *llb.ExecInfo) {}), nil
+	}
+
+	mounts := make([]llb.RunOption, 0, len(configs))
+	names := make([]string, 0, len(configs))
 	for _, config := range configs {
 		for name, repoKey := range config.Keys {
-			gpgKey, err := repoKey.AsMount(name, sOpt, append(opts, ProgressGroup("Fetching repo key: "+name))...)
-			if err != nil {
-				return nil, nil, err
-			}
-
 			mountPath := filepath.Join(cfg.GPGKeyRoot, name)
-
-			keys = append(keys, llb.AddMount(mountPath, gpgKey, llb.SourcePath(name)))
+			st, mountOpts := repoKey.ToMount(sOpt, append(opts, ProgressGroup("Fetching repo key: "+name))...)
+			mounts = append(mounts, llb.AddMount(mountPath, st, mountOpts...))
 			names = append(names, name)
 		}
 	}
 
-	return WithRunOptions(keys...), names, nil
+	return WithRunOptions(mounts...), names
 }
 
 const (
@@ -632,7 +604,7 @@ func Platform(platform *ocispecs.Platform) llb.ConstraintsOpt {
 }
 
 func HasGolang(spec *Spec, targetKey string) bool {
-	for dep := range spec.GetBuildDeps(targetKey) {
+	for dep := range spec.GetPackageDeps(targetKey).GetBuild() {
 		switch dep {
 		case "golang", "msft-golang":
 			return true
@@ -644,21 +616,21 @@ func HasGolang(spec *Spec, targetKey string) bool {
 	return false
 }
 
-func (s *Spec) GetProvides(targetKey string) map[string]PackageConstraints {
+func (s *Spec) GetProvides(targetKey string) PackageDependencyList {
 	if p := s.Targets[targetKey].Provides; p != nil {
 		return p
 	}
 	return s.Provides
 }
 
-func (s *Spec) GetReplaces(targetKey string) map[string]PackageConstraints {
+func (s *Spec) GetReplaces(targetKey string) PackageDependencyList {
 	if r := s.Targets[targetKey].Replaces; r != nil {
 		return r
 	}
 	return s.Replaces
 }
 
-func (s *Spec) GetConflicts(targetKey string) map[string]PackageConstraints {
+func (s *Spec) GetConflicts(targetKey string) PackageDependencyList {
 	if c := s.Targets[targetKey].Conflicts; c != nil {
 		return c
 	}
@@ -666,11 +638,68 @@ func (s *Spec) GetConflicts(targetKey string) map[string]PackageConstraints {
 }
 
 func HasNpm(spec *Spec, targetKey string) bool {
-	for dep := range spec.GetBuildDeps(targetKey) {
+	for dep := range spec.GetPackageDeps(targetKey).GetBuild() {
 		switch dep {
 		case "npm":
 			return true
 		}
 	}
 	return false
+}
+
+// asyncState is a helper is useful when returning an error that can just be encapsulated in an async state.
+// The error itself will propagate when the state once the state is marshalled (e.g. st.Marshal(ctx))
+func asyncState(in llb.State, err error) llb.State {
+	return in.Async(func(_ context.Context, in llb.State, _ *llb.Constraints) (llb.State, error) {
+		return in, err
+	})
+}
+
+type indentWriter struct {
+	w io.Writer
+}
+
+func (w *indentWriter) Write(p []byte) (int, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(p))
+	total := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		_, err := w.w.Write([]byte("\t" + line + "\n"))
+		if err != nil {
+			return total, err
+		}
+		total += len(line)
+	}
+
+	if scanner.Err() != nil {
+		return total, scanner.Err()
+	}
+	return total, nil
+}
+
+// ErrorState returns a state that contains the error in an async state.
+// If the error is nil, it returns the input state unchanged.
+func ErrorState(in llb.State, err error) llb.State {
+	if err == nil {
+		return in
+	}
+	return asyncState(in, err)
+}
+
+// NoopStateOption is a [llb.StateOption] that does not change the input state.
+func NoopStateOption(in llb.State) llb.State {
+	return in
+}
+
+// ErrorStateOption returns a [llb.StateOption] that returns a state option that
+// surfaces the error in an async state.
+// If the error is nil, it returns a no-op state option.
+func ErrorStateOption(err error) llb.StateOption {
+	if err == nil {
+		return NoopStateOption
+	}
+	return func(in llb.State) llb.State {
+		return asyncState(in, err)
+	}
 }

@@ -9,8 +9,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -18,6 +16,8 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -26,16 +26,14 @@ const (
 	windowsSystemDir = "/Windows/System32/"
 )
 
-var (
-	defaultPlatform = ocispecs.Platform{
-		OS: outputKey,
-		// NOTE: Windows is (currently) only supported on amd64.
-		// Making this use runtime.GOARCH so that builds are more explicitly and not surprising.
-		// If/when Windows is supported on another platform (ie arm64) this will work as expected.
-		// Until then, if someone really wants to build an amd64 image from arm64 they'll need to set the platform explicitly in the build request.
-		Architecture: runtime.GOARCH,
-	}
-)
+var defaultPlatform = ocispecs.Platform{
+	OS: outputKey,
+	// NOTE: Windows is (currently) only supported on amd64.
+	// Making this use runtime.GOARCH so that builds are more explicitly and not surprising.
+	// If/when Windows is supported on another platform (ie arm64) this will work as expected.
+	// Until then, if someone really wants to build an amd64 image from arm64 they'll need to set the platform explicitly in the build request.
+	Architecture: runtime.GOARCH,
+}
 
 func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	dc, err := dockerui.NewClient(client)
@@ -80,9 +78,9 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 		bi := bi
 		eg.Go(func() error {
 			dt, err := bi.ResolveImageConfig(grpCtx, sOpt, sourceresolver.Opt{
-				Platform: &basePlatform,
 				ImageOpt: &sourceresolver.ResolveImageOpt{
 					ResolveMode: dc.ImageResolveMode.String(),
+					Platform:    &basePlatform,
 				},
 			})
 			if err != nil {
@@ -132,28 +130,19 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 		}
 
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
-		worker, err := distroConfig.Worker(sOpt, pg)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+		worker := distroConfig.Worker(sOpt, pg)
 
-		bin, err := buildBinaries(ctx, spec, worker, client, sOpt, targetKey)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("unable to build binary %w", err)
-		}
+		bin := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
 
 		bi := bases[idx]
 
 		if platform == nil {
 			platform = &defaultPlatform
 		}
-		baseImage, err := bi.ToState(sOpt, pg, llb.Platform(*platform))
-		if err != nil {
-			return nil, nil, nil, err
-		}
+		baseImage := bi.ToState(sOpt, pg, llb.Platform(*platform))
 		out := baseImage.
-			File(llb.Copy(bin, "/", windowsSystemDir)).
-			With(copySymlinks(spec.GetImagePost(targetKey)))
+			File(llb.Copy(bin, "/", windowsSystemDir), pg).
+			With(copySymlinks(spec.GetImagePost(targetKey), pg))
 
 		def, err := out.Marshal(ctx)
 		if err != nil {
@@ -193,7 +182,7 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 	return rb.Finalize()
 }
 
-func copySymlinks(post *dalec.PostInstall) llb.StateOption {
+func copySymlinks(post *dalec.PostInstall, opts ...llb.ConstraintsOpt) llb.StateOption {
 	return func(s llb.State) llb.State {
 		if post == nil {
 			return s
@@ -209,8 +198,8 @@ func copySymlinks(post *dalec.PostInstall) llb.StateOption {
 			sort.Strings(newpaths)
 
 			for _, newpath := range newpaths {
-				s = s.File(llb.Mkdir(path.Dir(newpath), 0755, llb.WithParents(true)))
-				s = s.File(llb.Copy(s, oldpath, newpath))
+				s = s.File(llb.Mkdir(path.Dir(newpath), 0755, llb.WithParents(true)), opts...)
+				s = s.File(llb.Copy(s, oldpath, newpath), opts...)
 			}
 		}
 

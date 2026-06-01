@@ -64,7 +64,7 @@ const (
 {"Time":"2025-06-04T09:51:34.18474-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"goroutine 22 [sleep]:\n"}
 {"Time":"2025-06-04T09:51:34.184871-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"time.Sleep(0x12a05f200)\n"}
 {"Time":"2025-06-04T09:51:34.184927-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"\t/opt/homebrew/Cellar/go/1.24.3/libexec/src/runtime/time.go:338 +0x158\n"}
-{"Time":"2025-06-04T09:51:34.18495-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"github.com/Azure/dalec.TestGenTimeout(0x140001036c0)\n"}
+{"Time":"2025-06-04T09:51:34.18495-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"github.com/project-dalec/dalec.TestGenTimeout(0x140001036c0)\n"}
 {"Time":"2025-06-04T09:51:34.184965-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"\t/Users/cpuguy83/dev/dalec/gen_test.go:10 +0x58\n"}
 {"Time":"2025-06-04T09:51:34.18497-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"testing.tRunner(0x140001036c0, 0x10500a490)\n"}
 {"Time":"2025-06-04T09:51:34.184978-07:00","Action":"output","Package":"some_package","Test":"TestGenTimeout","Output":"\t/opt/homebrew/Cellar/go/1.24.3/libexec/src/testing/testing.go:1792 +0xe4\n"}
@@ -108,7 +108,7 @@ main.main()
 goroutine 22 [sleep]:
 time.Sleep(0x12a05f200)
 	/opt/homebrew/Cellar/go/1.24.3/libexec/src/runtime/time.go:338 +0x158
-github.com/Azure/dalec.TestGenTimeout(0x140001036c0)
+github.com/project-dalec/dalec.TestGenTimeout(0x140001036c0)
 	/Users/cpuguy83/dev/dalec/gen_test.go:10 +0x58
 testing.tRunner(0x140001036c0, 0x10500a490)
 	/opt/homebrew/Cellar/go/1.24.3/libexec/src/testing/testing.go:1792 +0xe4

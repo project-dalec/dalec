@@ -14,7 +14,7 @@ in a few different ways:
    `targets.[target].package_config.signer` or `.package_config.signer`
 1. Provide the signing config via the `DALEC_SIGNING_CONFIG_PATH` build arg.
    Otherwise, the signing config will be sought in the spec.
-1. The path name will be sough in the main (local) context, unless the build
+1. The path name will be sought in the main (local) context, unless the build
    arg `DALEC_SIGNING_CONFIG_CONTEXT_NAME` is provided, in which case the dalec
    will seek the config in the context with the provided name *and at the
    provided path*.
@@ -31,7 +31,7 @@ operation:
 ```yaml
 name: my-package
 targets: # Distro specific build requirements
-  mariner2:
+  azlinux3:
     package_config:
       signer:
         image: "ref/to/signing:image"
@@ -41,7 +41,7 @@ targets: # Distro specific build requirements
 At this time, these targets can leverage package signing:
 
 - `windowscross/zip`
-- `mariner2/rpm`
+- `azlinux3/rpm`
 - `windowscross/container`
 
 For container targets, only the artifacts within the container get signed.
@@ -60,7 +60,7 @@ additional tooling necessary to carry out the signing operation.
 1. The `llb.State` corresponding the artifacts to be signed will be
 provided as the build context.
 1. Dalec will provide the value of `dalec.target` to the frontend as a
-`FrontendOpt`. In the above example, this will be `mariner2`.
+`FrontendOpt`. In the above example, this will be `azlinux3`.
 1. The response from the frontend will contain an `llb.State` that is
 identical to the input `llb.State` in every way *except* that the
 desired artifacts will be signed.
@@ -77,6 +77,15 @@ package_config:
     image: "ref/to/signing:image"
     cmdline: "/signer"
 ```
+
+## Responsibilities of the Signer
+
+Dalec sends the output of the package build as the build context to the
+signer.
+The signer should provide in the response an `llb.State` with the signed
+artifacts as the result.
+Dalec then merges the signed artifacts back into the original package build
+result.
 
 ## Build Time customization
 
@@ -146,7 +155,7 @@ a string-to-string mapping like so:
 
 ```yaml
 targets: # Distro specific build requirements
-  mariner2:
+  azlinux3:
     package_config:
       signer:
         image: "ref/to/signing:image"
@@ -166,7 +175,7 @@ args:
   SOME_OTHER_SIGNING_ARG: "default_value"
 
 targets: # Distro specific build requirements
-  mariner2:
+  azlinux3:
     package_config:
       signer:
         image: "ref/to/signing:image"

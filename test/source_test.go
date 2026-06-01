@@ -8,11 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend/pkg/bkfs"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/opencontainers/go-digest"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	gitservices "github.com/project-dalec/dalec/test/git_services"
+	"github.com/project-dalec/dalec/test/testenv"
+	"gotest.tools/v3/assert"
 )
 
 func TestSourceCmd(t *testing.T) {
@@ -20,7 +23,10 @@ func TestSourceCmd(t *testing.T) {
 
 	ctx := startTestSpan(baseCtx, t)
 
-	sourceName := "checkcmd"
+	const (
+		sourceName = "checkcmd"
+		imgName    = "busybox:latest"
+	)
 	testSpec := func() *dalec.Spec {
 		return &dalec.Spec{
 			Args: map[string]string{
@@ -31,7 +37,7 @@ func TestSourceCmd(t *testing.T) {
 				sourceName: {
 					Path: "/output",
 					DockerImage: &dalec.SourceDockerImage{
-						Ref: "busybox:latest",
+						Ref: imgName,
 						Cmd: &dalec.Command{
 							Steps: []*dalec.BuildStep{
 								{
@@ -121,7 +127,7 @@ func TestSourceCmd(t *testing.T) {
 				spec := testSpec()
 				spec.Sources[sourceName].DockerImage.Cmd.Steps = []*dalec.BuildStep{
 					{
-						Command: `grep 'foo bar' /tmp/foo`,
+						Command: `ls -lh /tmp; grep 'foo bar' /tmp/foo`,
 					},
 					{
 						Command: `mkdir -p /output; cp /tmp/foo /output/foo`,
@@ -288,6 +294,35 @@ func TestSourceCmd(t *testing.T) {
 			})
 		})
 	})
+
+	t.Run("image as source mount", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			spec := testSpec()
+			src := spec.Sources[sourceName]
+			spec.Sources[sourceName] = dalec.Source{
+				Path: "/output",
+				DockerImage: &dalec.SourceDockerImage{
+					Ref: imgName,
+					Cmd: &dalec.Command{
+						Mounts: []dalec.SourceMount{
+							{Dest: "/tmp", Spec: src},
+						},
+						Steps: []*dalec.BuildStep{
+							{Command: "grep hello /tmp/hello"},
+							{Command: "mkdir -p /output"},
+							{Command: "cp /tmp/hello /output/hello2"},
+						},
+					},
+				},
+			}
+
+			req := newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, spec))
+			res := solveT(ctx, t, gwc, req)
+			checkFile(ctx, t, "checkcmd/hello2", res, []byte("hello\n"))
+		})
+	})
 }
 
 func TestSourceBuild(t *testing.T) {
@@ -302,11 +337,24 @@ func TestSourceBuild(t *testing.T) {
 
 				res := solveT(ctx, t, gwc, ro)
 				checkFile(ctx, t, "test/hello", res, []byte("hello\n"))
+
+				ref, err := res.SingleRef()
+				assert.NilError(t, err)
+				fs := bkfs.FromRef(ctx, ref)
+				checkFileStat(t, fs, "test/world", checkFileStatOpt{})
 			})
 		})
 	}
 
-	const dockerfile = "FROM busybox\nRUN echo hello > /hello"
+	const dockerfile = `
+FROM scratch
+COPY <<EOF  /hello
+hello
+EOF
+COPY <<EOF  /world
+world
+EOF
+`
 
 	newBuildSpec := func(p string, f func() dalec.Source) *dalec.Spec {
 		return &dalec.Spec{
@@ -372,7 +420,7 @@ func TestSourceBuild(t *testing.T) {
 func TestSourceHTTP(t *testing.T) {
 	t.Parallel()
 
-	url := "https://raw.githubusercontent.com/Azure/dalec/0ae22acf69ab6ef0a0503affed1a8952c9dd1384/README.md"
+	url := "https://raw.githubusercontent.com/project-dalec/dalec/0ae22acf69ab6ef0a0503affed1a8952c9dd1384/README.md"
 	const badDigest = digest.Digest("sha256:000084c7170b4cfbad0690412259b5e252f84c0ccff79aaca023beb3f3ed0000")
 	const goodDigest = digest.Digest("sha256:b0fa84c7170b4cfbad0690412259b5e252f84c0ccff79aaca023beb3f3ed6380")
 
@@ -404,6 +452,123 @@ func TestSourceHTTP(t *testing.T) {
 		good := newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, newSpec(url, goodDigest)))
 		good.Evaluate = true
 		solveT(ctx, t, gwc, good)
+	})
+}
+
+func TestSourceGitChecksumPreservesTagMetadata(t *testing.T) {
+	t.Parallel()
+
+	parentCtx := startTestSpan(baseCtx, t)
+
+	const (
+		secretName = "super-secret"
+		sourceName = "repo"
+		tagName    = "v1.2.3"
+	)
+
+	runGitServerTest := func(ctx context.Context, t *testing.T, f func(context.Context, gwclient.Client, llb.State, string, func(string) *dalec.Spec)) {
+		t.Helper()
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			t.Helper()
+
+			attr := gitservices.Attributes{
+				ServerRoot:      "/",
+				PrivateRepoPath: "username/private",
+				HTTPServerPath:  "/usr/local/bin/git_http_server",
+				HTTPPort:        "8080",
+			}
+
+			testState := gitservices.NewTestState(t, gwc, &attr)
+			worker := initWorker(gwc)
+			repo := llb.Scratch().File(llb.Mkfile("foo", 0o644, []byte("bar\n")))
+			repo = worker.Dir(attr.PrivateRepoAbsPath()).Run(dalec.ShArgs(`
+			set -eux
+			export GIT_CONFIG_NOGLOBAL=true
+			git init
+			git config user.name foo
+			git config user.email foo@bar.com
+			git add -A
+			git commit -m commit --no-gpg-sign
+			git tag -a `+tagName+` -m `+tagName+`
+		`)).AddMount(attr.RepoAbsDir(), repo)
+
+			commitSt := worker.Dir(attr.PrivateRepoAbsPath()).Run(dalec.ShArgs(`
+			set -eu
+			git rev-parse HEAD > /out/commit
+		`), llb.AddMount(attr.RepoAbsDir(), repo, llb.Readonly)).AddMount("/out", llb.Scratch())
+			commitDef, err := commitSt.Marshal(ctx)
+			assert.NilError(t, err)
+
+			commitRes, err := gwc.Solve(ctx, gwclient.SolveRequest{Definition: commitDef.ToPB(), Evaluate: true})
+			assert.NilError(t, err)
+			commit := strings.TrimSpace(string(readFile(ctx, t, "commit", commitRes)))
+
+			gitHost := worker.With(hostedRepo(repo, attr.RepoAbsDir()))
+			httpServer := testState.StartHTTPGitServer(ctx, gitHost)
+
+			newSpec := func(checksum string) *dalec.Spec {
+				return &dalec.Spec{
+					Sources: map[string]dalec.Source{
+						sourceName: {
+							Git: &dalec.SourceGit{
+								URL:        "http://" + httpServer.IP + ":" + httpServer.Port + "/" + attr.PrivateRepoPath,
+								Commit:     tagName,
+								Checksum:   checksum,
+								KeepGitDir: true,
+								Auth: dalec.GitAuth{
+									Token: secretName,
+								},
+							},
+						},
+					},
+				}
+			}
+
+			f(ctx, gwc, worker, commit, newSpec)
+		}, testenv.WithSecrets(secretName, "password"))
+	}
+
+	t.Run("preserves tag metadata", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(parentCtx, t)
+
+		runGitServerTest(ctx, t, func(ctx context.Context, gwc gwclient.Client, worker llb.State, commit string, newSpec func(string) *dalec.Spec) {
+			req := newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, newSpec(commit)))
+			sourceRes := solveT(ctx, t, gwc, req)
+			verifySt := worker.Run(dalec.ShArgs(`
+			set -eu
+			git -C /src/`+sourceName+` tag --points-at HEAD > /out/tag
+			git -C /src/`+sourceName+` rev-parse HEAD > /out/head
+			git -C /src/`+sourceName+` rev-parse `+tagName+`^{} > /out/tag-commit
+			git -C /src/`+sourceName+` cat-file -t `+tagName+` > /out/tag-type
+		`), llb.AddMount("/src", resultToState(t, sourceRes), llb.Readonly)).AddMount("/out", llb.Scratch())
+			verifyDef, err := verifySt.Marshal(ctx)
+			assert.NilError(t, err)
+
+			verifyRes, err := gwc.Solve(ctx, gwclient.SolveRequest{Definition: verifyDef.ToPB(), Evaluate: true})
+			assert.NilError(t, err)
+
+			checkFile(ctx, t, "tag", verifyRes, []byte(tagName+"\n"))
+			checkFile(ctx, t, "head", verifyRes, []byte(commit+"\n"))
+			checkFile(ctx, t, "tag-commit", verifyRes, []byte(commit+"\n"))
+			checkFile(ctx, t, "tag-type", verifyRes, []byte("tag\n"))
+		})
+	})
+
+	t.Run("rejects checksum mismatch", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(parentCtx, t)
+
+		runGitServerTest(ctx, t, func(ctx context.Context, gwc gwclient.Client, worker llb.State, commit string, newSpec func(string) *dalec.Spec) {
+			_, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, newSpec("0000000000000000000000000000000000000000"))))
+			if err == nil {
+				t.Fatal("expected git checksum mismatch, but received none")
+			}
+			if !strings.Contains(err.Error(), "expected checksum to match") {
+				t.Fatalf("expected git checksum mismatch, got: %v", err)
+			}
+		})
 	})
 }
 
@@ -553,10 +718,7 @@ index ea874f5..ba38f84 100644
 	// Note: module here should be moduyle+version because this is checking the go module path on disk
 	checkModule := func(ctx context.Context, gwc gwclient.Client, module string, spec *dalec.Spec) {
 		t.Helper()
-		res, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/gomods"), withSpec(ctx, t, spec)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/gomods"), withSpec(ctx, t, spec)))
 
 		ref, err := res.SingleRef()
 		if err != nil {
@@ -668,15 +830,18 @@ index ea874f5..ba38f84 100644
 					go.sum
 					main.go
 		*/
-		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644)).
-			File(llb.Mkdir("/dir/module1", 0644)).
-			File(llb.Mkfile("/dir/module1/go.mod", 0644, []byte(alternativeGomodFixtureMod))).
-			File(llb.Mkfile("/dir/module1/go.sum", 0644, []byte(alternativeGomodFixtureSum))).
-			File(llb.Mkfile("/dir/module1/main.go", 0644, []byte(alternativeGomodFixtureMain))).
-			File(llb.Mkdir("/dir/module2", 0644)).
-			File(llb.Mkfile("/dir/module2/go.mod", 0644, []byte(gomodFixtureMod))).
-			File(llb.Mkfile("/dir/module2/go.sum", 0644, []byte(gomodFixtureSum))).
-			File(llb.Mkfile("/dir/module2/main.go", 0644, []byte(gomodFixtureMain)))
+
+		pg := dalec.ProgressGroup("test-multi-module-gomod")
+
+		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644), pg).
+			File(llb.Mkdir("/dir/module1", 0644), pg).
+			File(llb.Mkfile("/dir/module1/go.mod", 0644, []byte(alternativeGomodFixtureMod)), pg).
+			File(llb.Mkfile("/dir/module1/go.sum", 0644, []byte(alternativeGomodFixtureSum)), pg).
+			File(llb.Mkfile("/dir/module1/main.go", 0644, []byte(alternativeGomodFixtureMain)), pg).
+			File(llb.Mkdir("/dir/module2", 0644), pg).
+			File(llb.Mkfile("/dir/module2/go.mod", 0644, []byte(gomodFixtureMod)), pg).
+			File(llb.Mkfile("/dir/module2/go.sum", 0644, []byte(gomodFixtureSum)), pg).
+			File(llb.Mkfile("/dir/module2/main.go", 0644, []byte(gomodFixtureMain)), pg)
 
 		const contextName = "multi-module"
 		spec := &dalec.Spec{
@@ -714,7 +879,6 @@ index ea874f5..ba38f84 100644
 				stat, err := ref.StatFile(ctx, gwclient.StatRequest{
 					Path: dep,
 				})
-
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -723,6 +887,47 @@ index ea874f5..ba38f84 100644
 					t.Fatal("expected directory")
 				}
 			}
+		})
+	})
+
+	t.Run("with replace directive", func(t *testing.T) {
+		t.Parallel()
+		testEnv.RunTest(baseCtx, t, func(ctx context.Context, gwc gwclient.Client) {
+			spec := &dalec.Spec{
+				Sources: map[string]dalec.Source{
+					srcName: {
+						Generate: []*dalec.SourceGenerator{
+							{
+								Gomod: &dalec.GeneratorGomod{
+									Edits: &dalec.GomodEdits{
+										Replace: []dalec.GomodReplace{
+											{Original: "github.com/cpuguy83/tar2go@v0.3.1", Update: "github.com/cpuguy83/tar2go@v0.3.0"},
+										},
+									},
+								},
+							},
+						},
+						Inline: &dalec.SourceInline{
+							Dir: &dalec.SourceInlineDir{
+								Files: map[string]*dalec.SourceInlineFile{
+									"main.go": {Contents: gomodFixtureMain},
+									"go.mod":  {Contents: gomodFixtureMod},
+									"go.sum":  {Contents: gomodFixtureSum},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/patched-sources"), withSpec(ctx, t, spec)))
+			gomodContent := readFile(ctx, t, filepath.Join(srcName, "go.mod"), res)
+
+			content := string(gomodContent)
+			assert.Check(t, strings.Contains(content, "replace github.com/cpuguy83/tar2go"),
+				"go.mod should contain replace directive, got:\n%s", content)
+			assert.Check(t, strings.Contains(content, "v0.3.0"),
+				"go.mod should reference v0.3.0, got:\n%s", content)
 		})
 	})
 }
@@ -784,10 +989,7 @@ func TestSourceWithCargohome(t *testing.T) {
 	// Helper function to check if a specific Cargo registry directory exists
 	checkCargoRegistry := func(ctx context.Context, gwc gwclient.Client, registryPath string, spec *dalec.Spec) {
 		t.Helper()
-		res, err := gwc.Solve(ctx, newSolveRequest(withBuildTarget("debug/cargohome"), withSpec(ctx, t, spec)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		res := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget("debug/cargohome"), withSpec(ctx, t, spec)))
 
 		ref, err := res.SingleRef()
 		if err != nil {
@@ -889,16 +1091,18 @@ func TestSourceWithCargohome(t *testing.T) {
 	t.Run("multi-module", func(t *testing.T) {
 		t.Parallel()
 
+		pg := dalec.ProgressGroup("test-multi-module-cargo")
+
 		// Create a context with multiple cargo modules
-		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644)).
-			File(llb.Mkdir("/dir/module1", 0644)).
-			File(llb.Mkfile("/dir/module1/Cargo.toml", 0644, []byte(cargoFixtureToml))).
-			File(llb.Mkfile("/dir/module1/Cargo.lock", 0644, []byte(cargoFixtureLock))).
-			File(llb.Mkfile("/dir/module1/main.rs", 0644, []byte(cargoFixtureMain))).
-			File(llb.Mkdir("/dir/module2", 0644)).
-			File(llb.Mkfile("/dir/module2/Cargo.toml", 0644, []byte(cargoFixtureToml))).
-			File(llb.Mkfile("/dir/module2/Cargo.lock", 0644, []byte(cargoFixtureLock))).
-			File(llb.Mkfile("/dir/module2/main.rs", 0644, []byte(cargoFixtureMain)))
+		contextSt := llb.Scratch().File(llb.Mkdir("/dir", 0644), pg).
+			File(llb.Mkdir("/dir/module1", 0644), pg).
+			File(llb.Mkfile("/dir/module1/Cargo.toml", 0644, []byte(cargoFixtureToml)), pg).
+			File(llb.Mkfile("/dir/module1/Cargo.lock", 0644, []byte(cargoFixtureLock)), pg).
+			File(llb.Mkfile("/dir/module1/main.rs", 0644, []byte(cargoFixtureMain)), pg).
+			File(llb.Mkdir("/dir/module2", 0644), pg).
+			File(llb.Mkfile("/dir/module2/Cargo.toml", 0644, []byte(cargoFixtureToml)), pg).
+			File(llb.Mkfile("/dir/module2/Cargo.lock", 0644, []byte(cargoFixtureLock)), pg).
+			File(llb.Mkfile("/dir/module2/main.rs", 0644, []byte(cargoFixtureMain)), pg)
 
 		const contextName = "multi-cargo-module"
 		spec := &dalec.Spec{
@@ -926,6 +1130,7 @@ func TestSourceWithCargohome(t *testing.T) {
 
 		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
 			req := newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt), withBuildTarget("debug/cargohome"))
+
 			res := solveT(ctx, t, gwc, req)
 			ref, err := res.SingleRef()
 			if err != nil {
@@ -946,14 +1151,125 @@ func TestSourceWithCargohome(t *testing.T) {
 	})
 }
 
+func TestDebugGomodSourceFilterConfig(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:        "test-source-filter-gomod",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Testing source filter config with gomod",
+		Sources: map[string]dalec.Source{
+			"src": {
+				Generate: []*dalec.SourceGenerator{{Gomod: &dalec.GeneratorGomod{}}},
+				Inline: &dalec.SourceInline{
+					Dir: &dalec.SourceInlineDir{
+						Files: map[string]*dalec.SourceInlineFile{
+							"main.go": {Contents: gomodFixtureMain},
+							"go.mod":  {Contents: gomodFixtureMod},
+							"go.sum":  {Contents: gomodFixtureSum},
+						},
+					},
+				},
+			},
+		},
+		Dependencies: &dalec.PackageDependencies{
+			Build: map[string]dalec.PackageConstraints{
+				"golang": {},
+			},
+		},
+	}
+
+	filterConfig := llb.Scratch().File(llb.Mkfile("/source-filter.yml", 0o644, []byte(`
+global_excludes:
+  - github.com/cpuguy83/tar2go@v0.3.1
+`)))
+
+	runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+		req := newSolveRequest(
+			withBuildTarget("debug/gomods"),
+			withSpec(ctx, t, spec),
+			withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, filterConfig),
+			withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/source-filter.yml"),
+		)
+
+		res := solveT(ctx, t, gwc, req)
+		ref, err := res.SingleRef()
+		assert.NilError(t, err)
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "github.com/cpuguy83/tar2go@v0.3.1"})
+		assert.Assert(t, err != nil, "expected filtered gomod directory to be absent")
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "cache"})
+		assert.NilError(t, err)
+	})
+}
+
+func TestDebugSourcesSourceFilterConfig(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:        "test-source-filter-debug-sources",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Testing source filter config with debug sources",
+		Sources: map[string]dalec.Source{
+			"src": {
+				Inline: &dalec.SourceInline{
+					Dir: &dalec.SourceInlineDir{
+						Files: map[string]*dalec.SourceInlineFile{
+							"keep.txt": {Contents: "keep"},
+							"drop.txt": {Contents: "drop"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	filterConfig := llb.Scratch().File(llb.Mkfile("/source-filter.yml", 0o644, []byte(`
+global_excludes:
+  - drop.txt
+`)))
+
+	runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+		req := newSolveRequest(
+			withBuildTarget("debug/sources"),
+			withSpec(ctx, t, spec),
+			withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, filterConfig),
+			withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/source-filter.yml"),
+		)
+
+		res := solveT(ctx, t, gwc, req)
+		ref, err := res.SingleRef()
+		assert.NilError(t, err)
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "src/keep.txt"})
+		assert.NilError(t, err)
+
+		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "src/drop.txt"})
+		assert.Assert(t, err != nil, "expected filtered source file to be absent")
+	})
+}
+
 func TestSourceContext(t *testing.T) {
 	t.Parallel()
 
+	pg := dalec.ProgressGroup("test-dalec-context-source")
+
 	contextSt := llb.Scratch().
-		File(llb.Mkfile("/base", 0o644, nil)).
-		File(llb.Mkdir("/foo/bar", 0o755, llb.WithParents(true))).
-		File(llb.Mkfile("/foo/file", 0o644, nil)).
-		File(llb.Mkfile("/foo/bar/another", 0o644, nil))
+		File(llb.Mkfile("/base", 0o644, nil), pg).
+		File(llb.Mkdir("/foo/bar", 0o755, llb.WithParents(true)), pg).
+		File(llb.Mkfile("/foo/file", 0o644, nil), pg).
+		File(llb.Mkfile("/foo/bar/another", 0o644, nil), pg)
 
 	spec := &dalec.Spec{
 		Name: "test-dalec-context-source",

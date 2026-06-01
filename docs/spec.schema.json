@@ -4,7 +4,7 @@
 	"patternProperties": {
 		"^x-": {}
 	},
-	"$id": "https://github.com/Azure/dalec/spec",
+	"$id": "https://github.com/project-dalec/dalec/spec",
 	"id": "",
 	"$defs": {
 		"AddGroupConfig": {
@@ -89,12 +89,7 @@
 					"description": "NetworkMode sets the network mode to use during the build phase.\nAccepted values: none, sandbox\nDefault: none"
 				},
 				"steps": {
-					"items": {
-						"$ref": "#/$defs/BuildStep"
-					},
-					"type": [
-						"array"
-					],
+					"$ref": "#/$defs/BuildStepList",
 					"description": "Steps is the list of commands to run to build the artifact(s).\nEach step is run sequentially and will be cached accordingly depending on the frontend implementation."
 				}
 			},
@@ -107,8 +102,63 @@
 			],
 			"description": "ArtifactBuild configures a group of steps that are run sequentially along with their outputs to build the artifact(s)."
 		},
+		"ArtifactCapability": {
+			"required": [
+				"name"
+			],
+			"properties": {
+				"effective": {
+					"type": [
+						"boolean"
+					],
+					"description": "Effective grants the capability in the effective set"
+				},
+				"inheritable": {
+					"type": [
+						"boolean"
+					],
+					"description": "Inheritable grants the capability in the inheritable set"
+				},
+				"name": {
+					"type": [
+						"string"
+					],
+					"description": "Name is the capability name (e.g., \"cap_net_raw\", \"cap_net_bind_service\")"
+				},
+				"permitted": {
+					"type": [
+						"boolean"
+					],
+					"description": "Permitted grants the capability in the permitted set"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ArtifactCapability represents a Linux Capability to set on an artifact"
+		},
 		"ArtifactConfig": {
 			"properties": {
+				"group": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Group is the group name that should own the artifact"
+				},
+				"linux_capabilities": {
+					"items": {
+						"$ref": "#/$defs/ArtifactCapability"
+					},
+					"type": [
+						"array"
+					],
+					"description": "LinuxCapabilities is the list of Linux capabilities to set on the artifact"
+				},
 				"name": {
 					"type": [
 						"string",
@@ -128,6 +178,13 @@
 						"null"
 					],
 					"description": "Subpath is the subpath to use in the package for the artifact type.\n\nAs an example, binaries are typically placed in /usr/bin when installed.\nIf you want to nest them in a subdirectory, you can specify it here."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the user name that should own the artifact"
 				}
 			},
 			"additionalProperties": {
@@ -141,11 +198,25 @@
 		},
 		"ArtifactDirConfig": {
 			"properties": {
+				"group": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Group is the group name that should own the directory"
+				},
 				"mode": {
 					"type": [
 						"integer"
 					],
 					"description": "Mode is used to set the file permission bits of the final created directory to the specified mode.\nMode is the octal permissions to set on the dir."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the user name that should own the directory"
 				}
 			},
 			"additionalProperties": {
@@ -380,7 +451,7 @@
 				"object",
 				"null"
 			],
-			"description": "BazelCache sets up a cache for bazel builds."
+			"description": "Currently this only supports setting up a *local* bazel cache."
 		},
 		"BuildStep": {
 			"required": [
@@ -425,6 +496,14 @@
 			],
 			"description": "BuildStep is used to execute a command to build the artifact(s)."
 		},
+		"BuildStepList": {
+			"items": {
+				"$ref": "#/$defs/BuildStep"
+			},
+			"type": [
+				"array"
+			]
+		},
 		"CacheConfig": {
 			"properties": {
 				"bazel": {
@@ -438,6 +517,10 @@
 				"gobuild": {
 					"$ref": "#/$defs/GoBuildCache",
 					"description": "GoBuild specifies a cache for Go's incremental build artifacts.\nThis should speed up repeated builds of Go projects."
+				},
+				"rustsccache": {
+					"$ref": "#/$defs/SCCache",
+					"description": "RustSCCache specifies a cache for Rust build artifacts.\nThis uses sccache to cache Rust compilation artifacts."
 				}
 			},
 			"additionalProperties": {
@@ -459,6 +542,12 @@
 						"gobuild"
 					],
 					"title": "gobuild"
+				},
+				{
+					"required": [
+						"rustsccache"
+					],
+					"title": "rustsccache"
 				},
 				{
 					"required": [
@@ -756,6 +845,13 @@
 					],
 					"description": "IsDir is used to set the expected file mode to a directory."
 				},
+				"link_target": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "LinkTarget is used to specify a link target for symlink checks.\nThis only checks the target path of the symlink and does not follow symlink chains.\nThis behaves the same regardless of NoFollow."
+				},
 				"matches": {
 					"items": {
 						"type": [
@@ -766,6 +862,12 @@
 						"array"
 					],
 					"description": "Matches is the list of regular expressions to match the output against."
+				},
+				"no_follow": {
+					"type": [
+						"boolean"
+					],
+					"description": "NoFollow indicates whether to follow symlinks when performing file checks.\nIf true, symlinks will not be followed and checks will be performed on the symlink itself.\nIf the file is not a symlink this has no effect.\n\nThis is only used for file metadata resolution.\nContent checks (equals/contains/...) will always follow symlinks.\nThis is generally only useful for checking existence of symlinks themselves.\nIn the future other metadata checks (like user/group ownership) would also be useful."
 				},
 				"not_exist": {
 					"type": [
@@ -858,6 +960,10 @@
 						"null"
 					],
 					"description": "Auth is the git authorization to use for gomods. The keys are the hosts, and the values are the auth to use for that host."
+				},
+				"edits": {
+					"$ref": "#/$defs/GomodEdits",
+					"description": "Edits contains go.mod manipulation directives (replace) that are applied\nbefore downloading module dependencies."
 				},
 				"paths": {
 					"items": {
@@ -957,7 +1063,7 @@
 						"string",
 						"null"
 					],
-					"description": "Header is the name of the secret that contains the git auth header.\nwhen using git auth header based authentication.\nNote: This should not have the *actual* secret value, just the name of\nthe secret which was specified as a build secret."
+					"description": "Header is the name of the secret which contains the git auth header.\nWhen using git auth header based authentication.\nNote: This should not have the *actual* secret value, just the name of\nthe secret which was specified as a build secret."
 				},
 				"ssh": {
 					"type": [
@@ -1006,6 +1112,27 @@
 				"null"
 			],
 			"description": "GoBuildCache is a cache for Go build artifacts."
+		},
+		"GomodEdits": {
+			"properties": {
+				"replace": {
+					"items": {
+						"$ref": "#/$defs/GomodReplace"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Replace applies go.mod replace directives before downloading module dependencies.\nEach entry can be either a string \"old =\u003e new\" or a struct with Old and New fields."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GomodEdits groups the go.mod manipulation directives that can be applied before downloading module dependencies."
 		},
 		"GomodGitAuth": {
 			"properties": {
@@ -1060,6 +1187,34 @@
 				"object",
 				"null"
 			]
+		},
+		"GomodReplace": {
+			"required": [
+				"old",
+				"new"
+			],
+			"properties": {
+				"new": {
+					"type": [
+						"string"
+					],
+					"description": "Update is the replacement module path or local directory"
+				},
+				"old": {
+					"type": [
+						"string"
+					],
+					"description": "Original is the module path to replace (can include @version)"
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "GomodReplace represents a go.mod replace directive."
 		},
 		"ImageConfig": {
 			"properties": {
@@ -1221,13 +1376,7 @@
 		"PackageDependencies": {
 			"properties": {
 				"build": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Build is the list of packagese required to build the package."
 				},
 				"extra_repos": {
@@ -1240,35 +1389,20 @@
 					"description": "ExtraRepos is used to inject extra package repositories that may be used to\nsatisfy package dependencies in various stages."
 				},
 				"recommends": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Recommends is the list of packages recommended to install with the generated package.\nNote: Not all package managers support this (e.g. rpm)"
 				},
 				"runtime": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Runtime is the list of packages required to install/run the package."
 				},
+				"sysext": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Sysext is the list of packages to include in the generated system\nextension. No dependency resolution is performed when generating system\nextensions, so all required dependencies must be explicitly listed here."
+				},
 				"test": {
-					"items": {
-						"type": [
-							"string"
-						]
-					},
-					"type": [
-						"array"
-					],
-					"description": "Test lists any extra packages required for running tests\nThese packages are only installed for tests which have steps that require\nrunning a command in the built container.\nSee [TestSpec] for more information."
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Test lists any extra packages required for running tests\nThese packages are only installed for tests which have steps that require\nrunning a command in the built container.\nUse a map so test dependencies can have PackageConstraints (and source maps)."
 				}
 			},
 			"additionalProperties": {
@@ -1279,6 +1413,15 @@
 				"null"
 			],
 			"description": "PackageDependencies is a list of dependencies for a package."
+		},
+		"PackageDependencyList": {
+			"additionalProperties": {
+				"$ref": "#/$defs/PackageConstraints"
+			},
+			"type": [
+				"object",
+				"null"
+			]
 		},
 		"PackageRepositoryConfig": {
 			"required": [
@@ -1436,6 +1579,25 @@
 				"null"
 			],
 			"description": "PostInstall is the post install configuration for the image."
+		},
+		"SCCache": {
+			"properties": {
+				"scope": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Scope adds extra information to the cache key.\nThis is useful to differentiate between different build contexts if required.\n\nThis is mainly intended for internal testing purposes."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SCCache is a cache for Rust build artifacts."
 		},
 		"Source": {
 			"properties": {
@@ -1658,22 +1820,33 @@
 			],
 			"properties": {
 				"auth": {
-					"$ref": "#/$defs/GitAuth"
+					"$ref": "#/$defs/GitAuth",
+					"description": "Auth can be used to add instructions on how to authenticate with the git repository."
+				},
+				"checksum": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Checksum is the expected commit hash for the resolved ref.\nIt is useful when \"Commit\" refers to a mutable ref, such as a tag."
 				},
 				"commit": {
 					"type": [
 						"string"
-					]
+					],
+					"description": "Commit is the ref, which may be a commit, a tag, or even a full ref.\nNOTE: When using a commit ref, tag info is *not* fetched."
 				},
 				"keepGitDir": {
 					"type": [
 						"boolean"
-					]
+					],
+					"description": "KeepGitDir includes the .git directory in the source.\nNOTE: Not all git metadata may be available. The available metadata depends\non the ref specified by \"Commit\"."
 				},
 				"url": {
 					"type": [
 						"string"
-					]
+					],
+					"description": "URL is the URL of the git repository."
 				}
 			},
 			"additionalProperties": {
@@ -1883,13 +2056,7 @@
 					"description": "Changelog is the list of changes to the package."
 				},
 				"conflicts": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Conflicts is the list of packages that conflict with the generated package.\nThis will prevent the package from being installed if any of these packages are already installed or vice versa."
 				},
 				"dependencies": {
@@ -1951,23 +2118,11 @@
 					"description": "Patches is the list of patches to apply to the sources.\nThe map key is the name of the source to apply the patches to.\nThe value is the list of patches to apply to the source.\nThe patch must be present in the `Sources` map.\nEach patch is applied in order and the result is used as the source for the build."
 				},
 				"provides": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Provides is the list of things that the generated package provides.\nThis can be used to satisfy dependencies of other packages.\nAs an example, the moby-runc package provides \"runc\", other packages could depend on \"runc\" and be satisfied by moby-runc.\nThis is an advanced use case and consideration should be taken to ensure that the package actually provides the thing it claims to provide."
 				},
 				"replaces": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Replaces is the list of packages that are replaced by the generated package."
 				},
 				"revision": {
@@ -2164,8 +2319,7 @@
 		},
 		"SystemdUnitConfig": {
 			"required": [
-				"name",
-				"enable"
+				"name"
 			],
 			"properties": {
 				"enable": {
@@ -2179,6 +2333,12 @@
 						"string"
 					],
 					"description": "Name is the name systemd unit should be copied under.\nNested paths are not supported. It is the user's responsibility\nto name the service with the appropriate extension, i.e. .service, .timer, etc."
+				},
+				"start": {
+					"type": [
+						"boolean"
+					],
+					"description": "Start can be optionally used to start the systemd unit on install\nThis determines what will be written to a systemd preset file\nNote that depending on distribution there may be different\nexpectations as to if the package should be responsible for this"
 				}
 			},
 			"additionalProperties": {
@@ -2196,13 +2356,7 @@
 					"description": "Artifacts describes all of the artifact configurations to include for this specific target."
 				},
 				"conflicts": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Conflicts is the list of packages that this target conflicts with."
 				},
 				"dependencies": {
@@ -2222,23 +2376,11 @@
 					"description": "PackageConfig is the configuration to use for artifact targets, such as\nrpms, debs, or zip files containing Windows binaries"
 				},
 				"provides": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Provides is the list of packages that this target provides."
 				},
 				"replaces": {
-					"additionalProperties": {
-						"$ref": "#/$defs/PackageConstraints"
-					},
-					"type": [
-						"object",
-						"null"
-					],
+					"$ref": "#/$defs/PackageDependencyList",
 					"description": "Replaces is the list of packages that this target replaces/obsoletes."
 				},
 				"tests": {
@@ -2355,18 +2497,18 @@
 				},
 				"stderr": {
 					"$ref": "#/$defs/CheckOutput",
-					"description": "Stderr is the expected output on stderr"
+					"description": "Stderr describes checks to perform against stderr"
 				},
 				"stdin": {
 					"type": [
 						"string",
 						"null"
 					],
-					"description": "Stdin is the input to pass to stdin for the command"
+					"description": "Stdin is the input to provide to the command when running tests"
 				},
 				"stdout": {
 					"$ref": "#/$defs/CheckOutput",
-					"description": "Stdout is the expected output on stdout"
+					"description": "Stdout describes checks to perform against stdout"
 				}
 			},
 			"additionalProperties": {

@@ -13,11 +13,11 @@ import (
 
 	_ "embed"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend/pkg/bkfs"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 )
 
 const (
@@ -43,7 +43,7 @@ var debianInstall []byte
 // This creates a directory in the debian root directory for each patch, and copies the patch files into it.
 // The format for each patch dir matches what would normally be under `debian/patches`, just that this is a separate dir for every source we are patching
 // This is purely for documenting in the source package how patches are applied in a more readable way than the big merged patch file.
-func sourcePatchesDir(sOpt dalec.SourceOpts, base llb.State, dir, name string, spec *dalec.Spec, opts ...llb.ConstraintsOpt) ([]llb.State, error) {
+func sourcePatchesDir(sOpt dalec.SourceOpts, base llb.State, dir, name string, spec *dalec.Spec, opts ...llb.ConstraintsOpt) []llb.State {
 	patchesPath := filepath.Join(dir, name)
 	base = base.
 		File(llb.Mkdir(patchesPath, 0o755), opts...)
@@ -60,21 +60,20 @@ func sourcePatchesDir(sOpt dalec.SourceOpts, base llb.State, dir, name string, s
 			copySrc = patch.Path
 		}
 
-		st, err := src.AsState(patch.Source, sOpt, opts...)
-		if err != nil {
-			return nil, errors.Wrap(err, "error creating patch state")
+		patchStateName := ""
+		if !src.IsDir() {
+			patchStateName = patch.Source
 		}
+		st := src.ToState(patchStateName, sOpt, opts...)
 
 		st = base.File(llb.Copy(st, copySrc, filepath.Join(patchesPath, patch.Source)), opts...)
-		if _, err := seriesBuf.WriteString(name + "\n"); err != nil {
-			return nil, errors.Wrap(err, "error writing to series file")
-		}
+		seriesBuf.WriteString(patch.Source + "\n")
 		states = append(states, st)
 	}
 
 	series := base.File(llb.Mkfile(filepath.Join(patchesPath, "series"), 0o640, seriesBuf.Bytes()), opts...)
 
-	return append(states, series), nil
+	return append(states, series)
 }
 
 type SourcePkgConfig struct {
@@ -106,20 +105,20 @@ func AddPath(pre, post []string) SourcePkgConfig {
 // an upgrade even if it is technically the same underlying source.
 // It may be left blank but is highly recommended to set this.
 // Use [ReadDistroVersionID] to get a suitable value.
-func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worker, in llb.State, target, dir, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) (llb.State, error) {
-	control, err := controlFile(spec, in, target, dir)
+func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worker, in llb.State, target, dir, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) llb.State {
+	control, err := controlFile(spec, in, target, dir, opts...)
 	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error generating control file")
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating control file"))
 	}
 
-	rules, err := Rules(spec, in, dir, target)
+	rules, err := Rules(spec, in, dir, target, opts...)
 	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error generating rules file")
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating rules file"))
 	}
 
-	changelog, err := Changelog(spec, in, target, dir, distroVersionID)
+	changelog, err := Changelog(spec, in, target, dir, distroVersionID, opts...)
 	if err != nil {
-		return llb.Scratch(), errors.Wrap(err, "error generating changelog file")
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating changelog file"))
 	}
 
 	if dir == "" {
@@ -127,7 +126,7 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 	}
 
 	base := llb.Scratch().File(llb.Mkdir(dir, 0o755), opts...)
-	installers := createInstallScripts(worker, spec, dir, target)
+	installers := createInstallScripts(worker, spec, dir, target, opts...)
 
 	const (
 		sourceFormat = "3.0 (quilt)"
@@ -152,37 +151,28 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 
 	customEnable, err := customDHInstallSystemdPostinst(spec, target)
 	if err != nil {
-		return llb.Scratch(), err
+		return dalec.ErrorState(in, errors.Wrap(err, "error generating custom systemd postinst"))
 	}
+
 	if len(customEnable) > 0 {
 		// This is not meant to be executed on its own and will instead get added
 		// to a post inst file, so need to mark this as executable.
 		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "dalec/"+customSystemdPostinstFile), 0o600, customEnable), opts...))
 	}
 
-	postinst := bytes.NewBuffer(nil)
-	artifacts := spec.GetArtifacts(target)
-	writeUsersPostInst(postinst, artifacts.Users)
-	writeGroupsPostInst(postinst, artifacts.Groups)
-	setSymlinkOwnershipPostInst(postinst, spec, target)
-
-	if postinst.Len() > 0 {
-		dt := []byte("#!/usr/bin/env sh\nset -e\n")
-		dt = append(dt, postinst.Bytes()...)
-
-		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "postinst"), 0o700, dt), opts...))
+	postinst := generatePostinst(spec, target)
+	if len(postinst) > 0 {
+		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "postinst"), 0o700, postinst), opts...))
 	}
 
 	patchDir := dalecDir.File(llb.Mkdir(filepath.Join(dir, "dalec/patches"), 0o755), opts...)
 	sorted := dalec.SortMapKeys(spec.Patches)
 	for _, name := range sorted {
-		pls, err := sourcePatchesDir(sOpt, patchDir, filepath.Join(dir, "dalec/patches"), name, spec, opts...)
-		if err != nil {
-			return llb.Scratch(), errors.Wrapf(err, "error creating patch directory for source %q", name)
-		}
+		pls := sourcePatchesDir(sOpt, patchDir, filepath.Join(dir, "dalec/patches"), name, spec, opts...)
 		states = append(states, pls...)
 	}
 
+	artifacts := spec.GetArtifacts(target)
 	if len(artifacts.Links) > 0 {
 		buf := bytes.NewBuffer(nil)
 
@@ -195,7 +185,29 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, spec.Name+".links"), 0o644, buf.Bytes()), opts...))
 	}
 
-	return dalec.MergeAtPath(in, states, "/"), nil
+	return dalec.MergeAtPath(in, states, "/", opts...)
+}
+
+func generatePostinst(spec *dalec.Spec, target string) []byte {
+	buf := bytes.NewBuffer(nil)
+
+	artifacts := spec.GetArtifacts(target)
+	writeUsersPostInst(buf, artifacts.Users)
+	writeGroupsPostInst(buf, artifacts.Groups)
+	setArtifactOwnershipPostInst(buf, spec, target)
+	setArtifactCapabilitiesPostInst(buf, spec, target)
+
+	if buf.Len() == 0 {
+		return nil
+	}
+
+	// NOTE: `#DEBHELPER#` is a special marker that will be replaced by
+	// debhelper when it generates the final postinst script.
+	// Very important that this is included.
+	dt := []byte("#!/usr/bin/env sh\nset -e\n\n#DEBHELPER#\n\n")
+	dt = append(dt, buf.Bytes()...)
+
+	return dt
 }
 
 func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) []byte {
@@ -214,6 +226,10 @@ func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) [
 			cfg := artifacts[key]
 			resolvedName := cfg.ResolveName(key)
 			p := filepath.Join(basePath, dir, resolvedName)
+			// TODO: do i need this?
+			if cfg.SubPath != "" {
+				p = filepath.Join(basePath, dir, cfg.SubPath, resolvedName)
+			}
 
 			if cfg.Permissions.Perm() != 0 {
 				fmt.Fprintf(buf, "chmod %o %q\n", cfg.Permissions.Perm(), p)
@@ -254,7 +270,7 @@ func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) [
 	checkAndWritePerms(artifacts.Headers, HeadersPath)
 	checkAndWritePerms(artifacts.Licenses, filepath.Join(LicensesPath, spec.Name))
 	checkAndWritePerms(artifacts.Docs, filepath.Join(DocsPath, spec.Name))
-	checkAndWritePerms(artifacts.Libs, filepath.Join(LibsPath))
+	checkAndWritePerms(artifacts.Libs, LibsPath)
 	checkAndWritePerms(artifacts.Libexec, LibexecPath)
 	checkAndWritePerms(artifacts.DataDirs, DataDirsPath)
 
@@ -327,8 +343,9 @@ func createPatchScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 
 	writeScriptHeader(buf, cfg)
 
-	for name, patches := range spec.Patches {
-		for _, patch := range patches {
+	sorted := dalec.SortMapKeys(spec.Patches)
+	for _, name := range sorted {
+		for _, patch := range spec.Patches[name] {
 			p := filepath.Join("${DEBIAN_DIR:=debian}/dalec/patches", name, patch.Source)
 			fmt.Fprintf(buf, "patch -d %q -p%d -s < %q\n", name, *patch.Strip, p)
 		}
@@ -384,11 +401,11 @@ func createBuildScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 	return buf.Bytes()
 }
 
-func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string) []llb.State {
+func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string, opts ...llb.ConstraintsOpt) []llb.State {
 	artifacts := spec.GetArtifacts(target)
 
 	states := make([]llb.State, 1)
-	base := llb.Scratch().File(llb.Mkdir(dir, 0o755, llb.WithParents(true)))
+	base := llb.Scratch().File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...)
 
 	installBuf := bytes.NewBuffer(nil)
 	writeInstallHeader := sync.OnceFunc(func() {
@@ -403,7 +420,6 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 		name = strings.TrimSuffix(name, "*")
 		dest := filepath.Join("debian", spec.Name, dir, name)
 		fmt.Fprintln(installBuf, "do_install", filepath.Dir(dest), dest, src)
-
 	}
 
 	if len(artifacts.Binaries) > 0 {
@@ -439,7 +455,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 			fmt.Fprintln(buf, key)
 		}
 		if buf.Len() > 0 {
-			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".manpages"), 0o640, buf.Bytes())))
+			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".manpages"), 0o640, buf.Bytes()), opts...))
 		}
 
 	}
@@ -457,7 +473,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 			fmt.Fprintln(buf, filepath.Join("/var/lib", name))
 		}
 
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".dirs"), 0o640, buf.Bytes())))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".dirs"), 0o640, buf.Bytes()), opts...))
 	}
 
 	if len(artifacts.Docs) > 0 || len(artifacts.Licenses) > 0 {
@@ -486,7 +502,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 		}
 
 		if buf.Len() > 0 {
-			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".docs"), 0o640, buf.Bytes())))
+			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".docs"), 0o640, buf.Bytes()), opts...))
 		}
 	}
 
@@ -527,6 +543,7 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 			st := worker.Run(
 				llb.Dir(filepath.Join("/tmp/work", dir)),
 				dalec.ShArgs("ln -s ../"+key+" "+name),
+				dalec.WithConstraints(opts...),
 			).AddMount("/tmp/work", llb.Scratch())
 
 			states = append(states, st)
@@ -573,13 +590,13 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 	}
 
 	if installBuf.Len() > 0 {
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".install"), 0o700, installBuf.Bytes())))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, spec.Name+".install"), 0o700, installBuf.Bytes()), opts...))
 	}
 
 	return states
 }
 
-func controlFile(spec *dalec.Spec, in llb.State, target, dir string) (llb.State, error) {
+func controlFile(spec *dalec.Spec, in llb.State, target, dir string, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	buf := bytes.NewBuffer(nil)
 	info, _ := debug.ReadBuildInfo()
 	buf.WriteString("# Automatically generated by " + info.Main.Path + "\n")
@@ -594,8 +611,8 @@ func controlFile(spec *dalec.Spec, in llb.State, target, dir string) (llb.State,
 	}
 
 	return in.
-			File(llb.Mkdir(dir, 0o755, llb.WithParents(true))).
-			File(llb.Mkfile(filepath.Join(dir, "control"), 0o640, buf.Bytes())),
+			File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...).
+			File(llb.Mkfile(filepath.Join(dir, "control"), 0o640, buf.Bytes()), opts...),
 		nil
 }
 
@@ -667,8 +684,54 @@ func writeGroupsPostInst(w *bytes.Buffer, groups []dalec.AddGroupConfig) {
 	}
 }
 
-func setSymlinkOwnershipPostInst(w *bytes.Buffer, spec *dalec.Spec, target string) {
+func setArtifactOwnershipPostInst(w *bytes.Buffer, spec *dalec.Spec, target string) {
 	artifacts := spec.GetArtifacts(target)
+
+	apply := func(artifacts map[string]dalec.ArtifactConfig, root string) {
+		if artifacts == nil {
+			return
+		}
+		sorted := dalec.SortMapKeys(artifacts)
+		for _, key := range sorted {
+			cfg := artifacts[key]
+			resolved := cfg.ResolveName(key)
+			p := filepath.Join(root, cfg.SubPath, resolved)
+			if cfg.User != "" {
+				fmt.Fprintf(w, "chown -R %s \"$DESTDIR%s\"\n", cfg.User, p)
+			}
+			if cfg.Group != "" {
+				fmt.Fprintf(w, "chgrp -R %s \"$DESTDIR%s\"\n", cfg.Group, p)
+			}
+		}
+	}
+
+	apply(artifacts.Binaries, BinariesPath)
+	apply(artifacts.ConfigFiles, ConfigFilesPath)
+	apply(artifacts.Manpages, filepath.Join(ManpagesPath, spec.Name))
+	apply(artifacts.Headers, HeadersPath)
+	apply(artifacts.Licenses, filepath.Join(LicensesPath, spec.Name))
+	apply(artifacts.Docs, filepath.Join(DocsPath, spec.Name))
+	apply(artifacts.Libs, LibsPath)
+	apply(artifacts.Libexec, LibexecPath)
+	apply(artifacts.DataDirs, DataDirsPath)
+
+	applyDir := func(dirs map[string]dalec.ArtifactDirConfig, root string) {
+		sorted := dalec.SortMapKeys(dirs)
+		for _, key := range sorted {
+			cfg := dirs[key]
+			p := filepath.Join(root, key)
+			if cfg.User != "" {
+				fmt.Fprintf(w, "chown -R %s \"$DESTDIR%s\"\n", cfg.User, p)
+			}
+			if cfg.Group != "" {
+				fmt.Fprintf(w, "chgrp -R %s \"$DESTDIR%s\"\n", cfg.Group, p)
+			}
+		}
+	}
+	if artifacts.Directories != nil {
+		applyDir(artifacts.Directories.Config, ConfigFilesPath)
+		applyDir(artifacts.Directories.State, "/var/lib")
+	}
 
 	if len(artifacts.Links) > 0 {
 		fmt.Fprintf(w, "# Set ownership for artifact symlinks\n")
@@ -681,4 +744,29 @@ func setSymlinkOwnershipPostInst(w *bytes.Buffer, spec *dalec.Spec, target strin
 			}
 		}
 	}
+}
+
+func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target string) {
+	artifacts := spec.GetArtifacts(target)
+
+	apply := func(artifacts map[string]dalec.ArtifactConfig, root string) {
+		if artifacts == nil {
+			return
+		}
+		sorted := dalec.SortMapKeys(artifacts)
+		for _, key := range sorted {
+			cfg := artifacts[key]
+			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+			if capString == "" {
+				continue
+			}
+			resolved := cfg.ResolveName(key)
+			p := filepath.Join(root, cfg.SubPath, resolved)
+			fmt.Fprintf(w, "setcap '%s' \"$DESTDIR%s\"\n", capString, p)
+		}
+	}
+
+	apply(artifacts.Binaries, BinariesPath)
+	apply(artifacts.Libs, LibsPath)
+	apply(artifacts.Libexec, LibexecPath)
 }

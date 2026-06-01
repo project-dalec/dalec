@@ -6,11 +6,11 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 )
 
 const keyGomodWorker = "gomod-worker"
@@ -28,19 +28,18 @@ func Gomods(ctx context.Context, client gwclient.Client) (*gwclient.Result, erro
 			return nil, nil, err
 		}
 
+		pg := dalec.ProgressGroup("gomod-deps")
+
 		// Allow the client to override the worker image
 		// This is useful for keeping pre-built worker image, especially for CI.
 		worker, ok := inputs[keyGomodWorker]
 		if !ok {
-			worker = llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(client)).
-				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh")).Root()
+			worker = llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(client), pg).
+				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh"), pg).Root()
 		}
 		worker = worker.With(addedHosts(client))
 
-		st, err := spec.GomodDeps(sOpt, worker, dalec.Platform(platform))
-		if err != nil {
-			return nil, nil, err
-		}
+		st := spec.GomodDeps(sOpt, worker, dalec.Platform(platform), pg)
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

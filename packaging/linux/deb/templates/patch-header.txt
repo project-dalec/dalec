@@ -1,4 +1,4 @@
-This patch contains all the patches specified in a Dalec (https://github.com/Azure/dalec) spec.
+This patch contains all the patches specified in a Dalec (https://github.com/project-dalec/dalec) spec.
 Patches in Dalec are not compatible with Debian's source package layout as they are applied directly to the source directory.
 As such, a single patch file is generated after applying all patches to the source directories.
 

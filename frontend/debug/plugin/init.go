@@ -1,8 +1,8 @@
 package plugin
 
 import (
-	"github.com/Azure/dalec/frontend/debug"
-	"github.com/Azure/dalec/internal/plugins"
+	"github.com/project-dalec/dalec/frontend/debug"
+	"github.com/project-dalec/dalec/internal/plugins"
 )
 
 func init() {

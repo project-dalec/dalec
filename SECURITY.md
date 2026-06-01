@@ -1,41 +1,49 @@
-<!-- BEGIN MICROSOFT SECURITY.MD V0.0.8 BLOCK -->
+# Security Policy
 
-## Security
+## Supported Versions
 
-Microsoft takes the security of our software products and services seriously, which includes all source code repositories managed through our GitHub organizations, which include [Microsoft](https://github.com/microsoft), [Azure](https://github.com/Azure), [DotNet](https://github.com/dotnet), [AspNet](https://github.com/aspnet), [Xamarin](https://github.com/xamarin), and [our GitHub organizations](https://opensource.microsoft.com/).
+Dalec remains in the process of getting to a stable v1.0 release, and as such does not currently provide a long-term supported version.
+We make a good faith effort to respond to security issues in a timely manner and will release version updates as needed to address them.
+Users should expect to upgrade to the latest release version to stay current on security updates.
 
-If you believe you have found a security vulnerability in any Microsoft-owned repository that meets [Microsoft's definition of a security vulnerability](https://aka.ms/opensource/security/definition), please report it to us as described below.
+## Communication
+
+We will publish known vulnerabilities through a [GitHub Security Advisory](https://github.com/project-dalec/dalec/security/advisories) once they have been addressed to inform the community of their potential scope, impact, and mitigation.
 
 ## Reporting Security Issues
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+Project Dalec and its maintainers take the security of the project seriously, and we appreciate your efforts to responsibly disclose your findings to us.
 
-Instead, please report them to the Microsoft Security Response Center (MSRC) at [https://msrc.microsoft.com/create-report](https://aka.ms/opensource/security/create-report).
+> **Please do not report security vulnerabilities through public GitHub issues.**
 
-If you prefer to submit without logging in, send email to [secure@microsoft.com](mailto:secure@microsoft.com).  If possible, encrypt your message with our PGP key; please download it from the [Microsoft Security Response Center PGP Key page](https://aka.ms/opensource/security/pgpkey).
-
-You should receive a response within 24 hours. If for some reason you do not, please follow up via email to ensure we received your original message. Additional information can be found at [microsoft.com/msrc](https://aka.ms/opensource/security/msrc). 
+Instead, please report them through our [private vulnerability reporting](https://github.com/project-dalec/dalec/security/advisories/new) form.
 
 Please include the requested information listed below (as much as you can provide) to help us better understand the nature and scope of the possible issue:
 
-  * Type of issue (e.g. buffer overflow, SQL injection, cross-site scripting, etc.)
-  * Full paths of source file(s) related to the manifestation of the issue
-  * The location of the affected source code (tag/branch/commit or direct URL)
-  * Any special configuration required to reproduce the issue
-  * Step-by-step instructions to reproduce the issue
-  * Proof-of-concept or exploit code (if possible)
-  * Impact of the issue, including how an attacker might exploit the issue
+* Type of issue (e.g. buffer overflow, SQL injection, cross-site scripting, etc.)
+* Full paths of source file(s) related to the manifestation of the issue
+* The location of the affected source code (tag/branch/commit or direct URL)
+* Any special configuration required to reproduce the issue
+* Step-by-step instructions to reproduce the issue
+* Proof-of-concept or exploit code (if possible)
+* Impact of the issue, including how an attacker might exploit the issue
 
 This information will help us triage your report more quickly.
 
-If you are reporting for a bug bounty, more complete reports can contribute to a higher bounty award. Please visit our [Microsoft Bug Bounty Program](https://aka.ms/opensource/security/bounty) page for more details about our active programs.
+We believe in [Coordinated Vulnerability Disclosure (CVD)](https://en.wikipedia.org/wiki/Coordinated_vulnerability_disclosure) and will work with you through the private advisory report.
 
 ## Preferred Languages
 
 We prefer all communications to be in English.
 
-## Policy
+## Maintainer Authentication
 
-Microsoft follows the principle of [Coordinated Vulnerability Disclosure](https://aka.ms/opensource/security/cvd).
+All members of the Project Dalec GitHub organization must authenticate using secure multi-factor mechanisms (for example, FIDO2 hardware security keys such as YubiKey devices). GitHub enforces this policy at the organization level and disallows SMS or email-based second factors for members; accounts without a compliant hardware or app-based (TOTP, WebAuthn) factor cannot access project resources.
 
-<!-- END MICROSOFT SECURITY.MD BLOCK -->
+## Dependency Monitoring
+
+Automated scanners in GitHub monitor direct and transitive dependencies. Dependabot continuously proposes security updates based on `dependabot.yml`, and each pull request it opens is reviewed and merged by a maintainer once tests pass. The GitHub Dependency Review workflow annotates contributor pull requests with vulnerability findings so reviewers can block risky upgrades before merge. The Snyk GitHub App integration scans release branches and raises alerts in the repository security dashboard, where maintainers triage and remediate advisories.
+
+## Secret Management
+
+The project does not maintain long-lived shared secrets in source control or CI. Workflow automation relies only on the GitHub-provided `GITHUB_TOKEN`, which GitHub scopes automatically: in `ci.yml` it has minimal read/package permissions for pull-request and branch builds, and in release workflows it receives package-publish access only when a signed tag triggers the job. Maintainers monitor the default token permissions and avoid storing additional credentials in repository settings.

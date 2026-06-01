@@ -1,8 +1,8 @@
 package debian
 
 import (
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/targets/linux/deb/distro"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/targets/linux/deb/distro"
 )
 
 const (
@@ -34,7 +34,7 @@ var (
 					"backports.list": {
 						Inline: &dalec.SourceInline{
 							File: &dalec.SourceInlineFile{
-								Contents: "deb http://deb.debian.org/debian bullseye-backports main",
+								Contents: "deb http://archive.debian.org/debian bullseye-backports main",
 							},
 						},
 					},

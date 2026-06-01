@@ -9,9 +9,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/targets/linux/deb/ubuntu"
-	"github.com/Azure/dalec/targets/windows"
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -19,6 +16,9 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
+	"github.com/project-dalec/dalec/targets/windows"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -35,6 +35,9 @@ func TestWindows(t *testing.T) {
 		Container: "windowscross/container",
 		ListExpectedSignFiles: func(spec *dalec.Spec, platform ocispecs.Platform) []string {
 			return maps.Keys(spec.Artifacts.Binaries)
+		},
+		PackageOverrides: map[string]string{
+			"rust": "rust-all",
 		},
 	})
 
@@ -60,22 +63,28 @@ func TestWindows(t *testing.T) {
 		SignRepo:       signRepoUbuntu,
 		TestRepoConfig: ubuntuTestRepoConfig,
 		Platform:       &windowsAmd64,
-		CreateRepo: func(pkg llb.State, opts ...llb.StateOption) llb.StateOption {
+		CreateRepo: func(pkg llb.State, repoPath string, opts ...llb.StateOption) llb.StateOption {
 			return func(in llb.State) llb.State {
 				repoFile := []byte(`
-deb [trusted=yes] copy:/opt/repo/ /
+deb [trusted=yes] copy:` + repoPath + `/ /
 `)
+
+				pg := dalec.ProgressGroup("create custom repo")
+
 				withRepo := in.Run(
 					dalec.ShArgs("apt-get update && apt-get install -y apt-utils gnupg2"),
-					dalec.WithMountedAptCache(ubuntu.JammyAptCachePrefix),
-				).File(llb.Copy(pkg, "/", "/opt/repo")).
+					dalec.WithMountedAptCache(ubuntu.JammyAptCachePrefix, pg),
+					pg,
+				).File(llb.Copy(pkg, "/", repoPath, dalec.WithCreateDestPath()), pg).
 					Run(
-						llb.Dir("/opt/repo"),
+						llb.Dir(repoPath),
 						dalec.ShArgs("apt-ftparchive packages . > Packages"),
+						pg,
 					).
 					Run(
-						llb.Dir("/opt/repo"),
+						llb.Dir(repoPath),
 						dalec.ShArgs("apt-ftparchive release . > Release"),
+						pg,
 					).Root()
 
 				for _, opt := range opts {
@@ -83,8 +92,7 @@ deb [trusted=yes] copy:/opt/repo/ /
 				}
 
 				return withRepo.
-					File(llb.Mkfile("/etc/apt/sources.list.d/test-dalec-local-repo.list", 0o644, repoFile))
-
+					File(llb.Mkfile("/etc/apt/sources.list.d/test-dalec-local-repo.list", 0o644, repoFile), pg)
 			}
 		},
 	}
@@ -141,7 +149,7 @@ func testWindows(ctx context.Context, t *testing.T, tcfg targetConfig) {
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing builds commands that fail cause the whole build to fail",
@@ -172,7 +180,7 @@ func testWindows(ctx context.Context, t *testing.T, tcfg targetConfig) {
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Should not have internet access during build",
@@ -205,7 +213,7 @@ func testWindows(ctx context.Context, t *testing.T, tcfg targetConfig) {
 				Version:     "0.0.1",
 				Revision:    "1",
 				License:     "MIT",
-				Website:     "https://github.com/azure/dalec",
+				Website:     "https://github.com/project-dalec/dalec",
 				Vendor:      "Dalec",
 				Packager:    "Dalec",
 				Description: "Testing container target",
@@ -392,7 +400,6 @@ echo "$BAR" > bar.txt
 				if err := validatePathAndPermissions(ctx, ref, "/Windows/System32/src-change", 0o644); err != nil {
 					t.Fatal(err)
 				}
-
 			})
 		})
 
@@ -428,7 +435,9 @@ echo "$BAR" > bar.txt
 					actual := metaPlatforms.Platforms[i]
 
 					_, _, dt, err := gwc.ResolveImageConfig(ctx, ref.Rootfs.DockerImage.Ref, sourceresolver.Opt{
-						Platform: &windowsAmd64,
+						ImageOpt: &sourceresolver.ResolveImageOpt{
+							Platform: &windowsAmd64,
+						},
 					})
 					assert.NilError(t, err)
 
@@ -481,7 +490,7 @@ echo "$BAR" > bar.txt
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing container target",
@@ -537,7 +546,7 @@ echo "$BAR" > bar.txt
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing container target",
@@ -591,7 +600,7 @@ echo "$BAR" > bar.txt
 			Version:     "0.0.1",
 			Revision:    "1",
 			License:     "MIT",
-			Website:     "https://github.com/azure/dalec",
+			Website:     "https://github.com/project-dalec/dalec",
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Testing container target",
@@ -672,6 +681,12 @@ echo "$BAR" > bar.txt
 		ctx := startTestSpan(baseCtx, t)
 		testAutoGobuildCache(ctx, t, tcfg)
 	})
+
+	t.Run("rust cache", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testRustCache(ctx, t, tcfg)
+	})
 }
 
 func prepareWindowsSigningState(ctx context.Context, t *testing.T, gwc gwclient.Client, spec *dalec.Spec, extraSrOpts ...srOpt) llb.State {
@@ -680,9 +695,11 @@ func prepareWindowsSigningState(ctx context.Context, t *testing.T, gwc gwclient.
 	srOpts := []srOpt{withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"), withWindowsAmd64}
 	srOpts = append(srOpts, extraSrOpts...)
 
+	pg := dalec.ProgressGroup("prepare signing state")
+
 	sr := newSolveRequest(srOpts...)
 	st := reqToState(ctx, gwc, sr, t)
-	st = zipper.Run(llb.Args([]string{"bash", "-c", `for f in ./*.zip; do unzip "$f"; done`}), llb.Dir("/tmp/mnt")).
+	st = zipper.Run(llb.Args([]string{"bash", "-c", `for f in ./*.zip; do unzip "$f"; done`}), llb.Dir("/tmp/mnt"), pg).
 		AddMount("/tmp/mnt", st)
 	return st
 }
@@ -696,7 +713,7 @@ func getZipperState(ctx context.Context, t *testing.T, gwc gwclient.Client) llb.
 		},
 	})
 
-	sr := newSolveRequest(withSpec(ctx, t, zipperSpec), withBuildTarget("mariner2/container"))
+	sr := newSolveRequest(withSpec(ctx, t, zipperSpec), withBuildTarget("azlinux3/container"))
 	zipper := reqToState(ctx, gwc, sr, t)
 	return zipper
 }
@@ -779,7 +796,8 @@ func testCustomWindowscrossWorker(ctx context.Context, t *testing.T, targetCfg t
 		// Add the base package + repo to the worker
 		// This should make it so when dalec installs build deps it can use the package
 		// we built above.
-		worker = worker.With(workerCfg.CreateRepo(pkg))
+		repoPath := filepath.Join("/opt/repo", createRepoSuffix())
+		worker = worker.With(workerCfg.CreateRepo(pkg, repoPath))
 
 		// Now build again with our custom worker
 		// Note, we are solving the main spec, not depSpec here.

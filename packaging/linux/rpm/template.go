@@ -10,7 +10,7 @@ import (
 	"sync"
 	"text/template"
 
-	"github.com/Azure/dalec"
+	"github.com/project-dalec/dalec"
 )
 
 const (
@@ -67,7 +67,8 @@ var tmplFuncs = map[string]any{
 
 type specWrapper struct {
 	*dalec.Spec
-	Target string
+	Target       string
+	SourceFilter dalec.SourceFilterConfig
 }
 
 func (w *specWrapper) Changelog() (fmt.Stringer, error) {
@@ -181,6 +182,30 @@ func getUserPostRequires(users []dalec.AddUserConfig, groups []dalec.AddGroupCon
 	return out
 }
 
+// We need this because AlmaLinux9 do not have chown/chgrp at install time.
+// However, AzureLinux cannot resolve the /usr/bin/chown requirement.
+// Thus, we just require coreutils which provides chown/chgrp on all distros hopefully.
+func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
+	out := "Requires(post): coreutils\n"
+	for _, cfg := range artifacts.Binaries {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+	for _, cfg := range artifacts.Libs {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+	for _, cfg := range artifacts.Libexec {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
+
+	return ""
+}
+
 func (w *specWrapper) Requires() fmt.Stringer {
 	b := &strings.Builder{}
 
@@ -192,24 +217,28 @@ func (w *specWrapper) Requires() fmt.Stringer {
 	// package names... something to consider as we expand functionality.
 	b.WriteString(getSystemdRequires(artifacts.Systemd))
 	b.WriteString(getUserPostRequires(artifacts.Users, artifacts.Groups))
+	b.WriteString(getOwnershipPostRequires(artifacts))
 
 	deps := w.GetPackageDeps(w.Target)
-	if deps == nil {
+	buildDeps := deps.GetBuild()
+	runtimeDeps := deps.GetRuntime()
+	if len(buildDeps) == 0 && len(runtimeDeps) == 0 {
 		return b
 	}
-	buildKeys := dalec.SortMapKeys(deps.Build)
+
+	buildKeys := dalec.SortMapKeys(buildDeps)
 	for _, name := range buildKeys {
-		constraints := deps.Build[name]
+		constraints := buildDeps[name]
 		writeDep(b, "BuildRequires", name, constraints)
 	}
 
-	if len(deps.Build) > 0 && len(deps.Runtime) > 0 {
+	if len(buildDeps) > 0 && len(runtimeDeps) > 0 {
 		b.WriteString("\n")
 	}
 
-	runtimeKeys := dalec.SortMapKeys(deps.Runtime)
+	runtimeKeys := dalec.SortMapKeys(runtimeDeps)
 	for _, name := range runtimeKeys {
-		constraints := deps.Runtime[name]
+		constraints := runtimeDeps[name]
 		// TODO: consider if it makes sense to support sources satisfying runtime deps
 		writeDep(b, "Requires", name, constraints)
 	}
@@ -220,18 +249,14 @@ func (w *specWrapper) Requires() fmt.Stringer {
 
 func (w *specWrapper) Recommends() fmt.Stringer {
 	b := &strings.Builder{}
-	deps := w.GetPackageDeps(w.Target)
-	if deps == nil {
+	deps := w.GetPackageDeps(w.Target).GetRecommends()
+	if len(deps) == 0 {
 		return b
 	}
 
-	if len(deps.Recommends) == 0 {
-		return b
-	}
-
-	keys := dalec.SortMapKeys(deps.Recommends)
+	keys := dalec.SortMapKeys(deps)
 	for _, name := range keys {
-		constraints := deps.Recommends[name]
+		constraints := deps[name]
 		writeDep(b, "Recommends", name, constraints)
 	}
 	b.WriteString("\n")
@@ -241,7 +266,7 @@ func (w *specWrapper) Recommends() fmt.Stringer {
 // NOTE: This is very basic and does not handle things like grouped constraints
 // Given this is just trying to shim things to allow either the rpm format or the deb format
 // in its basic form, this is sufficient for now.
-func formatVersionConstraint(v string) string {
+func FormatVersionConstraint(v string) string {
 	prefix, suffix, ok := strings.Cut(v, " ")
 	if !ok {
 		if len(prefix) >= 1 {
@@ -274,7 +299,7 @@ func writeDep(b *strings.Builder, kind, name string, constraints dalec.PackageCo
 		}
 
 		for _, c := range constraints.Version {
-			fmt.Fprintf(b, "%s: %s %s\n", kind, name, formatVersionConstraint(c))
+			fmt.Fprintf(b, "%s: %s %s\n", kind, name, FormatVersionConstraint(c))
 		}
 	}
 
@@ -305,11 +330,7 @@ func (w *specWrapper) Sources() (fmt.Stringer, error) {
 			ref += ".tar.gz"
 		}
 
-		doc, err := src.Doc(name)
-		if err != nil {
-			return nil, fmt.Errorf("error getting doc for source %s: %w", name, err)
-		}
-
+		doc := src.Doc(name)
 		scanner := bufio.NewScanner(doc)
 		for scanner.Scan() {
 			fmt.Fprintf(b, "# %s\n", scanner.Text())
@@ -317,18 +338,43 @@ func (w *specWrapper) Sources() (fmt.Stringer, error) {
 		if scanner.Err() != nil {
 			return nil, scanner.Err()
 		}
+		if !w.SourceFilter.IsEmpty() && isDir {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
 		fmt.Fprintf(b, "Source%d: %s\n", idx, ref)
 	}
 
 	sourceIdx := len(keys)
 
 	if w.Spec.HasGomods() {
+		if !w.SourceFilter.IsEmpty() {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
 		fmt.Fprintf(b, "Source%d: %s.tar.gz\n", sourceIdx, gomodsName)
 		sourceIdx += 1
 	}
 
 	if w.Spec.HasCargohomes() {
+		if !w.SourceFilter.IsEmpty() {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
 		fmt.Fprintf(b, "Source%d: %s.tar.gz\n", sourceIdx, cargohomeName)
+		sourceIdx += 1
+	}
+
+	if w.Spec.HasPips() {
+		if !w.SourceFilter.IsEmpty() {
+			if err := docSourceFilter(b, "Exclusions", w.SourceFilter.GlobalExcludes); err != nil {
+				return nil, err
+			}
+		}
+		fmt.Fprintf(b, "Source%d: %s.tar.gz\n", sourceIdx, pipDepsName)
 		sourceIdx += 1
 	}
 
@@ -340,6 +386,24 @@ func (w *specWrapper) Sources() (fmt.Stringer, error) {
 		b.WriteString("\n")
 	}
 	return b, nil
+}
+
+func docSourceFilter(w io.Writer, name string, values []string) error {
+	if _, err := fmt.Fprintf(w, "# %s:\n", name); err != nil {
+		return err
+	}
+	for _, value := range values {
+		scanner := bufio.NewScanner(strings.NewReader(value))
+		for scanner.Scan() {
+			if _, err := fmt.Fprintf(w, "# \t%s\n", scanner.Text()); err != nil {
+				return err
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *specWrapper) Release() string {
@@ -392,8 +456,7 @@ func (w *specWrapper) PrepareSources() (fmt.Stringer, error) {
 			continue
 		}
 		// This is a directory source so it needs to be untarred into the rpm build dir.
-		fmt.Fprintf(b, "mkdir -p \"%%{_builddir}/%s\"\n", key)
-		fmt.Fprintf(b, "tar -C \"%%{_builddir}/%s\" -xzf \"%%{_sourcedir}/%s.tar.gz\"\n", key, key)
+		fmt.Fprintf(b, "tar -C \"%%{_builddir}/\" -xzf \"%%{_sourcedir}/%s.tar.gz\"\n", key)
 	}
 	prepareGenerators()
 
@@ -440,11 +503,19 @@ func (w *specWrapper) BuildSteps() fmt.Stringer {
 	return b
 }
 
+func systemdPreUnScript(unitName string, cfg dalec.SystemdUnitConfig) string {
+	if !cfg.Enable {
+		return ""
+	}
+
+	return fmt.Sprintf("%%systemd_preun %s\n", unitName)
+}
+
 func (w *specWrapper) PreUn() fmt.Stringer {
 	b := &strings.Builder{}
 
 	artifacts := w.GetArtifacts(w.Target)
-	if artifacts.Systemd.IsEmpty() {
+	if artifacts.Systemd.IsEmpty() || (len(artifacts.Systemd.EnabledUnits()) == 0) {
 		return b
 	}
 
@@ -452,27 +523,46 @@ func (w *specWrapper) PreUn() fmt.Stringer {
 	keys := dalec.SortMapKeys(artifacts.Systemd.Units)
 	for _, servicePath := range keys {
 		serviceName := filepath.Base(servicePath)
-		fmt.Fprintf(b, "%%systemd_preun %s\n", serviceName)
+		unitConf := artifacts.Systemd.Units[servicePath]
+		b.WriteString(
+			systemdPreUnScript(serviceName, unitConf),
+		)
 	}
-	b.WriteString("\n")
 	return b
 }
 
 func systemdPostScript(unitName string, cfg dalec.SystemdUnitConfig) string {
-	// if service isn't explicitly specified as enabled in the spec,
-	// then we don't need to do anything in the post script
 	if !cfg.Enable {
 		return ""
 	}
 
-	// should be equivalent to the systemd_post scriptlet in the rpm spec,
-	// but without the use of a .preset file
-	return fmt.Sprintf(`
-if [ $1 -eq 1 ]; then
-    # initial installation
-    systemctl enable %s
+	// Use systemctl enable directly instead of %systemd_post because
+	// %systemd_post calls "systemctl preset" which defers to system preset
+	// policy. All RPM distros have "disable *" as a catch-all in their preset
+	// files, so third-party services would never be enabled via preset.
+	// This behavior may change in the future to respect system presets instead.
+	// See https://github.com/project-dalec/dalec/issues/1017#issuecomment-4181051908
+	//
+	// The "|| :" ensures a non-zero exit (e.g. systemd not running in a
+	// chroot/Kickstart/container) does not abort the scriptlet.
+	// Only enable on initial install ($1 == 1), not upgrades.
+	s := fmt.Sprintf(`if [ $1 -eq 1 ]; then
+    systemctl enable %s || :
 fi
 `, unitName)
+
+	if cfg.Start {
+		// Only start on initial install ($1 == 1), not upgrades, to avoid
+		// restarting a service the user intentionally stopped.
+		// Guard behind a check for a running systemd so this is safe
+		// in chroot/Kickstart/container environments.
+		s += fmt.Sprintf(`if [ $1 -eq 1 ] && [ -d /run/systemd/system ]; then
+    systemctl start %s || :
+fi
+`, unitName)
+	}
+
+	return s
 }
 
 func (w *specWrapper) Post() fmt.Stringer {
@@ -482,8 +572,11 @@ func (w *specWrapper) Post() fmt.Stringer {
 	users := w.postUsers()
 	groups := w.postGroups()
 	symlinkOwnership := w.getSymlinkOwnership()
+	artifactOwnership := w.getArtifactOwnership()
+	directoryOwnership := w.getDirectoryOwnership()
+	artifactCapabilities := w.getArtifactCapabilities()
 
-	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" {
+	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" && artifactOwnership == "" && directoryOwnership == "" && artifactCapabilities == "" {
 		return b
 	}
 
@@ -499,6 +592,15 @@ func (w *specWrapper) Post() fmt.Stringer {
 	}
 	if symlinkOwnership != "" {
 		b.WriteString(symlinkOwnership)
+	}
+	if artifactOwnership != "" {
+		b.WriteString(artifactOwnership)
+	}
+	if directoryOwnership != "" {
+		b.WriteString(directoryOwnership)
+	}
+	if artifactCapabilities != "" {
+		b.WriteString(artifactCapabilities)
 	}
 
 	b.WriteString("\n")
@@ -528,6 +630,147 @@ func (w *specWrapper) postGroups() string {
 	for _, group := range artifacts.Groups {
 		fmt.Fprintf(b, "getent group %s >/dev/null || groupadd --system %s\n", group.Name, group.Name)
 	}
+	return b.String()
+}
+
+func (w *specWrapper) getDirectoryOwnership() string {
+	artifacts := w.Spec.GetArtifacts(w.Target)
+	if artifacts.Directories == nil {
+		return ""
+	}
+	b := &strings.Builder{}
+	setDirOwnership := func(root, p string, cfg *dalec.ArtifactDirConfig) {
+		if cfg == nil {
+			return
+		}
+		user := cfg.User
+		group := cfg.Group
+		targetDir := filepath.Join(root, p)
+		if user != "" {
+			fmt.Fprintf(b, "chown -R %s %s\n", user, targetDir)
+		}
+		if group != "" {
+			fmt.Fprintf(b, "chgrp -R %s %s\n", group, targetDir)
+		}
+	}
+	configKeys := dalec.SortMapKeys(artifacts.Directories.Config)
+	for _, p := range configKeys {
+		cfg := artifacts.Directories.Config[p]
+		setDirOwnership(`/%{_sysconfdir}`, p, &cfg)
+	}
+	stateKeys := dalec.SortMapKeys(artifacts.Directories.State)
+	for _, p := range stateKeys {
+		cfg := artifacts.Directories.State[p]
+		setDirOwnership(`/%{_sharedstatedir}`, p, &cfg)
+	}
+	return b.String()
+}
+
+func (w *specWrapper) getArtifactOwnership() string {
+	artifacts := w.Spec.GetArtifacts(w.Target)
+	b := &strings.Builder{}
+
+	setArtifactOwnership := func(root, p string, cfg *dalec.ArtifactConfig) {
+		if cfg == nil {
+			return
+		}
+		user := cfg.User
+		group := cfg.Group
+		targetDir := filepath.Join(root, cfg.SubPath)
+		var targetPath string
+		file := cfg.ResolveName(p)
+		if !strings.Contains(file, "*") {
+			targetPath = filepath.Join(targetDir, file)
+		} else {
+			targetPath = targetDir + "/"
+		}
+		if user != "" {
+			fmt.Fprintf(b, "chown -R %s %s\n", user, targetPath)
+		}
+		if group != "" {
+			fmt.Fprintf(b, "chgrp -R %s %s\n", group, targetPath)
+		}
+	}
+
+	if artifacts.ConfigFiles != nil {
+		configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
+		for _, c := range configKeys {
+			cfg := artifacts.ConfigFiles[c]
+			setArtifactOwnership(`/%{_sysconfdir}`, c, &cfg)
+		}
+	}
+	if artifacts.DataDirs != nil {
+		dataFileKeys := dalec.SortMapKeys(artifacts.DataDirs)
+		for _, k := range dataFileKeys {
+			df := artifacts.DataDirs[k]
+			setArtifactOwnership(`/%{_datadir}`, k, &df)
+		}
+	}
+	// Directory ownership is handled in getDirectoryOwnership; do not duplicate here.
+	if artifacts.Libs != nil {
+		libs := dalec.SortMapKeys(artifacts.Libs)
+		for _, l := range libs {
+			cfg := artifacts.Libs[l]
+			setArtifactOwnership(`/%{_libdir}`, l, &cfg)
+		}
+	}
+	if artifacts.Binaries != nil {
+		binKeys := dalec.SortMapKeys(artifacts.Binaries)
+		for _, p := range binKeys {
+			cfg := artifacts.Binaries[p]
+			setArtifactOwnership(`/%{_bindir}`, p, &cfg)
+		}
+	}
+
+	return b.String()
+}
+
+func (w *specWrapper) getArtifactCapabilities() string {
+	artifacts := w.Spec.GetArtifacts(w.Target)
+	b := &strings.Builder{}
+
+	// Only use setcap in postinstall if there's also a chown/chgrp
+	// (since chown clears capabilities). Otherwise, use %caps macro in %files.
+	setArtifactCapabilities := func(root, p string, cfg *dalec.ArtifactConfig) {
+		if cfg == nil {
+			return
+		}
+		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+		if capString == "" {
+			return
+		}
+		// Only add setcap if there's a user/group ownership change
+		if cfg.User == "" && cfg.Group == "" {
+			return
+		}
+		targetDir := filepath.Join(root, cfg.SubPath)
+		file := cfg.ResolveName(p)
+		targetPath := filepath.Join(targetDir, file)
+		fmt.Fprintf(b, "setcap '%s' %s\n", capString, targetPath)
+	}
+
+	if artifacts.Libs != nil {
+		libs := dalec.SortMapKeys(artifacts.Libs)
+		for _, l := range libs {
+			cfg := artifacts.Libs[l]
+			setArtifactCapabilities(`/%{_libdir}`, l, &cfg)
+		}
+	}
+	if artifacts.Binaries != nil {
+		binKeys := dalec.SortMapKeys(artifacts.Binaries)
+		for _, p := range binKeys {
+			cfg := artifacts.Binaries[p]
+			setArtifactCapabilities(`/%{_bindir}`, p, &cfg)
+		}
+	}
+	if artifacts.Libexec != nil {
+		libexecKeys := dalec.SortMapKeys(artifacts.Libexec)
+		for _, k := range libexecKeys {
+			cfg := artifacts.Libexec[k]
+			setArtifactCapabilities(`/%{_libexecdir}`, k, &cfg)
+		}
+	}
+
 	return b.String()
 }
 
@@ -753,7 +996,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 		for _, p := range binKeys {
 			cfg := artifacts.Binaries[p]
 			full := filepath.Join(`%{_bindir}/`, cfg.SubPath, cfg.ResolveName(p))
-			fmt.Fprintln(b, full)
+			// Use %caps macro if capabilities are set and there's no chown
+			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+			if capString != "" && cfg.User == "" && cfg.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, full)
+			} else {
+				fmt.Fprintln(b, full)
+			}
 		}
 	}
 
@@ -790,7 +1039,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 			le := artifacts.Libexec[k]
 			targetDir := filepath.Join(`%{_libexecdir}`, le.SubPath)
 			fullPath := filepath.Join(targetDir, le.ResolveName(k))
-			fmt.Fprintln(b, fullPath)
+			// Use %caps macro if capabilities are set and there's no chown
+			capString := dalec.CapabilitiesString(le.LinuxCapabilities)
+			if capString != "" && le.User == "" && le.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
+			} else {
+				fmt.Fprintln(b, fullPath)
+			}
 		}
 	}
 
@@ -867,7 +1122,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 	for _, l := range libKeys {
 		cfg := artifacts.Libs[l]
 		path := filepath.Join(`%{_libdir}`, cfg.SubPath, cfg.ResolveName(l))
-		fmt.Fprintln(b, path)
+		// Use %caps macro if capabilities are set and there's no chown
+		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+		if capString != "" && cfg.User == "" && cfg.Group == "" {
+			fmt.Fprintf(b, "%%caps(%s) %s\n", capString, path)
+		} else {
+			fmt.Fprintln(b, path)
+		}
 	}
 
 	for _, l := range artifacts.Links {
@@ -916,7 +1177,11 @@ func (w *specWrapper) DisableAutoReq() string {
 
 // WriteSpec generates an rpm spec from the provided [dalec.Spec] and distro target and writes it to the passed in writer
 func WriteSpec(spec *dalec.Spec, target string, w io.Writer) error {
-	s := &specWrapper{spec, target}
+	return WriteSpecWithSourceFilter(spec, target, dalec.SourceFilterConfig{}, w)
+}
+
+func WriteSpecWithSourceFilter(spec *dalec.Spec, target string, filter dalec.SourceFilterConfig, w io.Writer) error {
+	s := &specWrapper{Spec: spec, Target: target, SourceFilter: filter}
 
 	err := specTmpl.Execute(w, s)
 	if err != nil {

@@ -2,77 +2,39 @@ package test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"testing"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/targets/linux/rpm/azlinux"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
 )
 
-var azlinuxTestRepoConfig = func(keyPath string) map[string]dalec.Source {
+var azlinuxTestRepoConfig = func(keyPath, repoPath string) map[string]dalec.Source {
+	suffixBytes := sha256.Sum256([]byte(repoPath))
+	suffix := hex.EncodeToString(suffixBytes[:])[:8]
 	return map[string]dalec.Source{
 		"local.repo": {
 			Inline: &dalec.SourceInline{
 				File: &dalec.SourceInlineFile{
-					Contents: fmt.Sprintf(`[Local]
+					Contents: fmt.Sprintf(`[Local-%s]
 name=Local Repository
-baseurl=file:///opt/repo
+baseurl=file://%s
 repo_gpgcheck=1
 priority=0
 enabled=1
 gpgkey=file:///etc/pki/rpm-gpg/%s
-	`, keyPath),
+metadata_expire=0
+	`, suffix, repoPath, keyPath),
 				},
 			},
 		},
 	}
-}
-
-func TestMariner2(t *testing.T) {
-	t.Parallel()
-
-	ctx := startTestSpan(baseCtx, t)
-	cfg := testLinuxConfig{
-		Target: targetConfig{
-			Package:   "mariner2/rpm",
-			Container: "mariner2/container",
-			Worker:    "mariner2/worker",
-			FormatDepEqual: func(v, _ string) string {
-				return v
-			},
-			ListExpectedSignFiles: azlinuxListSignFiles("cm2"),
-		},
-		LicenseDir: "/usr/share/licenses",
-		SystemdDir: struct {
-			Units   string
-			Targets string
-		}{
-			Units:   "/usr/lib/systemd",
-			Targets: "/etc/systemd/system",
-		},
-		Worker: workerConfig{
-			ContextName:    azlinux.Mariner2WorkerContextName,
-			CreateRepo:     createYumRepo(azlinux.Mariner2Config),
-			SignRepo:       signRepoAzLinux,
-			TestRepoConfig: azlinuxTestRepoConfig,
-		},
-		Release: OSRelease{
-			ID:        "mariner",
-			VersionID: "2.0",
-		},
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("cm2"),
-	}
-
-	testLinuxDistro(ctx, t, cfg)
-	testAzlinuxExtra(ctx, t, cfg)
 }
 
 func TestAzlinux3(t *testing.T) {
@@ -81,9 +43,12 @@ func TestAzlinux3(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
+			Key:                   "azlinux3",
 			Package:               "azlinux3/rpm",
 			Container:             "azlinux3/container",
+			DepsOnly:              "azlinux3/container/depsonly",
 			Worker:                "azlinux3/worker",
+			Sysext:                "azlinux3/testing/sysext",
 			ListExpectedSignFiles: azlinuxListSignFiles("azl3"),
 		},
 		LicenseDir: "/usr/share/licenses",
@@ -97,13 +62,15 @@ func TestAzlinux3(t *testing.T) {
 		Worker: workerConfig{
 			ContextName:    azlinux.Azlinux3WorkerContextName,
 			CreateRepo:     createYumRepo(azlinux.Azlinux3Config),
-			SignRepo:       signRepoAzLinux,
+			SignRepo:       signRepoDnf,
 			TestRepoConfig: azlinuxTestRepoConfig,
+			SysextWorker:   azlinux.Azlinux3Config.SysextWorker,
 		},
 		Release: OSRelease{
 			ID:        "azurelinux",
 			VersionID: "3.0",
 		},
+		SupportsGomodVersionUpdate: true,
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 			{OS: "linux", Architecture: "arm64"},
@@ -111,7 +78,7 @@ func TestAzlinux3(t *testing.T) {
 		PackageOutputPath: rpmTargetOutputPath("azl3"),
 	}
 	testLinuxDistro(ctx, t, cfg)
-	testAzlinuxExtra(ctx, t, cfg)
+	testAzlinuxExtra(ctx, t, cfg, azlinux.Azlinux3Config.ImageRef)
 
 	t.Run("ca-certs override", func(t *testing.T) {
 		t.Parallel()
@@ -120,13 +87,14 @@ func TestAzlinux3(t *testing.T) {
 	})
 }
 
-func testAzlinuxExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
-
+func testAzlinuxExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distroImageRef string) {
 	t.Run("base deps", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
 		testAzlinuxBaseDeps(ctx, t, cfg.Target)
 	})
+
+	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef)
 }
 
 func testAzlinuxCaCertsOverride(ctx context.Context, t *testing.T, target targetConfig) {
@@ -164,19 +132,46 @@ func azlinuxListSignFiles(ver string) func(*dalec.Spec, ocispecs.Platform) []str
 	}
 }
 
-func signRepoAzLinux(gpgKey llb.State) llb.StateOption {
+func signRepoDnf(gpgKey llb.State, repoPath string) llb.StateOption {
 	// key should be a state that has a public key under /public.key
 	return func(in llb.State) llb.State {
+		// For dnf-based distros, sign both packages and repo metadata.
+		// dnf verifies package signatures in addition to repo metadata signatures.
+
+		scriptDt := `
+#!/usr/bin/env bash
+
+set -eux -o pipefail
+
+if ! command -v rpm-sign &> /dev/null; then
+	dnf install -y rpm-sign
+fi
+
+gpg --import < /tmp/gpg/private.key
+ID=$(gpg --list-keys --keyid-format LONG | grep -B 2 'test@example.com' | grep 'pub' | awk '{print $2}' | cut -d'/' -f2)
+
+echo "%_gpg_name $ID" > ~/.rpmmacros
+find ` + repoPath + `/RPMS -name "*.rpm" -exec rpmsign --addsign {} \;
+
+# Regenerate (and sign) repo metadata
+rm -rf ` + repoPath + `/repodata
+createrepo --compatibility ` + repoPath + `
+gpg --detach-sign --default-key "$ID" --armor --yes ` + repoPath + `/repodata/repomd.xml
+`
+
+		pg := dalec.ProgressGroup("in-signing-script")
+
+		script := llb.Scratch().File(
+			llb.Mkfile("/script.sh", 0o755, []byte(scriptDt)),
+			pg,
+		)
+
 		return in.Run(
-			dalec.ShArgs("gpg --import < /tmp/gpg/private.key"),
+			llb.AddMount("/tmp/signing", script, llb.Readonly),
 			llb.AddMount("/tmp/gpg", gpgKey, llb.Readonly),
-			dalec.ProgressGroup("Importing gpg key")).
-			Run(
-				dalec.ShArgs(`ID=$(gpg --list-keys --keyid-format LONG | grep -B 2 'test@example.com' | grep 'pub' | awk '{print $2}' | cut -d'/' -f2) && \
-					gpg --list-keys --keyid-format LONG && \
-					gpg --detach-sign --default-key "$ID" --armor --yes /opt/repo/repodata/repomd.xml`),
-				llb.AddMount("/tmp/gpg", gpgKey, llb.Readonly),
-			).Root()
+			dalec.ShArgs("/tmp/signing/script.sh"),
+			pg,
+		).Root()
 	}
 }
 

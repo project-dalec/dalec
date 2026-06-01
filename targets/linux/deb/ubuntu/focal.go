@@ -1,7 +1,7 @@
 package ubuntu
 
 import (
-	"github.com/Azure/dalec/targets/linux/deb/distro"
+	"github.com/project-dalec/dalec/targets/linux/deb/distro"
 )
 
 const (

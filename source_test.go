@@ -49,10 +49,7 @@ func TestSourceGitSSH(t *testing.T) {
 		checkGitOp(t, ops2, &src)
 
 		// git ops require extra filtering to get the correct subdir, so we should have an extra op
-		if len(ops2) != len(ops)+1 {
-			t.Fatalf("expected %d ops, got %d", len(ops)+1, len(ops2))
-		}
-
+		assert.Check(t, cmp.Len(ops2, len(ops)+1))
 		checkFilter(t, ops2[1].GetFile(), &src)
 	})
 
@@ -178,6 +175,20 @@ func TestSourceGitHTTP(t *testing.T) {
 		checkGitOp(t, ops, &src)
 	})
 
+	t.Run("with checksum and git dir", func(t *testing.T) {
+		src := Source{
+			Git: &SourceGit{
+				URL:        "https://localhost/test.git",
+				Commit:     "v1.2.3",
+				Checksum:   "0123456789abcdef",
+				KeepGitDir: true,
+			},
+		}
+
+		ops := getSourceOp(ctx, t, src)
+		checkGitOp(t, ops, &src)
+	})
+
 	t.Run("gomod auth", func(t *testing.T) {
 		const (
 			numSecrets = 2
@@ -243,10 +254,7 @@ exit 0
 		},
 	}
 
-	st, err := spec.GomodDeps(sOpt, llb.Scratch())
-	if err != nil {
-		t.Fatalf("gomod generator failed: %s", err)
-	}
+	st := spec.GomodDeps(sOpt, llb.Scratch())
 	if st == nil {
 		t.Fatal("gomod generator succeeded but return value was nil")
 	}
@@ -319,6 +327,126 @@ func TestSourceHTTP(t *testing.T) {
 			t.Errorf("expected http.checksum %q, got %q", dgst.String(), op.Attrs[httpChecksum])
 		}
 	})
+}
+
+func TestSourceFilterAtPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	filter := SourceFilterConfig{GlobalExcludes: []string{"nested/bad.txt", "*.tmp"}}
+	st := llb.Scratch().File(llb.Mkfile("src/nested/bad.txt", 0o644, nil)).With(SourceFilterAtPath("src", filter))
+
+	def, err := st.Marshal(ctx)
+	assert.NilError(t, err)
+
+	var fileOp *pb.FileOp
+	for _, dt := range def.Def {
+		var op pb.Op
+		assert.NilError(t, op.Unmarshal(dt))
+		if op.GetFile() != nil {
+			fileOp = op.GetFile()
+		}
+	}
+	if fileOp == nil {
+		t.Fatal("expected file op")
+	}
+
+	cp := fileOp.Actions[0].GetCopy()
+	if cp == nil {
+		t.Fatal("expected copy action")
+	}
+	assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, []string{"src/nested/bad.txt", "src/*.tmp"}))
+}
+
+func TestSourceFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	filter := SourceFilterConfig{GlobalExcludes: []string{"bad.txt"}}
+	st := llb.Scratch().File(llb.Mkfile("bad.txt", 0o644, nil)).With(SourceFilter(filter))
+
+	def, err := st.Marshal(ctx)
+	assert.NilError(t, err)
+
+	var fileOp *pb.FileOp
+	for _, dt := range def.Def {
+		var op pb.Op
+		assert.NilError(t, op.Unmarshal(dt))
+		if op.GetFile() != nil {
+			fileOp = op.GetFile()
+		}
+	}
+	if fileOp == nil {
+		t.Fatal("expected file op")
+	}
+
+	cp := fileOp.Actions[0].GetCopy()
+	if cp == nil {
+		t.Fatal("expected copy action")
+	}
+	assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, filter.GlobalExcludes))
+}
+
+func TestSourceFilterEmptyNoop(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	base := llb.Scratch().File(llb.Mkfile("keep.txt", 0o644, nil))
+	filtered := base.With(SourceFilter(SourceFilterConfig{}))
+
+	baseDef, err := base.Marshal(ctx)
+	assert.NilError(t, err)
+	filteredDef, err := filtered.Marshal(ctx)
+	assert.NilError(t, err)
+
+	assert.Check(t, cmp.DeepEqual(filteredDef.Def, baseDef.Def))
+}
+
+func TestNodeModDepsSourceFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	spec := &Spec{Sources: map[string]Source{
+		"src": {
+			Inline: &SourceInline{Dir: &SourceInlineDir{Files: map[string]*SourceInlineFile{
+				"package.json": {Contents: "{}"},
+			}}},
+			Generate: []*SourceGenerator{{NodeMod: &GeneratorNodeMod{}}},
+		},
+	}}
+	spec.FillDefaults()
+
+	result := spec.NodeModDeps(SourceOpts{SourceFilter: func() (SourceFilterConfig, error) {
+		return SourceFilterConfig{GlobalExcludes: []string{"node_modules/**"}}, nil
+	}}, llb.Scratch())
+
+	st, ok := result["src"]
+	if !ok {
+		t.Fatal("expected generated node module source")
+	}
+
+	def, err := st.Marshal(ctx)
+	assert.NilError(t, err)
+
+	for _, dt := range def.Def {
+		var op pb.Op
+		assert.NilError(t, op.Unmarshal(dt))
+		fileOp := op.GetFile()
+		if fileOp == nil {
+			continue
+		}
+		for _, action := range fileOp.Actions {
+			cp := action.GetCopy()
+			if cp == nil {
+				continue
+			}
+			if slices.Equal(cp.ExcludePatterns, []string{"src/node_modules/**"}) {
+				return
+			}
+		}
+	}
+
+	t.Fatal("expected node module dependency output to be filtered with source-prefixed excludes")
 }
 
 func toImageRef(ref string) string {
@@ -466,7 +594,8 @@ func TestSourceDockerImage(t *testing.T) {
 					},
 				}
 
-				_, err := src.AsState("test", SourceOpts{})
+				st := src.ToState("test", SourceOpts{})
+				_, err := st.Marshal(ctx)
 				assert.ErrorIs(t, err, errInvalidMountConfig)
 			})
 
@@ -567,7 +696,7 @@ func TestSourceDockerImage(t *testing.T) {
 				nextCmd1 := getChildren(cmdOp, ops, dMap)
 				nextCmd2 := getChildren(nextCmd1[0], ops, dMap)
 
-				checkCmd(t, []*pb.Op{nextCmd1[0], nextCmd2[0]}, &src, [][]expectMount{{{dest: "/dst", selector: ""}}, noMountCheck})
+				checkCmd(t, []*pb.Op{nextCmd1[0], nextCmd2[0]}, &src, [][]expectMount{{{dest: "/dst", selector: "/"}}, noMountCheck})
 			})
 		})
 	})
@@ -637,6 +766,7 @@ func TestSourceContext(t *testing.T) {
 				src := src
 				src.Path = "subdir"
 				ops := getSourceOp(ctx, t, src)
+				assert.Assert(t, cmp.Len(ops, 2))
 				checkContext(t, ops[0].GetSource(), &src)
 				// for context source, we expect to have a copy operation as the last op when subdir is used
 				checkFilter(t, ops[1].GetFile(), &src)
@@ -647,13 +777,11 @@ func TestSourceContext(t *testing.T) {
 				src.Includes = []string{"foo", "bar"}
 				src.Excludes = []string{"baz"}
 				ops := getSourceOp(ctx, t, src)
-				checkContext(t, ops[0].GetSource(), &src)
 				// With include/exclude only, this should be handled with just one op.
 				// except... there are optimizations to prevent fetching the same context multiple times
 				// As such we need to make sure filters are applied correctly.
-				if len(ops) != 2 {
-					t.Fatalf("expected 1 op, got %d\n%s", len(ops), ops)
-				}
+				assert.Assert(t, cmp.Len(ops, 2))
+				checkContext(t, ops[0].GetSource(), &src)
 				checkFilter(t, ops[1].GetFile(), &src)
 			})
 
@@ -662,9 +790,12 @@ func TestSourceContext(t *testing.T) {
 				src.Path = "subdir"
 				src.Includes = []string{"foo", "bar"}
 				src.Excludes = []string{"baz"}
+				t.Log("includes before: ", src.Includes)
+				t.Log("excludes before:", src.Excludes)
 				ops := getSourceOp(ctx, t, src)
-				checkContext(t, ops[0].GetSource(), &src)
 				// for context source, we expect to have a copy operation as the last op when subdir is used
+				assert.Assert(t, cmp.Len(ops, 2))
+				checkContext(t, ops[0].GetSource(), &src)
 				checkFilter(t, ops[1].GetFile(), &src)
 			})
 		})
@@ -687,6 +818,16 @@ func TestSourceContext(t *testing.T) {
 		ops := getSourceOp(ctx, t, src)
 		checkContext(t, ops[0].GetSource(), &src)
 		testWithFilters(t, src)
+	})
+
+	t.Run("with source filter", func(t *testing.T) {
+		src := Source{Context: &SourceContext{}}
+		sOpt := prepareGetSourceOp(ctx, t, &src)
+		sOpt.SourceFilter = func() (SourceFilterConfig, error) {
+			return SourceFilterConfig{GlobalExcludes: []string{"drop.txt"}}, nil
+		}
+		ops := getSourceOpWithOpts(ctx, t, src, sOpt)
+		checkContext(t, ops[0].GetSource(), &Source{Context: &SourceContext{}, Excludes: []string{"drop.txt"}})
 	})
 }
 
@@ -808,6 +949,26 @@ func TestSourceInlineDir(t *testing.T) {
 			})
 		})
 	}
+
+	t.Run("with source filter", func(t *testing.T) {
+		src := Source{Inline: &SourceInline{Dir: &SourceInlineDir{Files: map[string]*SourceInlineFile{
+			"keep.txt": {Contents: "keep"},
+			"drop.txt": {Contents: "drop"},
+		}}}}
+		sOpt := SourceOpts{SourceFilter: func() (SourceFilterConfig, error) {
+			return SourceFilterConfig{GlobalExcludes: []string{"drop.txt"}}, nil
+		}}
+		ops := getSourceOpWithOpts(ctx, t, src, sOpt)
+		if len(ops) != 4 {
+			t.Fatalf("expected mkdir, two mkfile ops, and filter copy op, got %d", len(ops))
+		}
+
+		cp := ops[3].GetFile().Actions[0].GetCopy()
+		if cp == nil {
+			t.Fatal("expected copy action")
+		}
+		assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, []string{"drop.txt"}))
+	})
 }
 
 func checkMkdir(t *testing.T, op *pb.FileOp, src *SourceInlineDir) {
@@ -916,13 +1077,10 @@ func stubListener(t *testing.T) net.Addr {
 	return l.Addr()
 }
 
-// 1. Generates the LLB for a source using Source2LLBGetter (the function we are testing)
-// 2. Marshals the LLB to a protobuf (since we don't have access to the data in LLB directly)
-// 3. Unmarshals the protobuf to get the [pb.Op]s which is what buildkit would act on to get the actual source data during build.
-func getSourceOp(ctx context.Context, t *testing.T, src Source) []*pb.Op {
+func prepareGetSourceOp(ctx context.Context, t *testing.T, src *Source) SourceOpts {
 	t.Helper()
 
-	fillDefaults(&src)
+	src.fillDefaults()
 
 	var sOpt SourceOpts
 	if src.Build != nil {
@@ -944,11 +1102,14 @@ func getSourceOp(ctx context.Context, t *testing.T, src Source) []*pb.Op {
 		st := llb.Local(name, opts...)
 		return &st, nil
 	}
+	return sOpt
+}
 
-	st, err := src.AsState("test", sOpt)
-	if err != nil {
-		t.Fatal(err)
-	}
+// 1. Generates the LLB for a source using Source2LLBGetter (the function we are testing)
+// 2. Marshals the LLB to a protobuf (since we don't have access to the data in LLB directly)
+// 3. Unmarshals the protobuf to get the [pb.Op]s which is what buildkit would act on to get the actual source data during build.
+func sourceOpsFromState(ctx context.Context, t *testing.T, st llb.State) []*pb.Op {
+	t.Helper()
 
 	def, err := st.Marshal(ctx)
 	if err != nil {
@@ -968,6 +1129,54 @@ func getSourceOp(ctx context.Context, t *testing.T, src Source) []*pb.Op {
 	}
 
 	return out
+}
+
+func getSourceOp(ctx context.Context, t *testing.T, src Source) []*pb.Op {
+	t.Helper()
+
+	s := &src
+	sOpt := prepareGetSourceOp(ctx, t, s)
+	src = *s
+
+	// The name we pass to `ToState` will be the path that the source is copied to
+	// For dirs, and the sake of tests, don't use any name so the everything is
+	// at the root path.
+	// Files must have a name, so give it a name of "test".
+	name := ""
+	if !src.IsDir() {
+		name = "test"
+	}
+
+	st := src.ToState(name, sOpt)
+	return sourceOpsFromState(ctx, t, st)
+}
+
+func getSourceOpWithOpts(ctx context.Context, t *testing.T, src Source, sOpt SourceOpts) []*pb.Op {
+	t.Helper()
+	src.fillDefaults()
+	name := ""
+	if !src.IsDir() {
+		name = "test"
+	}
+	st := src.ToState(name, sOpt)
+	return sourceOpsFromState(ctx, t, st)
+}
+
+func getMountOp(ctx context.Context, t *testing.T, src Source, target string) []*pb.Op {
+	t.Helper()
+
+	s := &src
+	sOpt := prepareGetSourceOp(ctx, t, s)
+	src = *s
+
+	srcSt, mountOpts := src.ToMount(sOpt)
+
+	st := llb.Scratch().Run(
+		llb.Args([]string{"true"}),
+		llb.AddMount(target, srcSt, mountOpts...),
+	).Root()
+
+	return sourceOpsFromState(ctx, t, st)
 }
 
 func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
@@ -996,6 +1205,18 @@ func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
 
 	if op.Attrs["git.fullurl"] != src.Git.URL {
 		t.Errorf("expected git.fullurl %q, got %q", src.Git.URL, op.Attrs["git.fullurl"])
+	}
+
+	if src.Git.Checksum != "" {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrGitChecksum], src.Git.Checksum), op.Attrs)
+	} else {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrGitChecksum], ""), op.Attrs)
+	}
+
+	if src.Git.KeepGitDir {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrKeepGitDir], "true"), op.Attrs)
+	} else {
+		assert.Check(t, cmp.Equal(op.Attrs[pb.AttrKeepGitDir], ""), op.Attrs)
 	}
 
 	const (
@@ -1028,7 +1249,7 @@ func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
 
 func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, expectedNumSecrets, expectedNumSSH int) {
 	const (
-		scriptExecOpIdx = 3
+		scriptExecOpIdx = 4
 	)
 
 	var (
@@ -1038,6 +1259,7 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 
 	// Check that the requests for secrets are there for when the script runs.
 	scriptOp := ops[scriptExecOpIdx].GetExec()
+	assert.Assert(t, scriptOp != nil, "expected script exec op")
 
 	secrets := map[string]struct{}{}
 	for _, mnt := range scriptOp.Mounts {
@@ -1086,6 +1308,7 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 	}
 
 	// check that the inputs are mounted
+	var mkfileFound bool
 	for i := range ops[scriptExecOpIdx].Inputs {
 		inpDigest := ops[scriptExecOpIdx].Inputs[i].Digest
 		mf, hasMkFileDigest := m[inpDigest]
@@ -1099,17 +1322,25 @@ func checkGitAuth(t *testing.T, m map[string]*pb.Op, ops []*pb.Op, src *Source, 
 		// Check that it depends on the `mkfile` op which generates the script.
 		assert.Check(t, cmp.Len(mkFileOp.Actions, 1), mkFileOp)
 		famf, ok := mkFileOp.Actions[0].Action.(*pb.FileAction_Mkfile)
-		assert.Check(t, ok, mkFileOp)
-		basename := strings.TrimPrefix(filepath.Base(famf.Mkfile.Path), "/")
+		if !ok {
+			continue
+		}
 
+		assert.Assert(t, ok, "expected mkfile action, got %T:\n%s", mkFileOp.Actions[0].Action, mkFileOp.String())
+
+		basename := strings.TrimPrefix(filepath.Base(famf.Mkfile.Path), "/")
 		// This is from the way the test is set up, but will not be the case during actual runtime
 		if basename == "frontend" {
 			continue
 		}
 
+		mkfileFound = true
 		_, hasValidFilename := validBasenames[basename]
 		assert.Check(t, hasValidFilename, basename)
+		break
 	}
+
+	assert.Check(t, mkfileFound)
 }
 
 func hasSSHMount(scriptOp *pb.ExecOp) bool {
@@ -1136,6 +1367,7 @@ func checkFilter(t *testing.T, op *pb.FileOp, src *Source) {
 	t.Helper()
 	if op == nil {
 		t.Fatal("expected file op")
+		return
 	}
 
 	cpAction := op.Actions[0].GetCopy()
@@ -1144,14 +1376,18 @@ func checkFilter(t *testing.T, op *pb.FileOp, src *Source) {
 	}
 
 	if cpAction.Dest != "/" {
-		t.Errorf("expected dest \"/\", got %q", cpAction.Dest)
+		t.Errorf("expected dest \"/test\", got %q:\n%+v\n\n%+v", cpAction.Dest, src, op)
 	}
+
+	includes := src.Includes
+	excludes := src.Excludes
 
 	p := src.Path
 	if src.DockerImage != nil {
 		// DockerImage handles subpaths itself
 		p = "/"
 	}
+
 	if !filepath.IsAbs(p) {
 		p = "/" + p
 	}
@@ -1162,13 +1398,8 @@ func checkFilter(t *testing.T, op *pb.FileOp, src *Source) {
 		t.Error("expected dir copy contents")
 	}
 
-	if !reflect.DeepEqual(cpAction.IncludePatterns, src.Includes) {
-		t.Fatalf("expected include patterns %v, got %v", src.Includes, cpAction.IncludePatterns)
-	}
-
-	if !reflect.DeepEqual(cpAction.ExcludePatterns, src.Excludes) {
-		t.Fatalf("expected exclude patterns %v, got %v", src.Excludes, cpAction.ExcludePatterns)
-	}
+	assert.Check(t, cmp.DeepEqual(cpAction.IncludePatterns, includes))
+	assert.Check(t, cmp.DeepEqual(cpAction.ExcludePatterns, excludes))
 }
 
 type expectMount struct {
@@ -1242,31 +1473,39 @@ func checkContext(t *testing.T, op *pb.SourceOp, src *Source) {
 		t.Errorf("expected identifier %q, got %q", xID, op.Identifier)
 	}
 
-	if src.Includes != nil {
-		includesJson, err := json.Marshal(src.Includes)
+	if len(src.Includes) > 0 {
+		includes := make([]string, len(src.Includes))
+		for i, in := range src.Includes {
+			includes[i] = filepath.Join(src.Path, in)
+		}
+
+		includesJson, err := json.Marshal(includes)
 		if err != nil {
 			t.Fatal(err)
 		}
 		localIncludes := op.Attrs["local.includepattern"]
-
-		if string(includesJson) != localIncludes {
-			t.Errorf("expected includes %q on local op, got %q", includesJson, localIncludes)
-		}
-
+		assert.Check(t, cmp.Equal(string(includesJson), localIncludes))
 	}
 
+	var excludes []string
+	if len(src.Excludes) > 0 {
+		excludes = make([]string, len(src.Excludes))
+		for i, ex := range src.Excludes {
+			excludes[i] = filepath.Join(src.Path, ex)
+		}
+	}
 	if !isRoot(src.Path) {
-		expect := append(excludeAllButPath(src.Path), src.Excludes...)
+		expect := append(excludeAllButPath(src.Path), excludes...)
 
 		var actual []string
 		localExcludes := op.Attrs["local.excludepatterns"]
 		err := json.Unmarshal([]byte(localExcludes), &actual)
-		assert.NilError(t, err)
+		assert.NilError(t, err, op)
 		assert.Check(t, cmp.DeepEqual(actual, expect))
 	}
 
 	if src.Excludes != nil {
-		v := src.Excludes
+		v := excludes
 		if src.Path != "" {
 			v = append(excludeAllButPath(src.Path), v...)
 		}
@@ -1351,4 +1590,35 @@ func Test_pathHasPrefix(t *testing.T) {
 			assert.Equal(t, hasPrefix, tc.expect)
 		})
 	}
+}
+
+func TestSourceToMount(t *testing.T) {
+	t.Run("HTTP", func(t *testing.T) {
+		src := Source{
+			HTTP: &SourceHTTP{
+				URL: "https://example.com/file.tar.gz",
+			},
+		}
+
+		ctx := context.Background()
+		ops := getMountOp(ctx, t, src, "/mnt")
+
+		if len(ops) == 0 {
+			t.Fatal("expected at least 1 op")
+		}
+
+		assert.Assert(t, cmp.Len(ops, 2))
+
+		srcOp := ops[0].GetSource()
+		execOp := ops[1].GetExec()
+		assert.Assert(t, srcOp != nil)
+		assert.Assert(t, execOp != nil)
+		assert.Assert(t, cmp.Len(execOp.Mounts, 2)) // rootfs mount and http mount
+
+		assert.Check(t, cmp.Equal(src.HTTP.URL, srcOp.Identifier))
+		assert.Check(t, cmp.Equal(srcOp.Attrs["http.filename"], internalMountSourceName))
+
+		assert.Check(t, cmp.Equal("/mnt", execOp.Mounts[1].Dest))
+		assert.Check(t, cmp.Equal(internalMountSourceName, execOp.Mounts[1].Selector)) // should match the filename we set on the source op
+	})
 }

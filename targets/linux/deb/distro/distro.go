@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/frontend"
-	"github.com/Azure/dalec/targets/linux"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/targets/linux"
 )
 
 var (
@@ -36,9 +36,12 @@ type Config struct {
 	DefaultOutputImage string
 
 	// ExtraRepos is used by distributions that want to enable extra repositories
-	// that are not inthe base worker config.
+	// that are not in the base worker config.
 	// A prime example of this is adding Debian backports on debian distributions.
 	ExtraRepos []dalec.PackageRepositoryConfig
+
+	// erofs-utils 1.7+ is required for tar support.
+	SysextSupported bool
 }
 
 func (cfg *Config) BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
@@ -65,7 +68,9 @@ func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec,
 	}
 
 	dt, err := bi.ResolveImageConfig(ctx, sOpt, sourceresolver.Opt{
-		Platform: platform,
+		ImageOpt: &sourceresolver.ResolveImageOpt{
+			Platform: platform,
+		},
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error resolving base image config")
@@ -78,7 +83,7 @@ func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec,
 	return &img, nil
 }
 
-func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.RunOption, error) {
+func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.RunOption {
 	opts = append(opts, dalec.ProgressGroup("Prepare custom repos"))
 
 	repoConfig := cfg.RepoPlatformConfig
@@ -86,22 +91,11 @@ func (cfg *Config) RepoMounts(repos []dalec.PackageRepositoryConfig, sOpt dalec.
 		repoConfig = defaultRepoConfig
 	}
 
-	withRepos, err := dalec.WithRepoConfigs(repos, repoConfig, sOpt, opts...)
-	if err != nil {
-		return nil, err
-	}
+	withRepos := dalec.WithRepoConfigs(repos, repoConfig, sOpt, opts...)
+	withData := dalec.WithRepoData(repos, sOpt, opts...)
+	keyMounts, _ := dalec.GetRepoKeys(repos, repoConfig, sOpt, opts...)
 
-	withData, err := dalec.WithRepoData(repos, sOpt, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	keyMounts, _, err := dalec.GetRepoKeys(repos, repoConfig, sOpt, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return dalec.WithRunOptions(withRepos, withData, keyMounts), nil
+	return dalec.WithRunOptions(withRepos, withData, keyMounts)
 }
 
 func (cfg *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
@@ -127,6 +121,13 @@ func (cfg *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclien
 		Name:        "worker",
 		Description: "Builds the worker image.",
 	})
+
+	if cfg.SysextSupported {
+		mux.Add("testing/sysext", linux.HandleSysext(cfg), &targets.Target{
+			Name:        "testing/sysext",
+			Description: "Builds a systemd system extension image.",
+		})
+	}
 
 	return mux.Handle(ctx, client)
 }

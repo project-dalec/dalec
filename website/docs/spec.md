@@ -7,7 +7,7 @@ Dalec YAML specification is a declarative format for building system packages an
 This section provides a high level overview of the Dalec YAML specification. For more detailed information, please see the applicable sections.
 
 :::note
-All Dalec spec YAMLs must start with `# syntax=ghcr.io/azure/dalec/frontend:latest`.
+All Dalec spec YAMLs must start with `# syntax=ghcr.io/project-dalec/dalec/frontend:latest`.
 :::
 
 Dalec spec YAMLs are composed of the following sections:
@@ -47,7 +47,7 @@ args:
 
 These arguments are set based on the default docker platform for the machine, *unless* the platform is overridden explicitly in the docker build with `--platform`. For example, upon invoking `docker build` on a Linux amd64 machine, we would have `TARGETOS=linux`, `TARGETARCH=amd64`, `TARGETPLATFORM=linux/amd64`.
 
-`DALEC_TARGET` is set to the target name, such as `mariner2`, `azlinux3`, or `windowscross`.
+`DALEC_TARGET` is set to the target name, such as `azlinux3` or `windowscross`.
 
 :::note
 No default value should be included for these build args. These args are opt-in. If you haven't listed them in the args section as shown above, Dalec will **not** substitute values for them.
@@ -135,24 +135,14 @@ Targets section is used to define configuration per target. Each target can have
 
 ```yaml
 targets:
-  mariner2:
-    image:
-      base: mcr.microsoft.com/cbl-mariner/distroless/minimal:2.0
-      post:
-        symlinks:
-          /usr/bin/my-binary:
-            paths:
-              - /my-binary
-    package_config:
-      signer:
-        image: azcutools.azurecr.io/azcu-dalec/signer:latest
   azlinux3:
     # same fields as above
   windowscross:
     # same fields as above
 ```
 
-Valid targets are `mariner2`, `azlinux3`, `windowscross`.
+Targets can either be built-in or reference an external image reference that
+handles the target build.
 
 For more information, please see [Targets](targets.md).
 
@@ -164,7 +154,7 @@ Example:
 
 ```yaml
 image:
-  base: mcr.microsoft.com/cbl-mariner/distroless/minimal:2.0
+  base: mcr.microsoft.com/azurelinux/distroless/minimal:3.0
   post:
     symlinks:
       /usr/bin/my-binary:
@@ -190,7 +180,8 @@ sources:
   foo:
     git:
       url: https://github.com/foo/bar.git
-      commit: ${COMMIT}
+      commit: ${TAG}
+      checksum: ${COMMIT}
       keepGitDir: true
     generate:
     - gomod: {}
@@ -284,6 +275,11 @@ TARGETOS is a built-in argument that Dalec will substitute with the target OS va
 Set `network_mode` to `sandbox` to allow internet access during build
 :::
 
+The input of a build is a directory with all [sources](#sources-section) laid out based on their source name.
+The output of a build is the content of the input with all the provided steps executed against it.
+A spec is not required to define a build section, in which case the output is the same as the input.
+This feeds directly into the [artifacts section](#artifacts-section).
+
 ## Artifacts section
 
 Artifacts section is used to define the artifacts for the spec. These artifacts can be used to define the output of the build, such as the package or container image.
@@ -325,7 +321,7 @@ For more information, please see [Testing](testing.md).
 ## Changelog section
 
 Changelog section is used to define the changelog for the spec. This changelog can be used to define the changes made to the package which may include patches,
-updating source versions, triggering rebuilds to update dependencies, or basically any change to the spec that will trigger a new revision of the package. 
+updating source versions, triggering rebuilds to update dependencies, or basically any change to the spec that will trigger a new revision of the package.
 
 The channgelog is stored in the package metadata, where supported, and as such can be viewed by the package manager tooling.
 

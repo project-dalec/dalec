@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Azure/dalec"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
+	"github.com/project-dalec/dalec"
 	"gotest.tools/v3/assert"
 )
 
@@ -39,7 +39,7 @@ func testBuildNetworkMode(ctx context.Context, t *testing.T, cfg targetConfig) {
 				Version:     "0.0.1",
 				Revision:    "1",
 				License:     "MIT",
-				Website:     "https://github.com/azure/dalec",
+				Website:     "https://github.com/project-dalec/dalec",
 				Vendor:      "Dalec",
 				Packager:    "Dalec",
 				Description: "Should not have internet access during build",

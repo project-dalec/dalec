@@ -1,8 +1,10 @@
 package dalec
 
 import (
+	"context"
 	"path/filepath"
 
+	"github.com/goccy/go-yaml/ast"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/pkg/errors"
 )
@@ -30,10 +32,10 @@ func (s *Spec) HasCargohomes() bool {
 	return false
 }
 
-func withCargohome(g *SourceGenerator, srcSt, worker llb.State, opts ...llb.ConstraintsOpt) func(llb.State) llb.State {
+func withCargohome(g *SourceGenerator, srcSt, worker llb.State, subPath string, opts ...llb.ConstraintsOpt) func(llb.State) llb.State {
 	return func(in llb.State) llb.State {
 		workDir := "/work/src"
-		joinedWorkDir := filepath.Join(workDir, g.Subpath)
+		joinedWorkDir := filepath.Join(workDir, subPath, g.Subpath)
 		srcMount := llb.AddMount(workDir, srcSt)
 
 		paths := g.Cargohome.Paths
@@ -48,6 +50,7 @@ func withCargohome(g *SourceGenerator, srcSt, worker llb.State, opts ...llb.Cons
 				llb.Dir(filepath.Join(joinedWorkDir, path)),
 				srcMount,
 				WithConstraints(opts...),
+				g.Cargohome._sourceMap.GetLocation(in),
 			).AddMount(cargoHomeDir, in)
 		}
 		return in
@@ -67,23 +70,20 @@ func (s *Spec) cargohomeSources() map[string]Source {
 // CargohomeDeps returns an [llb.State] containing all the Cargo dependencies for the spec
 // for any sources that have a cargohome generator specified.
 // If there are no sources with a cargohome generator, this will return a nil state.
-func (s *Spec) CargohomeDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) (*llb.State, error) {
+func (s *Spec) CargohomeDeps(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) *llb.State {
 	sources := s.cargohomeSources()
 	if len(sources) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	deps := llb.Scratch()
 
 	// Get the patched sources for the Cargo projects
 	// This is needed in case a patch includes changes to Cargo.toml or Cargo.lock
-	patched, err := s.getPatchedSources(sOpt, worker, func(name string) bool {
+	patched := s.getPatchedSources(sOpt, worker, func(name string) bool {
 		_, ok := sources[name]
 		return ok
 	}, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get patched sources")
-	}
 
 	sorted := SortMapKeys(patched)
 
@@ -94,12 +94,27 @@ func (s *Spec) CargohomeDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Cons
 		deps = deps.With(func(in llb.State) llb.State {
 			for _, gen := range src.Generate {
 				if gen.Cargohome != nil {
-					in = in.With(withCargohome(gen, patched[key], worker, opts...))
+					in = in.With(withCargohome(gen, patched[key], worker, key, opts...))
 				}
 			}
 			return in
 		})
 	}
 
-	return &deps, nil
+	deps = deps.With(sourceFilter(sOpt, opts...))
+	return &deps
+}
+
+func (gen *GeneratorCargohome) UnmarshalYAML(ctx context.Context, node ast.Node) error {
+	type internal GeneratorCargohome
+	var i internal
+
+	dec := getDecoder(ctx)
+	if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
+		return errors.Wrap(err, "failed to decode cargohome generator")
+	}
+
+	*gen = GeneratorCargohome(i)
+	gen._sourceMap = newSourceMap(ctx, node)
+	return nil
 }

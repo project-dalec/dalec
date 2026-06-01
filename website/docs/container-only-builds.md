@@ -2,34 +2,51 @@
 title: Container-only builds
 ---
 
+Dalec can create minimal container images with only specific packages installed, without building from source code. This is useful for creating minimal container images with just the runtime dependencies you need.
 
-It is possible to use Dalec when you wish to build a minimal image from scratch or based on one of Dalec's supported distros (see [Targets](targets.md) for a list of these) with only certain packages installed. To do this, simply define a Dalec spec with only runtime dependencies specified. The resulting image will contain only the specified packages and their dependencies.
+## How it Works
+
+When you specify only runtime dependencies in a Dalec spec (no sources or build steps), Dalec creates a [Virtual Package](virtual-packages.md) and installs it in the target base image. The result is a minimal container with only your specified packages and their dependencies.
+
+## Example: Minimal Image with curl and bash
 
 ```yaml
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 name: my-minimal-image
 version: 0.1.0
-license: MIT
-description: A minimal distroless image with only curl and shell access
 revision: 1
+license: MIT
+description: A minimal image with only curl and shell access
 
 dependencies:
-    runtime:
-        curl:
-        bash:
+  runtime:
+    curl:
+    bash:
 
 image:
-    entrypoint: /bin/bash
-
+  entrypoint: /bin/bash
 ```
 
-Then, to build:
-`docker buildx build -f my-minimal-image.yml --target=mariner2 -t my-minimal-image:0.1.0 .`
+Build the container:
 
-This will produce a minimal image from `scratch` with `curl`, `bash`, and just a few other essential packages such as `prebuilt-ca-certificates` and `tzdata`. 
+```shell
+docker build -f my-minimal-image.yml --target=azlinux3 -t my-minimal-image:0.1.0 .
+```
 
-How does this work? Dalec will create a [Virtual Package](virtual-packages.md) which has only the specified runtime dependencies and install this in the target base image. This is where the `--target=mariner2` flag comes in. Even though the resulting image is from scratch, it will have the specified packages installed from mariner2 repos.
+This produces a minimal image built from `scratch` containing:
 
-:::note
-Dalec needs to use the [buildx cli](https://github.com/docker/buildx#manual-download) in order to interact with a buildkit builder. In newer versions of docker, `docker build` is an alias for `docker buildx build`, and so the `docker buildx` command can be used interchangeably with `docker build`. However, if unsure or using an old version of docker, use `docker buildx` to ensure compatibility.
+- `curl` and `bash`
+- Essential packages like `prebuilt-ca-certificates` and `tzdata`
+- Dependencies of the specified packages
+
+The `--target=azlinux3` flag tells Dalec to use Azure Linux 3 repositories for package installation, even though the final image starts from scratch.
+
+:::tip
+
+Alternatively, you can omit creating a Dalec spec file by passing the dependencies directly in the command line. This is useful for quick builds without needing a spec file.
+
+```bash
+docker build -t my-minimal-image:0.1.0 --build-arg BUILDKIT_SYNTAX=ghcr.io/project-dalec/dalec/frontend:latest --target=azlinux3/container/depsonly -<<<"$(jq -c '.dependencies.runtime = {"curl": {}, "bash": {}} | .image.entrypoint = "/bin/bash"' <<<"{}" )"
+```
+
 :::

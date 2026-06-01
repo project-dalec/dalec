@@ -11,12 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/dalec"
-	"github.com/Azure/dalec/sessionutil/socketprovider"
-	"github.com/Azure/dalec/targets"
-	"github.com/Azure/dalec/test/internal/bazeltest"
-	"github.com/Azure/dalec/test/testenv"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/sessionutil/socketprovider"
+	"github.com/project-dalec/dalec/targets"
+	"github.com/project-dalec/dalec/test/internal/bazeltest"
+	"github.com/project-dalec/dalec/test/testenv"
 	"google.golang.org/grpc"
 	"gotest.tools/v3/assert"
 )
@@ -56,6 +56,11 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 			},
 		},
 		{
+			RustSCCache: &dalec.SCCache{
+				Scope: randKey,
+			},
+		},
+		{
 			Bazel: &dalec.BazelCache{
 				Scope: randKey,
 			},
@@ -78,6 +83,9 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 		}
 		if c.GoBuild != nil {
 			return "${GOCACHE}"
+		}
+		if c.RustSCCache != nil {
+			return "${SCCACHE_DIR}"
 		}
 		if c.Bazel != nil {
 			// There is no good way to determine the bazel cache dir
@@ -147,7 +155,7 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 				// Use the *original* distro name here since that is what wrote the file
 				check := fmt.Sprintf("%s %d", distro, i)
 				cmds = append(cmds, fmt.Sprintf("grep %q %s", check, filepath.Join(dir, "hello")))
-			case c.GoBuild != nil || c.Bazel != nil:
+			case c.GoBuild != nil || c.RustSCCache != nil || c.Bazel != nil:
 				// This should not exist because the cache is not shared between distros
 				cmds = append(cmds, fmt.Sprintf("[ ! -f %q ]", filepath.Join(dir, "hello")))
 			}
@@ -341,6 +349,87 @@ func testAutoGobuildCache(ctx context.Context, t *testing.T, cfg targetConfig) {
 
 		// Also make sure there is no autocache when there is no golang dependency
 		spec = specWithCommand("[ -z \"${GOCACHE}\" ]")
+		spec.Dependencies = nil
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+	})
+}
+
+func testRustCache(ctx context.Context, t *testing.T, cfg targetConfig) {
+	ctx = startTestSpan(ctx, t)
+
+	specWithCommand := func(cmd string) *dalec.Spec {
+		spec := newSimpleSpec()
+		spec.Dependencies = &dalec.PackageDependencies{
+			Build: make(map[string]dalec.PackageConstraints),
+		}
+
+		// Handle space-separated package lists from PackageOverrides
+		rustPackages := cfg.GetPackage("rust")
+		for _, pkg := range strings.Fields(rustPackages) {
+			spec.Dependencies.Build[pkg] = dalec.PackageConstraints{}
+		}
+
+		spec.Build.Steps = append(spec.Build.Steps, dalec.BuildStep{
+			Command: cmd,
+		})
+		return spec
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		// Test no cache
+		spec := specWithCommand("[ -z \"${SCCACHE_DIR}\" ] && [ -z \"${RUSTC_WRAPPER}\" ]")
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+
+		// Test explicitly enabled cargo cache with RUSTC_WRAPPER
+		buf := bytes.NewBuffer(nil)
+		buf.WriteString("set -ex;\n")
+		buf.WriteString("[ -n \"$RUSTC_WRAPPER\" ]\n")
+		buf.WriteString("[ -x \"$RUSTC_WRAPPER\" ]\n")
+		buf.WriteString("echo \"RUSTC_WRAPPER is set to: $RUSTC_WRAPPER\"\n")
+
+		spec = specWithCommand(buf.String())
+		spec.Build.Caches = []dalec.CacheConfig{
+			{RustSCCache: &dalec.SCCache{}},
+		}
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+
+		// Test the sccache functionality and that cache directory works
+		buf.Reset()
+		buf.WriteString("set -ex;\n")
+		buf.WriteString("[ -d \"$SCCACHE_DIR\" ]; echo hello > ${SCCACHE_DIR}/hello\n")
+
+		spec = specWithCommand(buf.String())
+		spec.Build.Caches = []dalec.CacheConfig{
+			{RustSCCache: &dalec.SCCache{}},
+		}
+		// Set ignore cache to make sure we always run the command so the cache is guaranteed to be populated
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package), withIgnoreCache(targets.IgnoreCacheKeyPkg))
+		solveT(ctx, t, client, sr)
+
+		buf.Reset()
+		buf.WriteString("set -ex;\n")
+		buf.WriteString("[ -d \"$SCCACHE_DIR\" ]; grep hello ${SCCACHE_DIR}/hello\n")
+		spec = specWithCommand(buf.String())
+		spec.Build.Caches = []dalec.CacheConfig{
+			{RustSCCache: &dalec.SCCache{}},
+		}
+
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+
+		// Test that rust sccache is enabled when specified in config
+		spec = specWithCommand("[ -n \"${SCCACHE_DIR}\" ] && [ -n \"${RUSTC_WRAPPER}\" ]")
+		spec.Build.Caches = []dalec.CacheConfig{
+			{RustSCCache: &dalec.SCCache{}},
+		}
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+
+		// Also make sure there is no autocache when there is no rust dependency
+		spec = specWithCommand("[ -z \"${SCCACHE_DIR}\" ] && [ -z \"${RUSTC_WRAPPER}\" ]")
 		spec.Dependencies = nil
 		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
 		solveT(ctx, t, client, sr)

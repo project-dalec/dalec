@@ -31,6 +31,17 @@ $ yarn start
 
 This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
 
+### Algolia Search Configuration
+
+Algolia search is configured via environment variables. Copy `.env.example` to `.env` (or export the variables yourself) and provide the search-only key:
+
+```console
+$ cp website/.env.example website/.env
+$ echo "ALGOLIA_API_KEY=<search-only-key>" >> website/.env
+```
+
+Leaving `ALGOLIA_API_KEY` unset disables search locally while keeping the docs otherwise functional.
+
 ### Build
 
 ```

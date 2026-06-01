@@ -1,13 +1,15 @@
 package dalec
 
 import (
+	"context"
 	goerrors "errors"
 	"fmt"
-	"strings"
+	"io"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	"github.com/moby/buildkit/frontend/dockerui"
-	"github.com/pkg/errors"
+	"github.com/moby/buildkit/solver/errdefs"
 )
 
 // SourceBuild is used to generate source from a DockerFile build.
@@ -25,46 +27,110 @@ type SourceBuild struct {
 	Target string `yaml:"target,omitempty" json:"target,omitempty"`
 	// Args are the build args to pass to the build.
 	Args map[string]string `yaml:"args,omitempty" json:"args,omitempty"`
+
+	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
-func (s *SourceBuild) validate(failContext ...string) (retErr error) {
-	defer func() {
-		if retErr != nil && failContext != nil {
-			retErr = errors.Wrap(retErr, strings.Join(failContext, " "))
-		}
-	}()
-
+func (s *SourceBuild) validate(fetchOptions) error {
+	var errs []error
 	if s.Source.Build != nil {
-		return goerrors.Join(retErr, fmt.Errorf("build sources cannot be recursive"))
+		err := fmt.Errorf("build sources cannot be recursive")
+		err = errdefs.WithSource(err, s.Source.Build._sourceMap.GetErrdefsSource())
+		errs = append(errs, err)
 	}
 
-	if err := s.Source.validate("build subsource"); err != nil {
-		retErr = goerrors.Join(retErr, err)
+	if err := s.Source.validate(); err != nil {
+		errs = append(errs, fmt.Errorf("build source: %w", err))
 	}
 
-	return
+	if len(errs) == 0 {
+		return nil
+	}
+	return goerrors.Join(errs...)
 }
 
-func (src *SourceBuild) AsState(name string, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
-	if src.Source.Inline != nil && src.Source.Inline.File != nil {
-		name = src.DockerfilePath
-		if name == "" {
-			name = dockerui.DefaultDockerfileName
+func (src *SourceBuild) baseState(opts fetchOptions) llb.State {
+	var name string
+
+	if !src.Source.IsDir() {
+		name = dockerui.DefaultDockerfileName
+		if src.DockerfilePath != "" {
+			name = src.DockerfilePath
 		}
 	}
 
-	st, err := src.Source.AsState(name, sOpt, opts...)
-	if err != nil {
-		if !errors.Is(err, errNoSourceVariant) {
-			return llb.Scratch(), err
-		}
-		st = llb.Scratch()
-	}
+	st := src.Source.ToState(name, opts.SourceOpt, opts.Constraints...)
 
-	st, err = sOpt.Forward(st, src, opts...)
-	if err != nil {
-		return llb.Scratch(), err
-	}
+	return st.Async(func(ctx context.Context, in llb.State, c *llb.Constraints) (llb.State, error) {
+		// prepend the constraints passed into the async call to the ones from the source
+		cOpts := []llb.ConstraintsOpt{WithConstraint(c)}
+		cOpts = append(cOpts, opts.Constraints...)
+		cOpts = append(cOpts, src._sourceMap.GetLocation(st))
+		return opts.SourceOpt.Forward(in, src, cOpts...)
+	})
+}
 
+func (src *SourceBuild) IsDir() bool {
+	return true
+}
+
+func (src *SourceBuild) toState(opts fetchOptions) llb.State {
+	return src.baseState(opts).With(sourceFilters(opts))
+}
+
+func (src *SourceBuild) toMount(opts fetchOptions) (llb.State, []llb.MountOption) {
+	st := src.baseState(opts).With(mountFilters(opts))
 	return st, nil
+}
+
+func (src *SourceBuild) fillDefaults(_ []*SourceGenerator) {
+	bsrc := &src.Source
+	bsrc.fillDefaults()
+	src.Source = *bsrc
+}
+
+func (src *SourceBuild) processBuildArgs(lex *shell.Lex, args map[string]string, allowArg func(key string) bool) error {
+	var errs []error
+
+	err := src.Source.processBuildArgs(lex, args, allowArg)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("source: %w", err))
+	}
+
+	updated, err := expandArgs(lex, src.DockerfilePath, args, allowArg)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("dockerfile path: %w", err))
+	}
+	src.DockerfilePath = updated
+
+	updated, err = expandArgs(lex, src.Target, args, allowArg)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("target: %w", err))
+	}
+	src.Target = updated
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to expand args on build source: %w", goerrors.Join(errs...))
+	}
+	return nil
+}
+
+func (src *SourceBuild) doc(w io.Writer, name string) {
+	printDocLn(w, "Generated from a docker build:")
+	printDocLn(w, "	Docker Build Target:", src.Target)
+
+	src.Source.toInterface().doc(&indentWriter{w}, name)
+
+	if len(src.Args) > 0 {
+		sorted := SortMapKeys(src.Args)
+		for _, k := range sorted {
+			printDocf(w, "		%s=%s\n", k, src.Args[k])
+		}
+	}
+
+	p := "Dockerfile"
+	if src.DockerfilePath != "" {
+		p = src.DockerfilePath
+	}
+	printDocLn(w, "	Dockerfile path in context:", p)
 }

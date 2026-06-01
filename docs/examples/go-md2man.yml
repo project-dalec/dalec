@@ -1,4 +1,4 @@
-# syntax=ghcr.io/azure/dalec/frontend:latest
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
 
 name: go-md2man
 version: 2.0.3
@@ -42,4 +42,4 @@ tests:
   - name: Check bin
     files:
       /usr/bin/go-md2man:
-        permissions: 0755
+        permissions: 0o755

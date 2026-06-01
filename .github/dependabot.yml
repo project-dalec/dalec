@@ -1,6 +1,8 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
+    cooldown:
+      default-days: 7
     directory: "/"
     schedule:
       interval: "weekly"
@@ -10,14 +12,54 @@ updates:
         - "*"
 
   - package-ecosystem: docker
+    cooldown:
+      default-days: 7
     directory: /
     schedule:
       interval: weekly
 
   - package-ecosystem: gomod
+    cooldown:
+      default-days: 7
     directory: /
     schedule:
       interval: weekly
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    cooldown:
+      default-days: 7
+    directory: /test/fixtures/nested
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    cooldown:
+      default-days: 7
+    directory: /website
+    schedule:
+      interval: weekly
+    groups:
+      website-gomod-all:
+        patterns:
+        - "*"
+
+  - package-ecosystem: npm
+    cooldown:
+      default-days: 7
+    directory: /website
+    schedule:
+      interval: weekly
+    groups:
+      website-npm-all:
+        patterns:
+        - "*"
+
+  - package-ecosystem: docker
+    cooldown:
+      default-days: 7
+    directory: /website
+    schedule:
+      interval: daily
