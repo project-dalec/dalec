@@ -11,6 +11,7 @@ import (
 	"github.com/goccy/go-yaml"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
+	"github.com/moby/buildkit/util/stack"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/test/testenv"
@@ -125,7 +126,7 @@ func TestHandlerTargetForwarding(t *testing.T) {
 			_, err := gwc.Solve(ctx, sr)
 			expect := "no such handler for target"
 			if err == nil || !strings.Contains(err.Error(), expect) {
-				t.Fatalf("expected error %q, got %v", expect, err)
+				t.Fatalf("expected error %q, got %+v", expect, stack.Formatter(err))
 			}
 		})
 	})

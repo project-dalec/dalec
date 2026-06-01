@@ -21,6 +21,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/moby/buildkit/util/stack"
 	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
@@ -291,7 +292,7 @@ func solveT(ctx context.Context, t *testing.T, gwc gwclient.Client, req gwclient
 
 	res, err := gwc.Solve(ctx, req)
 	if err != nil {
-		t.Fatalf("Unexpected error solving request: %v", err)
+		t.Fatalf("Unexpected error solving request: %+v", stack.Formatter(err))
 	}
 
 	// Running this validation as part of this function allows us to verify most test scenarios.

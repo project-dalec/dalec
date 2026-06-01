@@ -15,6 +15,7 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
+	"github.com/moby/buildkit/util/stack"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
@@ -168,7 +169,7 @@ func testWindows(ctx context.Context, t *testing.T, tcfg targetConfig) {
 			_, err := gwc.Solve(ctx, sr)
 			var xErr *moby_buildkit_v1_frontend.ExitError
 			if !errors.As(err, &xErr) {
-				t.Fatalf("expected exit error, got %T: %v", errors.Unwrap(err), err)
+				t.Fatalf("expected exit error, got %T: %+v", errors.Unwrap(err), stack.Formatter(err))
 			}
 		})
 	})
@@ -200,7 +201,7 @@ func testWindows(ctx context.Context, t *testing.T, tcfg targetConfig) {
 			_, err := gwc.Solve(ctx, sr)
 			var xErr *moby_buildkit_v1_frontend.ExitError
 			if !errors.As(err, &xErr) {
-				t.Fatalf("expected exit error, got %T: %v", errors.Unwrap(err), err)
+				t.Fatalf("expected exit error, got %T: %+v", errors.Unwrap(err), stack.Formatter(err))
 			}
 		})
 	})
@@ -780,7 +781,7 @@ func testCustomWindowscrossWorker(ctx context.Context, t *testing.T, targetCfg t
 
 		var xErr *moby_buildkit_v1_frontend.ExitError
 		if !errors.As(err, &xErr) {
-			t.Fatalf("got unexpected error, expected error type %T: %v", xErr, err)
+			t.Fatalf("got unexpected error, expected error type %T: %+v", xErr, stack.Formatter(err))
 		}
 
 		// Build the base package

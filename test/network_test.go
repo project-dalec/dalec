@@ -8,6 +8,7 @@ import (
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
+	"github.com/moby/buildkit/util/stack"
 	"github.com/project-dalec/dalec"
 	"gotest.tools/v3/assert"
 )
@@ -75,7 +76,7 @@ func testBuildNetworkMode(ctx context.Context, t *testing.T, cfg targetConfig) {
 
 				var xErr *moby_buildkit_v1_frontend.ExitError
 				if !errors.As(err, &xErr) {
-					t.Fatalf("expected exit error, got %T: %v", errors.Unwrap(err), err)
+					t.Fatalf("expected exit error, got %T: %+v", errors.Unwrap(err), stack.Formatter(err))
 				}
 			})
 		})

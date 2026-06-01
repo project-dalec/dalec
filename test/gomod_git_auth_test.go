@@ -15,6 +15,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/util/stack"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
 	gitservices "github.com/project-dalec/dalec/test/git_services"
@@ -138,7 +139,7 @@ go {{ .ModFileGoVersion }}
 			case err := <-httpServer.ErrChan:
 				t.Fatalf("http server unexpectedly failed: %s", err)
 			case err := <-solveErrChan:
-				t.Fatalf("solve failed: %s", err)
+				t.Fatalf("solve failed: %+v", stack.Formatter(err))
 			case r := <-solveResultChan:
 				res = r
 			}
@@ -206,7 +207,7 @@ go {{ .ModFileGoVersion }}
 			case err := <-sshServer.ErrChan:
 				t.Fatalf("ssh server unexpectedly failed: %s", err)
 			case err := <-solveErrChan:
-				t.Fatalf("solve failed: %s", err)
+				t.Fatalf("solve failed: %+v", stack.Formatter(err))
 			case r := <-solveResultChan:
 				res = r
 			}
