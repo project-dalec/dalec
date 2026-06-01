@@ -5,10 +5,13 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
+	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
@@ -50,6 +53,12 @@ type DistroConfig interface {
 	// RunTests runts the tests specified in a dalec spec against a built container, which may be the target container.
 	// Some distros may need to pass in a separate worker before mounting the target container.
 	RunTests(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, target string, opts ...llb.ConstraintsOpt) llb.StateOption
+}
+
+// Optional: distros/targets can provide default env for build_sysext.sh.
+// Any DALEC_SYSEXT_* build-args should override these defaults.
+type sysextEnvProvider interface {
+	SysextEnv(spec *dalec.Spec, targetKey string) map[string]string
 }
 
 func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
@@ -182,12 +191,38 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 				rev = "1"
 			}
 
-			erofs := c.SysextWorker(sOpt, opts...).Run(
+			runOpts := []llb.RunOption{
 				llb.Args([]string{scriptPath, spec.Name, fmt.Sprintf("v%s-%s-%s", spec.Version, rev, targetKey), platform.Architecture}),
 				llb.AddMount(scriptPath, scriptFile, llb.SourcePath("build_sysext.sh"), llb.Readonly),
 				llb.AddMount("/input", extracted, llb.Readonly),
 				dalec.WithConstraints(opts...),
-			).AddMount("/output", llb.Scratch())
+			}
+
+			// Pass DALEC_SYSEXT_* build-args through as env vars for build_sysext.sh.
+			dc, err := dockerui.NewClient(client)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			defaults := map[string]string{}
+			if p, ok := c.(sysextEnvProvider); ok {
+				defaults = p.SysextEnv(spec, targetKey)
+			}
+
+			env := mergeSysextEnv(defaults, dc.BuildArgs)
+
+			if len(env) > 0 {
+				keys := make([]string, 0, len(env))
+				for k := range env {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					runOpts = append(runOpts, llb.AddEnv(k, env[k]))
+				}
+			}
+
+			erofs := c.SysextWorker(sOpt, opts...).Run(runOpts...).AddMount("/output", llb.Scratch())
 
 			// The input to the test runner needs to be the output of the container builder.
 			// In order to accomplish this while still outputing the sysext image, we need to
@@ -310,4 +345,39 @@ func HandlePackage(cfg DistroConfig) gwclient.BuildFunc {
 			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, nil
 		})
 	}
+}
+
+func mergeSysextEnv(defaults map[string]string, buildArgs map[string]string) map[string]string {
+	env := map[string]string{}
+
+	// 1) defaults
+	for k, v := range defaults {
+		if v != "" {
+			env[k] = v
+		}
+	}
+
+	// If caller pins VERSION_ID but didn't explicitly set SYSEXT_LEVEL, drop
+	// any default SYSEXT_LEVEL so we don't over-constrain Flatcar matching.
+	if buildArgs["DALEC_SYSEXT_OS_VERSION_ID"] != "" && buildArgs["DALEC_SYSEXT_SYSEXT_LEVEL"] == "" {
+		delete(env, "DALEC_SYSEXT_SYSEXT_LEVEL")
+	}
+
+	// 2) build-args override defaults
+	for k, v := range sysextEnvFromBuildArgs(buildArgs) {
+		env[k] = v
+	}
+
+	return env
+}
+
+func sysextEnvFromBuildArgs(buildArgs map[string]string) map[string]string {
+	const pfx = "DALEC_SYSEXT_"
+	out := make(map[string]string)
+	for k, v := range buildArgs {
+		if strings.HasPrefix(k, pfx) && v != "" {
+			out[k] = v
+		}
+	}
+	return out
 }
