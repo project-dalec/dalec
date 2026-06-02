@@ -40,6 +40,6 @@ The [Kubernetes driver](https://docs.docker.com/build/builders/drivers/kubernete
    docker buildx build \
      -t my-package:latest \
      -f my-spec.yml \
-     --target=azl3 \
+     --target=azlinux3 \
      .
    ```
