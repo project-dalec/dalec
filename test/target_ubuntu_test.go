@@ -57,20 +57,14 @@ func debLinuxTestConfigFor(targetKey string, cfg *distro.Config, opts ...func(*t
 			Targets: "/etc/systemd/system",
 		},
 		Worker: workerConfig{
-			ContextName: cfg.ContextRef,
+			ContextName:  cfg.ContextRef,
+			BaseImageRef: cfg.ImageRef,
 			// /pkg1.deb ...
 			CreateRepo:     ubuntuCreateRepo(cfg),
 			SignRepo:       signRepoUbuntu,
 			TestRepoConfig: ubuntuTestRepoConfig,
 			SysextWorker:   cfg.SysextWorker,
 		},
-
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-			{OS: "linux", Architecture: "arm", Variant: "v7"},
-		},
-		PackageOutputPath: debTargetOutputPath(cfg.VersionID),
 	}
 
 	for _, o := range opts {

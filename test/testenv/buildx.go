@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/containerd/containerd/v2/core/content"
 	"github.com/cpuguy83/dockercfg"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
@@ -376,6 +377,38 @@ func WithHostNetworking(trc *TestRunnerConfig) {
 func WithSocketProxies(proxies ...socketprovider.ProxyConfig) TestRunnerOpt {
 	return func(cfg *TestRunnerConfig) {
 		cfg.SocketProxies = append(cfg.SocketProxies, proxies...)
+	}
+}
+
+// WithOCIStore registers an OCI layout content store with the build session under
+// the provided id. The store can then be referenced from a build context using an
+// "oci-layout:<id>@<digest>" value, allowing platform-specific manifest selection
+// from a multi-platform index without needing a registry.
+func WithOCIStore(id string, store content.Store) TestRunnerOpt {
+	return func(cfg *TestRunnerConfig) {
+		cfg.SolveOptFns = append(cfg.SolveOptFns, func(so *client.SolveOpt) {
+			if so.OCIStores == nil {
+				so.OCIStores = make(map[string]content.Store)
+			}
+			so.OCIStores[id] = store
+		})
+	}
+}
+
+// WithSourcePolicy merges the given source policy rules into the build's source
+// policy. Rules are appended to any policy already configured (e.g. via the
+// EXPERIMENTAL_BUILDKIT_SOURCE_POLICY environment variable).
+func WithSourcePolicy(pol *spb.Policy) TestRunnerOpt {
+	return func(cfg *TestRunnerConfig) {
+		cfg.SolveOptFns = append(cfg.SolveOptFns, func(so *client.SolveOpt) {
+			if pol == nil {
+				return
+			}
+			if so.SourcePolicy == nil {
+				so.SourcePolicy = &spb.Policy{}
+			}
+			so.SourcePolicy.Rules = append(so.SourcePolicy.Rules, pol.Rules...)
+		})
 	}
 }
 

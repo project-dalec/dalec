@@ -421,6 +421,20 @@ func withBuildContext(ctx context.Context, t *testing.T, name string, st llb.Sta
 	}
 }
 
+// withOCILayoutContext overrides a named build context to point at an OCI layout
+// store (registered via [testenv.WithOCIStore]) at the given index digest.
+// BuildKit performs platform-specific manifest selection against the referenced
+// index, so this is used to verify that the frontend resolves the correct
+// platform image for a requested build platform.
+func withOCILayoutContext(name, storeID string, dgst digest.Digest) srOpt {
+	return func(cfg *newSolveRequestConfig) {
+		if cfg.req.FrontendOpt == nil {
+			cfg.req.FrontendOpt = make(map[string]string)
+		}
+		cfg.req.FrontendOpt["context:"+name] = "oci-layout:" + storeID + "@" + dgst.String()
+	}
+}
+
 func reqToState(ctx context.Context, gwc gwclient.Client, sr gwclient.SolveRequest, t *testing.T) llb.State {
 	t.Helper()
 

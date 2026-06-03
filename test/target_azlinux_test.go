@@ -61,6 +61,7 @@ func TestAzlinux3(t *testing.T) {
 		},
 		Worker: workerConfig{
 			ContextName:    azlinux.Azlinux3WorkerContextName,
+			BaseImageRef:   azlinux.Azlinux3Config.ImageRef,
 			CreateRepo:     createYumRepo(azlinux.Azlinux3Config),
 			SignRepo:       signRepoDnf,
 			TestRepoConfig: azlinuxTestRepoConfig,
@@ -71,11 +72,6 @@ func TestAzlinux3(t *testing.T) {
 			VersionID: "3.0",
 		},
 		SupportsGomodVersionUpdate: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("azl3"),
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAzlinuxExtra(ctx, t, cfg, azlinux.Azlinux3Config.ImageRef)
@@ -129,11 +125,6 @@ func TestAzlinux4(t *testing.T) {
 			VersionID: "4.0",
 		},
 		SupportsGomodVersionUpdate: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("azl4"),
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAzlinuxExtra(ctx, t, cfg, azlinux.Azlinux4Config.ImageRef)
