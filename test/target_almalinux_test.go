@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 )
 
@@ -39,6 +38,7 @@ func TestAlmalinux9(t *testing.T) {
 		Libdir: "/usr/lib64",
 		Worker: workerConfig{
 			ContextName:    almalinux.ConfigV9.ContextRef,
+			BaseImageRef:   almalinux.ConfigV9.ImageRef,
 			CreateRepo:     createYumRepo(almalinux.ConfigV9),
 			SignRepo:       signRepoDnf,
 			TestRepoConfig: azlinuxTestRepoConfig,
@@ -48,11 +48,6 @@ func TestAlmalinux9(t *testing.T) {
 			VersionID: "9",
 		},
 		SupportsGomodVersionUpdate: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("el9"),
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAlmalinuxExtra(ctx, t, cfg, almalinux.ConfigV9.ImageRef)
@@ -88,6 +83,7 @@ func TestAlmalinux8(t *testing.T) {
 		Libdir: "/usr/lib64",
 		Worker: workerConfig{
 			ContextName:    almalinux.ConfigV8.ContextRef,
+			BaseImageRef:   almalinux.ConfigV8.ImageRef,
 			CreateRepo:     createYumRepo(almalinux.ConfigV8),
 			SignRepo:       signRepoDnf,
 			TestRepoConfig: azlinuxTestRepoConfig,
@@ -97,11 +93,6 @@ func TestAlmalinux8(t *testing.T) {
 			VersionID: "8",
 		},
 		SupportsGomodVersionUpdate: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("el8"),
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAlmalinuxExtra(ctx, t, cfg, almalinux.ConfigV8.ImageRef)

@@ -46,7 +46,12 @@ type workerConfig struct {
 	SignRepo   func(st llb.State, repoPath string) llb.StateOption
 	// ContextName is the name of the worker context that the build target will use
 	// to see if a custom worker is provided in a context
-	ContextName    string
+	ContextName string
+	// BaseImageRef is the distro's worker base image reference (the image the
+	// worker target resolves via the llb.Image path). It is used by the
+	// source-policy variant of the cross-platform test to build a marker image
+	// from the real base and to rewrite the base image to that marker store.
+	BaseImageRef   string
 	TestRepoConfig func(keyPath, repoPath string) map[string]dalec.Source
 	Platform       *ocispecs.Platform
 	SysextWorker   func(sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State
@@ -102,9 +107,6 @@ type testLinuxConfig struct {
 	Release OSRelease
 
 	SupportsGomodVersionUpdate bool
-
-	Platforms         []ocispecs.Platform
-	PackageOutputPath func(spec *dalec.Spec, platform ocispecs.Platform) string
 }
 
 type OSRelease struct {
@@ -114,33 +116,6 @@ type OSRelease struct {
 
 func (cfg *testLinuxConfig) GetPackage(name string) string {
 	return cfg.Target.GetPackage(name)
-}
-
-func rpmTargetOutputPath(id string) func(spec *dalec.Spec, platform ocispecs.Platform) string {
-	return func(spec *dalec.Spec, platform ocispecs.Platform) string {
-		var arch string
-		switch platform.Architecture {
-		case "amd64":
-			arch = "x86_64"
-		case "arm64":
-			arch = "aarch64"
-		case "arm":
-			// this is not perfect, but all we really support in our tests for now, so its fine.
-			arch = "armv7l"
-		}
-		return fmt.Sprintf("/RPMS/%s/%s-%s-%s.%s.%s.rpm", arch, spec.Name, spec.Version, spec.Revision, id, arch)
-	}
-}
-
-func debTargetOutputPath(id string) func(spec *dalec.Spec, platform ocispecs.Platform) string {
-	return func(spec *dalec.Spec, platform ocispecs.Platform) string {
-		arch := platform.Architecture
-		if arch == "arm" {
-			// this is not perfect, but all we really support in our tests for now, so its fine.
-			arch = "armhf"
-		}
-		return fmt.Sprintf("%s_%s-%s_%s.deb", spec.Name, spec.Version, id+"u"+spec.Revision, arch)
-	}
 }
 
 func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
@@ -3687,67 +3662,92 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 	})
 }
 
+// testTargetPlatform verifies that the frontend selects the correct
+// platform-specific worker image for a requested build platform.
+//
+// A shared multi-platform marker image is built once from the real distro worker
+// base image, with a /platform-marker file injected per platform naming that
+// platform. Two variants then assert the marker matches the requested build
+// platform:
+//
+//   - "worker context": the worker context is overridden to the marker index.
+//     Supplying a worker context short-circuits worker building, so this exercises
+//     the named-context / oci-layout resolver and just returns the selected image.
+//   - "source policy": no context override; a source policy rewrites the worker
+//     base image to the same marker index, so the worker builds via the normal
+//     llb.Image path. Cross-arch installs run natively via dnf --forcearch (no
+//     QEMU) and the marker file is preserved into the result rootfs.
+//
+// Both variants run natively without QEMU regardless of the runner's
+// architecture.
 func testTargetPlatform(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 	ctx = startTestSpan(ctx, t)
 
-	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		bp := readDefaultPlatform(ctx, t, client)
+	if cfg.Worker.BaseImageRef == "" {
+		t.Skip("no worker base image ref configured for this target")
+	}
 
-		var tp ocispecs.Platform
-		for _, p := range cfg.Platforms {
-			if platforms.OnlyStrict(bp).Match(p) {
-				continue
+	cases := []ocispecs.Platform{
+		{OS: "linux", Architecture: "amd64"},
+		{OS: "linux", Architecture: "arm64"},
+	}
+
+	storeID, idxDgst, store := buildWorkerMarkerStore(ctx, t, cfg.Worker.BaseImageRef, cases...)
+
+	// "worker context" supplies the marker index as the worker build context.
+	// Providing a worker context short-circuits worker building, so the worker
+	// target returns the selected image as-is. This exercises the named-context /
+	// oci-layout resolver: BuildKit performs platform-specific manifest selection
+	// against the index for the requested build platform, and we read the marker
+	// from the returned image to confirm the right manifest was chosen. Nothing is
+	// executed, so this never needs QEMU.
+	t.Run("worker context", func(t *testing.T) {
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			for _, p := range cases {
+				t.Run(platforms.Format(p), func(t *testing.T) {
+					sr := newSolveRequest(
+						withSpec(ctx, t, nil),
+						withBuildTarget(cfg.Target.Worker),
+						withPlatform(p),
+						withOCILayoutContext(cfg.Worker.ContextName, storeID, idxDgst),
+					)
+					res := solveT(ctx, t, client, sr)
+
+					dt := readFile(ctx, t, platformMarkerPath, res)
+					assert.Equal(t, string(dt), platformMarkerString(p),
+						"selected worker image does not match requested platform %s", platforms.Format(p))
+				})
 			}
+		}, testenv.WithOCIStore(storeID, store))
+	})
 
-			tp = p
+	// "source policy" exercises the default worker-resolution path used by real
+	// builds, where the worker is built from the distro base image via llb.Image
+	// (no context override). A source policy rewrites that base image to the same
+	// marker index, so BuildKit resolves and selects the per-platform manifest the
+	// same way it would for any image. Because the worker is actually built, the
+	// base must be a functional distro image (hence the real base + injected
+	// marker). Cross-arch installs run natively via dnf/apt --forcearch into a
+	// foreign-arch root, so the marker file is preserved into the result rootfs and
+	// no QEMU is required.
+	t.Run("source policy", func(t *testing.T) {
+		pol := workerRewriteSourcePolicy(cfg.Worker.BaseImageRef, storeID, idxDgst)
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			for _, p := range cases {
+				t.Run(platforms.Format(p), func(t *testing.T) {
+					sr := newSolveRequest(
+						withSpec(ctx, t, nil),
+						withBuildTarget(cfg.Target.Worker),
+						withPlatform(p),
+					)
+					res := solveT(ctx, t, client, sr)
 
-			if bp.Architecture != "arm64" {
-				break
+					dt := readFile(ctx, t, platformMarkerPath, res)
+					assert.Equal(t, string(dt), platformMarkerString(p),
+						"selected worker image does not match requested platform %s", platforms.Format(p))
+				})
 			}
-			// On arm64, let's try and build for armv7 to help speed up tests
-			// Also makes sure that building arm on arm64 gives the correct result since this can run natively (usually)
-			if tp.Architecture == "arm" {
-				break
-			}
-		}
-
-		skip.If(t, tp.OS == "", "No other platforms available to test")
-		assert.Assert(t, tp.Architecture != bp.Architecture, "Target and build arches are the same")
-
-		spec := newSimpleSpec()
-		spec.Args = map[string]string{
-			"TARGETARCH": "",
-		}
-
-		spec.Build.Env = map[string]string{
-			"TARGETARCH": "$TARGETARCH",
-		}
-
-		spec.Build.Steps = []dalec.BuildStep{
-			{
-				Command: fmt.Sprintf(`[ "${TARGETARCH}" = "%s" ]`, tp.Architecture),
-			},
-		}
-
-		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withPlatform(tp))
-		res := solveT(ctx, t, client, sr)
-		ref, err := res.SingleRef()
-		assert.NilError(t, err)
-
-		_, err = ref.StatFile(ctx, gwclient.StatRequest{
-			Path: cfg.PackageOutputPath(spec, tp),
-		})
-		assert.NilError(t, err)
-
-		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withPlatform(tp))
-		res = solveT(ctx, t, client, sr)
-		dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-		assert.Assert(t, ok, "missing image config in result metadata")
-
-		var img dalec.DockerImageSpec
-		err = json.Unmarshal(dt, &img)
-		assert.NilError(t, err)
-		assert.Assert(t, platforms.OnlyStrict(tp).Match(img.Platform), "platform mismatch, expected %v, got %v", tp, img.Platform)
+		}, testenv.WithOCIStore(storeID, store), testenv.WithSourcePolicy(pol))
 	})
 }
 
