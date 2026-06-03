@@ -26,7 +26,7 @@ The [Kubernetes driver](https://docs.docker.com/build/builders/drivers/kubernete
 
 ### Setting up the Kubernetes Driver
 
-2. **Create a builder instance**:
+1. **Create a builder instance**:
    ```bash
    docker buildx create \
      --driver kubernetes \
@@ -35,7 +35,7 @@ The [Kubernetes driver](https://docs.docker.com/build/builders/drivers/kubernete
      --use
    ```
 
-3. **Build with Dalec using the Kubernetes driver**:
+2. **Build with Dalec using the Kubernetes driver**:
    ```bash
    docker buildx build \
      -t my-package:latest \
