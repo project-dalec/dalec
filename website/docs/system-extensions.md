@@ -65,6 +65,11 @@ sudo mkdir -p /etc/extensions
 sudo cp _out/flatcar-hello.raw /etc/extensions/flatcar-hello.raw
 sudo systemd-sysext status
 sudo systemd-sysext merge
+```
+
+Example output:
+
+```text
 flatcar-hello
 ```
 
