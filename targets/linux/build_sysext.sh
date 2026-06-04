@@ -12,6 +12,8 @@ ARCH=$3
 OS_ID="${DALEC_SYSEXT_OS_ID:-_any}"
 OS_VERSION_ID="${DALEC_SYSEXT_OS_VERSION_ID:-}"
 SYSEXT_LEVEL="${DALEC_SYSEXT_SYSEXT_LEVEL:-}"
+IMAGE_VERSION="${DALEC_SYSEXT_IMAGE_VERSION:-}"
+SHA256SUMS_NAME="${DALEC_SYSEXT_SHA256SUMS_NAME:-}"
 
 # Map Docker/Go arch to systemd arch.
 case ${ARCH} in
@@ -29,8 +31,15 @@ esac
 IMAGE_BASENAME="${NAME}-${VERSION}-${ARCH}"
 
 # Allow overriding the output basename (e.g. Flatcar expects /etc/extensions/<name>.raw).
+# A versioned image name is useful when publishing images for systemd-sysupdate.
 # If user passes "foo.raw", normalize to "foo".
-IMAGE_NAME="${DALEC_SYSEXT_IMAGE_NAME:-${IMAGE_BASENAME}}"
+if [[ -n "${DALEC_SYSEXT_IMAGE_NAME:-}" ]]; then
+	IMAGE_NAME="${DALEC_SYSEXT_IMAGE_NAME}"
+elif [[ -n "${IMAGE_VERSION}" ]]; then
+	IMAGE_NAME="${NAME}-${IMAGE_VERSION}-${ARCH}"
+else
+	IMAGE_NAME="${IMAGE_BASENAME}"
+fi
 IMAGE_NAME="${IMAGE_NAME%.raw}"
 
 TMPDIR=$(mktemp -d)
@@ -91,3 +100,8 @@ tar \
 		--tar=f \
 		-zlz4hc \
 		"/output/${IMAGE_NAME}.raw"
+
+if [[ -n "${SHA256SUMS_NAME}" ]]; then
+	cd /output
+	sha256sum "${IMAGE_NAME}.raw" > "SHA256SUMS.${SHA256SUMS_NAME}"
+fi

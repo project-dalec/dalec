@@ -27,6 +27,10 @@ var DefaultConfig = &Config{
 	Base: ubuntu.NobleConfig,
 }
 
+type sysupdateConfig struct {
+	*Config
+}
+
 // SysextEnv provides Flatcar-friendly defaults.
 // Build args with the DALEC_SYSEXT_* prefix still override these.
 func (c *Config) SysextEnv(spec *dalec.Spec, targetKey string) map[string]string {
@@ -38,12 +42,30 @@ func (c *Config) SysextEnv(spec *dalec.Spec, targetKey string) map[string]string
 	}
 }
 
+func (c *sysupdateConfig) SysextEnv(spec *dalec.Spec, targetKey string) map[string]string {
+	env := c.Config.SysextEnv(spec, targetKey)
+	delete(env, "DALEC_SYSEXT_IMAGE_NAME")
+
+	revision := spec.Revision
+	if revision == "" {
+		revision = "1"
+	}
+
+	env["DALEC_SYSEXT_IMAGE_VERSION"] = fmt.Sprintf("v%s-%s", spec.Version, revision)
+	env["DALEC_SYSEXT_SHA256SUMS_NAME"] = spec.Name
+	return env
+}
+
 func (c *Config) Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	var mux frontend.BuildMux
 	mux.Add("testing/sysext", linux.HandleSysext(c), &targets.Target{
 		Name:        "testing/sysext",
 		Description: "Build a Flatcar-compatible systemd sysext (.raw)",
 		Default:     true,
+	})
+	mux.Add("testing/sysext/sysupdate", linux.HandleSysext(&sysupdateConfig{Config: c}), &targets.Target{
+		Name:        "testing/sysext/sysupdate",
+		Description: "Build a versioned Flatcar sysext and checksum for systemd-sysupdate.",
 	})
 	mux.Add("worker", c.HandleWorker, &targets.Target{
 		Name:        "worker",

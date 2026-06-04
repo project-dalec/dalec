@@ -34,6 +34,7 @@ debug/pip                        Outputs all the pip dependencies for the spec
 debug/resolve                    Outputs the resolved dalec spec file with build args applied.
 debug/sources                    Outputs all sources from a dalec spec file.
 flatcar/testing/sysext (default) Build a Flatcar-compatible systemd sysext (.raw)
+flatcar/testing/sysext/sysupdate Build a versioned Flatcar sysext and checksum for systemd-sysupdate.
 flatcar/worker                   Builds the worker image used to assemble Flatcar sysext images.
 focal/deb (default)              Builds a deb package.
 focal/dsc                        Builds a Debian source package.
