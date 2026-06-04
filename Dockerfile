@@ -1,4 +1,4 @@
-FROM --platform=${BUILDPLATFORM} golang:1.25@sha256:cc737435e2742bd6da3b7d575623968683609a3d2e0695f9d85bee84071c08e6 AS go
+FROM --platform=${BUILDPLATFORM} golang:1.26.4@sha256:68cb6d68bed024785b69195b89af7ac7a444f27791435f98647edff595aa0479 AS go
 
 FROM go  AS frontend-build
 WORKDIR /build
