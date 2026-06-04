@@ -7,18 +7,22 @@ import (
 
 func TestSysextEnvFromBuildArgs(t *testing.T) {
 	in := map[string]string{
-		"DALEC_SYSEXT_IMAGE_NAME":    "myext",
-		"DALEC_SYSEXT_OS_ID":         "flatcar",
-		"DALEC_SYSEXT_SYSEXT_LEVEL":  "1.0",
-		"DALEC_SYSEXT_OS_VERSION_ID": "",
-		"SOME_OTHER_ARG":             "x",
+		"DALEC_SYSEXT_IMAGE_NAME":      "myext",
+		"DALEC_SYSEXT_IMAGE_VERSION":   "v1.2.3-1",
+		"DALEC_SYSEXT_OS_ID":           "flatcar",
+		"DALEC_SYSEXT_SHA256SUMS_NAME": "myext",
+		"DALEC_SYSEXT_SYSEXT_LEVEL":    "1.0",
+		"DALEC_SYSEXT_OS_VERSION_ID":   "",
+		"SOME_OTHER_ARG":               "x",
 	}
 
 	got := sysextEnvFromBuildArgs(in)
 	want := map[string]string{
-		"DALEC_SYSEXT_IMAGE_NAME":   "myext",
-		"DALEC_SYSEXT_OS_ID":        "flatcar",
-		"DALEC_SYSEXT_SYSEXT_LEVEL": "1.0",
+		"DALEC_SYSEXT_IMAGE_NAME":      "myext",
+		"DALEC_SYSEXT_IMAGE_VERSION":   "v1.2.3-1",
+		"DALEC_SYSEXT_OS_ID":           "flatcar",
+		"DALEC_SYSEXT_SHA256SUMS_NAME": "myext",
+		"DALEC_SYSEXT_SYSEXT_LEVEL":    "1.0",
 	}
 
 	if !reflect.DeepEqual(got, want) {
