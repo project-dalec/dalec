@@ -6,7 +6,7 @@
 <title data-rh="true">Targets | Dalec</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://project-dalec.github.io/dalec/img/logo.png"><meta data-rh="true" name="twitter:image" content="https://project-dalec.github.io/dalec/img/logo.png"><meta data-rh="true" property="og:url" content="https://project-dalec.github.io/dalec/targets"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Targets | Dalec"><meta data-rh="true" name="description" content="DALEC is designed to support building artifacts for a number of different"><meta data-rh="true" property="og:description" content="DALEC is designed to support building artifacts for a number of different"><link data-rh="true" rel="icon" href="/dalec/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://project-dalec.github.io/dalec/targets"><link data-rh="true" rel="alternate" href="https://project-dalec.github.io/dalec/targets" hreflang="en"><link data-rh="true" rel="alternate" href="https://project-dalec.github.io/dalec/targets" hreflang="x-default"><link data-rh="true" rel="preconnect" href="https://2KEC24GMEN-dsn.algolia.net" crossorigin="anonymous"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Targets","item":"https://project-dalec.github.io/dalec/targets"}]}</script><link rel="search" type="application/opensearchdescription+xml" title="Dalec" href="/dalec/opensearch.xml">
 
 <meta name="algolia-site-verification" content="1C1CBEF56CCCC1B2"><link rel="stylesheet" href="/dalec/assets/css/styles.d155c7a5.css">
-<script src="/dalec/assets/js/runtime~main.9dcf42bc.js" defer="defer"></script>
+<script src="/dalec/assets/js/runtime~main.b0323d22.js" defer="defer"></script>
 <script src="/dalec/assets/js/main.99996281.js" defer="defer"></script>
 </head>
 <body>
@@ -47,17 +47,23 @@ the underlying target implementation.</p>
 almalinux8/container (default)   Builds a container image for AlmaLinux 8
 almalinux8/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux8/rpm                   Builds an rpm and src.rpm.
-almalinux8/rpm/debug             Debug options for rpm builds.
+almalinux8/rpm/debug/buildroot   Outputs an rpm buildroot suitable for passing to rpmbuild.
+almalinux8/rpm/debug/sources     Outputs all the sources specified in the spec file in the format given to rpmbuild.
+almalinux8/rpm/debug/spec        Outputs the generated RPM spec file
 almalinux8/worker                Builds the base worker image responsible for building the rpm
 almalinux9/container (default)   Builds a container image for AlmaLinux 9
 almalinux9/container/depsonly    Builds a container image with only the runtime dependencies installed.
 almalinux9/rpm                   Builds an rpm and src.rpm.
-almalinux9/rpm/debug             Debug options for rpm builds.
+almalinux9/rpm/debug/buildroot   Outputs an rpm buildroot suitable for passing to rpmbuild.
+almalinux9/rpm/debug/sources     Outputs all the sources specified in the spec file in the format given to rpmbuild.
+almalinux9/rpm/debug/spec        Outputs the generated RPM spec file
 almalinux9/worker                Builds the base worker image responsible for building the rpm
 azlinux3/container (default)     Builds a container image for Azure Linux 3
 azlinux3/container/depsonly      Builds a container image with only the runtime dependencies installed.
 azlinux3/rpm                     Builds an rpm and src.rpm.
-azlinux3/rpm/debug               Debug options for rpm builds.
+azlinux3/rpm/debug/buildroot     Outputs an rpm buildroot suitable for passing to rpmbuild.
+azlinux3/rpm/debug/sources       Outputs all the sources specified in the spec file in the format given to rpmbuild.
+azlinux3/rpm/debug/spec          Outputs the generated RPM spec file
 azlinux3/testing/sysext          Builds a systemd system extension image.
 azlinux3/worker                  Builds the base worker image responsible for building the rpm
 bionic/deb (default)             Builds a deb package.
@@ -96,12 +102,16 @@ noble/worker                     Builds the worker image.
 rockylinux8/container (default)  Builds a container image for RockyLinux 8
 rockylinux8/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux8/rpm                  Builds an rpm and src.rpm.
-rockylinux8/rpm/debug            Debug options for rpm builds.
+rockylinux8/rpm/debug/buildroot  Outputs an rpm buildroot suitable for passing to rpmbuild.
+rockylinux8/rpm/debug/sources    Outputs all the sources specified in the spec file in the format given to rpmbuild.
+rockylinux8/rpm/debug/spec       Outputs the generated RPM spec file
 rockylinux8/worker               Builds the base worker image responsible for building the rpm
 rockylinux9/container (default)  Builds a container image for RockyLinux 9
 rockylinux9/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux9/rpm                  Builds an rpm and src.rpm.
-rockylinux9/rpm/debug            Debug options for rpm builds.
+rockylinux9/rpm/debug/buildroot  Outputs an rpm buildroot suitable for passing to rpmbuild.
+rockylinux9/rpm/debug/sources    Outputs all the sources specified in the spec file in the format given to rpmbuild.
+rockylinux9/rpm/debug/spec       Outputs the generated RPM spec file
 rockylinux9/worker               Builds the base worker image responsible for building the rpm
 trixie/deb (default)             Builds a deb package.
 trixie/dsc                       Builds a Debian source package.
