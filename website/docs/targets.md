@@ -190,6 +190,72 @@ targets:
       qux:
 ```
 
+### Subpackages
+
+Subpackages (also called supplemental packages) let a single build produce more
+than one installable package. This is useful when you want to split build
+outputs into separate packages — for example a main runtime package plus a
+`-devel` package for headers, or a separate package for systemd units — without
+running the build more than once.
+
+Subpackages are defined per target under the `packages` field. Each entry is
+keyed by a short name; by default the produced package is named
+`<primary-package>-<key>`. All subpackages share the primary package's build
+steps, sources, version, revision, license, vendor, and website — these cannot
+be overridden. Each subpackage selects its own [artifacts](artifacts.md) and may
+declare its own metadata.
+
+```yaml
+name: foo
+
+targets:
+  azlinux3:
+    artifacts:
+      binaries:
+        bin/foo:
+    packages:
+      # Produces a package named "foo-devel".
+      devel:
+        description: Development files for foo
+        artifacts:
+          headers:
+            include/foo.h:
+        dependencies:
+          runtime:
+            foo:
+      # "name" overrides the default "foo-<key>" naming.
+      service:
+        name: foo-systemd
+        description: systemd units for foo
+        artifacts:
+          systemd:
+            units:
+              foo.service:
+                enable: true
+```
+
+Each subpackage supports the following fields:
+
+- `name`: Override the default `<primary-package>-<key>` package name.
+- `description` (required): Package description/summary. Both RPM and Debian
+  require this for every subpackage.
+- `artifacts`: The build outputs that go into this package. Subpackage artifacts
+  are self-contained — nothing is inherited from the primary package, so an
+  artifact placed in a subpackage is not also shipped by the primary package.
+- `dependencies`: Only `runtime` and `recommends` are allowed. Build
+  dependencies are shared with the primary package and cannot be set here.
+- `conflicts`, `provides`, `replaces`: Per-package metadata, equivalent to the
+  [primary package fields](#target-defined-package-metadata).
+
+Install-time scriptlet requirements are derived automatically from the
+subpackage's own artifacts. For example, a subpackage that ships enabled systemd
+units gets the appropriate `systemd` install-time requirements, and one that
+defines users or groups pulls in the tools needed to create them — independently
+of the primary package.
+
+Subpackage names must be unique within a target and must not collide with the
+primary package name.
+
 ## Special considerations
 
 ### Windows
