@@ -26,22 +26,12 @@ type noopCommand string
 
 func (c noopCommand) Cmd(args []string) {}
 
-// WithOutput runs a no-op command that produces the provided output state.
-// This is useful for creating a dependency between the StateOption's input
-// state and the provided output state.
-func (c noopCommand) WithOutput(out llb.State, opts ...ValidationOpt) llb.StateOption {
+// WithOutput forces `in` to build while producing `out` as the output state,
+// creating a build-only dependency from `out` on `in` via buildkit's passthrough
+// op. The filesystem of `in` is discarded; only the dependency edge is kept.
+func (c noopCommand) WithOutput(out llb.State, _ ...ValidationOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
-		const outputPath = "/tmp/internal/dalec/testrunner/__internal_output__"
-		args := []string{string(c)}
-
-		// Ideally we would use llb.Readonly here.
-		// However, buildkit optmizes out the case since the returned state
-		// cannot be modified by the run.
-		// The run ends up not executing.
-		return in.Run(
-			testRunner(args, opts...),
-			llb.ReadonlyRootFS(),
-		).AddMount(outputPath, out)
+		return out.Requires("dalec.testrunner/"+string(c), in)
 	}
 }
 

@@ -13,9 +13,15 @@ import (
 )
 
 const (
-	frontendMountPath      = "/tmp/internal/dalec/testrunner/frontend"
-	internalStateMountPath = "/tmp/internal/dalec/testrunner/__internal_state"
+	frontendMountPath = "/tmp/internal/dalec/testrunner/frontend"
 )
+
+// testBaseState returns a non-scratch base state for marshaling validation
+// options. The passthrough op used by the testrunner requires its output input
+// to have a real output, so an empty scratch state cannot be used as the base.
+func testBaseState() llb.State {
+	return llb.Scratch().File(llb.Mkfile("base", 0o644, []byte("base")))
+}
 
 func withTestFrontend() ValidationOpt {
 	frontend := llb.Scratch().File(llb.Mkfile("frontend", 0o600, []byte("binary")))
@@ -30,7 +36,7 @@ func definitionFromStateOption(t *testing.T, opt llb.StateOption) *llb.Definitio
 	if opt == nil {
 		t.Fatalf("state option must not be nil")
 	}
-	state := llb.Scratch().With(opt)
+	state := testBaseState().With(opt)
 	def, err := state.Marshal(context.Background())
 	if err != nil {
 		t.Fatalf("marshal state: %v", err)

@@ -58,7 +58,7 @@ require (
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/ttrpc v1.2.8 // indirect
-	github.com/containerd/typeurl/v2 v2.2.3 // indirect
+	github.com/containerd/typeurl/v2 v2.3.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -106,3 +106,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
 )
+
+replace github.com/moby/buildkit => github.com/tonistiigi/buildkit v0.25.0-rc1.0.20260604003940-bfc0543424c1

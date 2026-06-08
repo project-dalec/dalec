@@ -42,7 +42,6 @@ func TestCheckFileMatchesWithCheckLLB(t *testing.T) {
 		expect := []string{frontendMountPath, CmdName, string(checkFileMatches), "/tmp/log", checker.Matches[i]}
 		assert.Check(t, cmp.DeepEqual(expect, exec.GetMeta().GetArgs()))
 		requireMountDest(t, exec.GetMounts(), frontendMountPath)
-		requireMountDest(t, exec.GetMounts(), internalStateMountPath)
 	}
 }
 

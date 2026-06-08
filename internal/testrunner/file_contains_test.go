@@ -50,7 +50,6 @@ func TestCheckFileContainsWithCheckLLB(t *testing.T) {
 		}
 		assert.Check(t, cmp.DeepEqual(expect, exec.GetMeta().GetArgs()))
 		requireMountDest(t, exec.GetMounts(), frontendMountPath)
-		requireMountDest(t, exec.GetMounts(), internalStateMountPath)
 	}
 }
 

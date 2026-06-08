@@ -62,15 +62,17 @@ func (tr *Runner) Cmd(ctx context.Context, args []string) {
 
 func doValidate(args []string, opts ...ValidationOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
-		const (
-			internalStatePath = "/tmp/internal/dalec/testrunner/__internal_state"
-		)
-
-		return in.Run(
+		// Run the validation as a real (writable-rootfs) exec so the vertex is
+		// not optimized away, then require it to build while keeping `in` as the
+		// output via buildkit's passthrough op. The validation's filesystem
+		// changes are discarded; only the dependency edge (and its pass/fail) is
+		// kept.
+		runState := in.Run(
 			testRunner(args, opts...),
-			llb.ReadonlyRootFS(),
 			llb.WithCustomName(strings.Join(args, " ")),
-		).AddMount(internalStatePath, in)
+		).Root()
+
+		return in.Requires("dalec.testrunner/validate", runState)
 	}
 }
 
@@ -155,59 +157,24 @@ func asConstraints(opts ...ValidationOpt) llb.ConstraintsOpt {
 	})
 }
 
-// mergeStateOptions merges multiple llb.StateOptions into a single llb.StateOption.
+// mergeStateOptions applies multiple llb.StateOptions to the same input state,
+// forcing each to build while preserving `in` as the output.
 //
-// Each option is applied independently to the same input state.
-// Conceptually:
+// Each option is applied independently to `in` (no option sees the effects of
+// another), and the resulting states are attached as build-only dependencies of
+// `in` via buildkit's passthrough op. The filesystem changes from each option
+// are discarded; only the dependency edges (and their pass/fail) are kept.
 //
-//  1. Start from origState
-//  2. For each option:
-//     - create a temporary branch: diff(origState, stateN)
-//  3. Merge all resulting branches back together
-//
-// No option sees the effects of any other option.
-//
-// Example:
-//
-//	         input
-//	           |
-//	   +-------+-------+
-//	   |       |       |
-//	apply    apply   apply
-//	 opt1     opt2    opt3
-//	   |       |       |
-//	 diff1  diff2  diff3
-//	   |       |       |
-//	   +-------+-------+
-//	           |
-//	merge(input, diff1, diff2, diff3)
-//	           |
-//	         output
-//
-// All intermediate states (state1, state2, state3) are direct descendants
-// of origState.
-//
-// If you expect options to apply sequentially
-// (origState -> state1 -> state2 -> state3),
-// This is NOT the function you want.
-func mergeStateOptions(stateOpts []llb.StateOption, opts ...ValidationOpt) llb.StateOption {
+// This relies on all testrunner options being validation-only (they return the
+// input state unchanged); it does not merge filesystem changes.
+func mergeStateOptions(stateOpts []llb.StateOption, _ ...ValidationOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
-		if len(stateOpts) == 0 {
-			return in
-		}
-
-		if len(stateOpts) == 1 {
-			// Avoid diff/merge overhead for single state option
-			return in.With(stateOpts[0])
-		}
-
-		states := make([]llb.State, 0, len(opts))
-		states = append(states, in)
+		deps := make([]llb.State, 0, len(stateOpts))
 		for _, o := range stateOpts {
-			states = append(states, in.With(o))
+			deps = append(deps, in.With(o))
 		}
 
-		return dalec.MergeAtPath(in, states, "/", asConstraints(opts...))
+		return in.Requires("dalec.testrunner/checks", deps...)
 	}
 }
 
@@ -223,8 +190,9 @@ func filterPath(p string) string {
 // This makes sure that any changes made during test steps are discarded but makes sure
 // there is a dependency on the intermediate state so buildkit will execute it.
 //
-// NOTE: This is a hack to work around the fact that buildkit does not currently
-// have a proper way to express "run this for validation only".
+// This is implemented using buildkit's passthrough op (via [State.Requires]):
+// the returned state's output is `st`, with the intermediate (validation) state
+// attached as a build-only dependency.
 func WithFinalState(st llb.State, opts ...ValidationOpt) llb.StateOption {
 	return trueCmd.WithOutput(st, opts...)
 }

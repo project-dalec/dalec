@@ -87,8 +87,62 @@ jobs:
             exit 1
           fi
 
+  build-buildkit:
+    # Builds a custom buildkitd from the unmerged "passthrough op" PR
+    # (moby/buildkit#6829, fork tonistiigi/buildkit@passthrough-op) and pushes
+    # it to GHCR so the dalec-spec-solving jobs (integration, e2e) can run
+    # against a daemon that understands the passthrough op capability.
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Compute image ref
+        id: ref
+        run: |
+          repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${repo}/test-buildkit:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        name: Login to GHCR
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Build and push PR buildkit image
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}
+        run: |
+          set -eux
+          # Build from a local clone (with tags fetched) rather than the git URL
+          # context so the buildkit Dockerfile's version-detection stage
+          # (git describe --tags) produces a real vX.Y version. The dalec test
+          # harness rejects daemons whose reported version is < 0.12, and a
+          # tag-less context would yield a bare SHA / 0.0.0.
+          git clone --branch passthrough-op https://github.com/tonistiigi/buildkit.git buildkit-src
+          git -C buildkit-src fetch --tags --force
+          docker buildx build \
+            --target=buildkit \
+            -t "${IMAGE}" \
+            --push \
+            ./buildkit-src
+
   integration:
     runs-on: ubuntu-22.04
+    needs: build-buildkit
+    env:
+      PR_BUILDKIT_IMAGE: ${{ needs.build-buildkit.outputs.image }}
     strategy:
       fail-fast: false
       matrix:
@@ -274,6 +328,23 @@ jobs:
           echo "================ CLEANUP COMPLETE ================"
       - name: Use azure ubuntu archive
         uses: ./.github/actions/dns-spoof-ubuntu-archive
+      - name: Setup PR buildkit builder
+        # Run all bakes and the test harness against the custom buildkitd that
+        # understands the passthrough op. The harness connects via
+        # `docker buildx dial-stdio` to the builder named by BUILDX_BUILDER.
+        run: |
+          set -eux
+          docker pull "${PR_BUILDKIT_IMAGE}"
+          docker buildx create --name dalec-pr6829 --use \
+            --driver docker-container \
+            --driver-opt "image=${PR_BUILDKIT_IMAGE}" \
+            --driver-opt network=host \
+            --buildkitd-flags '--allow-insecure-entitlement network.host --allow-insecure-entitlement security.insecure' \
+            --bootstrap
+          echo "BUILDX_BUILDER=dalec-pr6829" >> "$GITHUB_ENV"
+          docker buildx inspect dalec-pr6829
+          # Smoke check: confirm the daemon reports a usable version (>= 0.12)
+          docker exec buildx_buildkit_dalec-pr68290 buildkitd --version || true
       - name: Pre-build base images
         run: |
           set -eu
@@ -385,12 +456,20 @@ jobs:
           f="${dir}/dockerd.log"
           echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
           sudo journalctl -u docker > "${f}"
+
+          # The dalec specs are solved by the PR buildkitd container, so its
+          # logs are where build failures actually surface.
+          bk="${dir}/pr-buildkitd.log"
+          echo "PR_BUILDKITD_LOG_PATH=${bk}" >> $GITHUB_OUTPUT
+          docker logs buildx_buildkit_dalec-pr68290 > "${bk}" 2>&1 || true
       - name: Upload buildkit logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-dockerd-logs-${{ matrix.suite }}
-          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+          path: |
+            ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+            ${{ steps.dump-logs.outputs.PR_BUILDKITD_LOG_PATH }}
           retention-days: 1
 
   unit:
@@ -433,6 +512,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-22.04
+    needs: build-buildkit
     strategy:
       fail-fast: false
       matrix:
@@ -441,6 +521,7 @@ jobs:
     env:
       DALEC_DISABLE_DIFF_MERGE: ${{ matrix.disable_diff_merge }}
       FRONTEND_REF: localhost:5000/dalec/frontend
+      PR_BUILDKIT_IMAGE: ${{ needs.build-buildkit.outputs.image }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -470,19 +551,30 @@ jobs:
         uses: ./.github/actions/dns-spoof-ubuntu-archive
       - name: Setup builder
         run: |
+          set -eux
           # Sometimes the builder runs out of space... so cleanup anything we can first.
+          # NOTE: prune BEFORE pulling the PR buildkit image so it isn't removed.
           docker image prune -a -f
+
+          # Pull the custom buildkitd (passthrough op) and run all bakes against it.
+          docker pull "${PR_BUILDKIT_IMAGE}"
 
           docker run -d --net=host ghcr.io/${{ steps.format-repo.outputs.result }}/mirror/dockerhub/library/registry:latest
 
-          # If diff/merge are enabled we need to use a buildx builder to make sure the feature is supported.
-          # Otherwise we can just use the default docker builder.
+          docker buildx create --name dalec-pr6829 --use \
+            --driver docker-container \
+            --driver-opt "image=${PR_BUILDKIT_IMAGE}" \
+            --driver-opt network=host \
+            --buildkitd-flags '--allow-insecure-entitlement network.host --allow-insecure-entitlement security.insecure' \
+            --bootstrap
+          echo "BUILDX_BUILDER=dalec-pr6829" >> "$GITHUB_ENV"
+          echo "USE_BUILDX=1" >> "$GITHUB_ENV"
+
+          # frontend-ci-full builds multi-platform; the single-platform variant
+          # is enough for the diff/merge-disabled leg.
           if [ "${DALEC_DISABLE_DIFF_MERGE}" = "0" ]; then
-            docker buildx create --use --driver-opt network=host
             echo FRONTEND_BAKE_TARGET="frontend-ci-full" >> $GITHUB_ENV
-            echo USE_BUILDX=1 >> $GITHUB_ENV
           else
-            echo DALEC_NO_CACHE_EXPORT="1" >> $GITHUB_ENV
             echo FRONTEND_BAKE_TARGET="frontend-ci" >> $GITHUB_ENV
           fi
       - name: Build frontend image
@@ -502,17 +594,20 @@ jobs:
           dir="$(mktemp -d)"
           f="${dir}/dockerd.log"
           echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
-          if [ "${USE_BUILDX}" = "1" ]; then
-            docker logs $(docker ps -lq) > "${f}"
-          else
-            sudo journalctl -u docker > "${f}"
-          fi
+          sudo journalctl -u docker > "${f}" || true
+
+          # The dalec specs are solved by the PR buildkitd container.
+          bk="${dir}/pr-buildkitd.log"
+          echo "PR_BUILDKITD_LOG_PATH=${bk}" >> $GITHUB_OUTPUT
+          docker logs buildx_buildkit_dalec-pr68290 > "${bk}" 2>&1 || true
       - name: Upload buildkit logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-dockerd-logs-diffmerge=${{ matrix.disable_diff_merge }}
-          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+          path: |
+            ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+            ${{ steps.dump-logs.outputs.PR_BUILDKITD_LOG_PATH }}
           retention-days: 1
   coverage-report:
     runs-on: ubuntu-22.04
