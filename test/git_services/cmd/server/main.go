@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 
 	githttp "github.com/AaronO/go-git-http"
 	"github.com/AaronO/go-git-http/auth"
@@ -81,7 +80,6 @@ func runServe() error {
 		listener.Close()
 		return fmt.Errorf("unexpected listener address type %T", listener.Addr())
 	}
-	actualPort := strconv.Itoa(tcpAddr.Port)
 
 	// Get the container's IP address
 	ip, err := getContainerIP()
@@ -91,7 +89,7 @@ func runServe() error {
 	}
 
 	// Emit the ready event with the IP and the actual bound port
-	emitReady(ip, actualPort)
+	emitReady(ip, tcpAddr.Port)
 
 	http.Handle("/", authr(gitHandler))
 	s := &http.Server{}
@@ -133,7 +131,7 @@ func getContainerIP() (string, error) {
 	return "", errors.New("no suitable IP address found")
 }
 
-func emitReady(ip, port string) {
+func emitReady(ip string, port int) {
 	event := gitservices.ServerEvent{
 		Type:  gitservices.EventTypeReady,
 		Ready: &gitservices.ReadyEvent{IP: ip, Port: port},
