@@ -477,7 +477,7 @@ func TestSourceGitChecksumPreservesTagMetadata(t *testing.T) {
 				ServerRoot:      "/",
 				PrivateRepoPath: "username/private",
 				HTTPServerPath:  "/usr/local/bin/git_http_server",
-				HTTPPort:        "8080",
+				HTTPPort:        "0",
 			}
 
 			testState := gitservices.NewTestState(t, gwc, &attr)
