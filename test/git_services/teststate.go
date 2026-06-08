@@ -11,6 +11,7 @@ import (
 	"io"
 	"iter"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func (ts *TestState) Client() gwclient.Client {
 // Dalec spec boilerplate
 func (ts *TestState) GenerateSpec(gomodContents string, auth dalec.GomodGitAuth) *dalec.Spec {
 	const sourceName = "gitauth"
-	var port string
+	var port int
 
 	switch {
 	case auth.Token != "":
@@ -88,7 +89,7 @@ func (ts *TestState) GenerateSpec(gomodContents string, auth dalec.GomodGitAuth)
 					{
 						Gomod: &dalec.GeneratorGomod{
 							Auth: map[string]dalec.GomodGitAuth{
-								fmt.Sprintf("%s:%s", ts.Attr.PrivateGomoduleHost, port): auth,
+								fmt.Sprintf("%s:%d", ts.Attr.PrivateGomoduleHost, port): auth,
 							},
 						},
 					},
@@ -104,7 +105,7 @@ type ServerResult struct {
 	// IP is the IP address of the container running the server.
 	IP string
 	// Port is the port the server is listening on.
-	Port string
+	Port int
 	// ErrChan receives errors from the server process.
 	ErrChan <-chan error
 }
@@ -121,18 +122,18 @@ func (ts *TestState) StartHTTPGitServer(ctx context.Context, gitHost llb.State) 
 		ts.Attr.HTTPServerPath,
 		"serve",
 		ts.Attr.ServerRoot,
-		ts.Attr.HTTPPort,
+		strconv.Itoa(ts.Attr.HTTPPort),
 	})
 
 	t.Log("waiting for http server to come online")
 	ready := ts.waitForReady(ctx, proc, waitOnlineTimeout)
 
-	// The server may have been asked to bind an ephemeral port ("0"), so record
+	// The server may have been asked to bind an ephemeral port (0), so record
 	// the actual port it bound. Downstream spec and gitconfig generation read
 	// ts.Attr.HTTPPort, so they must observe the real port.
 	ts.Attr.HTTPPort = ready.Port
 
-	t.Logf("http server is online at %s:%s", ready.IP, ready.Port)
+	t.Logf("http server is online at %s:%d", ready.IP, ready.Port)
 
 	return ServerResult{IP: ready.IP, Port: ready.Port, ErrChan: proc.ErrChan()}
 }
@@ -257,7 +258,7 @@ func (ts *TestState) StartSSHServer(ctx context.Context, gitHost llb.State) Serv
             done
 
             # Output ready event as JSON
-            printf '{"type":"ready","ready":{"ip":"%s","port":"%s"}}\n' "$IP" "$PORT"
+            printf '{"type":"ready","ready":{"ip":"%s","port":%s}}\n' "$IP" "$PORT"
 
             # Wait for server process
             wait $SERVER_PID
@@ -273,7 +274,7 @@ func (ts *TestState) StartSSHServer(ctx context.Context, gitHost llb.State) Serv
 	t.Log("waiting for ssh server to come online")
 	ready := ts.waitForReady(ctx, proc, waitOnlineTimeout)
 
-	t.Logf("ssh server is online at %s:%s", ready.IP, ready.Port)
+	t.Logf("ssh server is online at %s:%d", ready.IP, ready.Port)
 
 	return ServerResult{IP: ready.IP, Port: ready.Port, ErrChan: proc.ErrChan()}
 }

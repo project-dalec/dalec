@@ -22,7 +22,7 @@ type ReadyEvent struct {
 	// IP is the IP address the server is bound to (usually the container's IP).
 	IP string `json:"ip" yaml:"ip"`
 	// Port is the port the server is listening on.
-	Port string `json:"port" yaml:"port"`
+	Port int `json:"port" yaml:"port"`
 }
 
 // ErrorEvent indicates an error occurred.

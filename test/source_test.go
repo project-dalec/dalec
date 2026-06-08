@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -477,7 +478,7 @@ func TestSourceGitChecksumPreservesTagMetadata(t *testing.T) {
 				ServerRoot:      "/",
 				PrivateRepoPath: "username/private",
 				HTTPServerPath:  "/usr/local/bin/git_http_server",
-				HTTPPort:        "0",
+				HTTPPort:        0,
 			}
 
 			testState := gitservices.NewTestState(t, gwc, &attr)
@@ -513,7 +514,7 @@ func TestSourceGitChecksumPreservesTagMetadata(t *testing.T) {
 					Sources: map[string]dalec.Source{
 						sourceName: {
 							Git: &dalec.SourceGit{
-								URL:        "http://" + httpServer.IP + ":" + httpServer.Port + "/" + attr.PrivateRepoPath,
+								URL:        "http://" + httpServer.IP + ":" + strconv.Itoa(httpServer.Port) + "/" + attr.PrivateRepoPath,
 								Commit:     tagName,
 								Checksum:   checksum,
 								KeepGitDir: true,
