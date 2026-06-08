@@ -32,15 +32,18 @@ func TestGomodGitAuth(t *testing.T) {
 	sshID := "dalecssh"
 
 	// Base attributes for the git services.
-	// Note: HTTPPort and SSHPort are still used to configure what port the servers
-	// listen on inside their containers.
+	// Note: SSHPort is still used to configure what port the SSH server
+	// listens on inside its container. HTTPPort is "0" so the kernel picks a
+	// free ephemeral port, avoiding collisions between concurrent servers; the
+	// actual port is reported back and recorded in Attr.HTTPPort once the
+	// server is online.
 	attr := gitservices.Attributes{
 		ServerRoot:             "/",
 		PrivateRepoPath:        "username/private",
 		DependingRepoPath:      "username/public",
 		HTTPServerPath:         "/usr/local/bin/git_http_server",
 		PrivateGomoduleHost:    "host.docker.internal",
-		HTTPPort:               "8080",
+		HTTPPort:               "0",
 		SSHPort:                "2222",
 		HTTPServerBuildDir:     "/tmp/dalec/internal/dalec_coderoot",
 		HTTPServeCodeLocalPath: "./test/cmd/git_repo",

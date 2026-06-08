@@ -24,7 +24,9 @@ type Attributes struct {
 	// PrivateGomoduleHost is the hostname of the git server
 	PrivateGomoduleHost string
 
-	// HTTPPort is the port on which the http git server runs
+	// HTTPPort is the requested port on which the http git server listens. Use
+	// "0" to request an ephemeral port; the actual bound port is reported back
+	// and written here once the server is online.
 	HTTPPort string
 	// SSHPort is the port on which the ssh git server runs
 	SSHPort string

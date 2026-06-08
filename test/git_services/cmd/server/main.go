@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 
 	githttp "github.com/AaronO/go-git-http"
 	"github.com/AaronO/go-git-http/auth"
@@ -64,12 +65,23 @@ func runServe() error {
 		return false, nil
 	})
 
-	// Bind to all interfaces
+	// Bind to all interfaces. A port of "0" lets the kernel pick a free
+	// ephemeral port, which avoids collisions when multiple servers run
+	// concurrently in a shared network namespace.
 	addr := fmt.Sprintf("0.0.0.0:%s", port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
+
+	// Resolve the port actually bound, which differs from the requested port
+	// when "0" was requested.
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		listener.Close()
+		return fmt.Errorf("unexpected listener address type %T", listener.Addr())
+	}
+	actualPort := strconv.Itoa(tcpAddr.Port)
 
 	// Get the container's IP address
 	ip, err := getContainerIP()
@@ -78,8 +90,8 @@ func runServe() error {
 		return fmt.Errorf("failed to get container IP: %w", err)
 	}
 
-	// Emit the ready event with the IP and port
-	emitReady(ip, port)
+	// Emit the ready event with the IP and the actual bound port
+	emitReady(ip, actualPort)
 
 	http.Handle("/", authr(gitHandler))
 	s := &http.Server{}

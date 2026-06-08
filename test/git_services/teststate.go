@@ -127,6 +127,11 @@ func (ts *TestState) StartHTTPGitServer(ctx context.Context, gitHost llb.State) 
 	t.Log("waiting for http server to come online")
 	ready := ts.waitForReady(ctx, proc, waitOnlineTimeout)
 
+	// The server may have been asked to bind an ephemeral port ("0"), so record
+	// the actual port it bound. Downstream spec and gitconfig generation read
+	// ts.Attr.HTTPPort, so they must observe the real port.
+	ts.Attr.HTTPPort = ready.Port
+
 	t.Logf("http server is online at %s:%s", ready.IP, ready.Port)
 
 	return ServerResult{IP: ready.IP, Port: ready.Port, ErrChan: proc.ErrChan()}
