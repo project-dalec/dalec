@@ -210,3 +210,89 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 		})
 	}
 }
+
+func TestGomodEditArgs_DropRequire(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		gen          *GeneratorGomod
+		expectErr    bool
+		expectedArgs string
+	}{
+		{
+			name: "drop converts to droprequire",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Drop: []string{"example.com/old-submodule"},
+				},
+			},
+			expectedArgs: "-droprequire=example.com/old-submodule",
+		},
+		{
+			name: "multiple drops",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Drop: []string{
+						"example.com/mod-a",
+						"example.com/mod-b",
+					},
+				},
+			},
+			expectedArgs: "-droprequire=example.com/mod-a\n-droprequire=example.com/mod-b",
+		},
+		{
+			name: "mixed drop and replace",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Replace: []GomodReplace{
+						{Original: "example.com/grpc", Update: "example.com/grpc@v1.79.3"},
+					},
+					Drop: []string{"example.com/grpc/stats/otel"},
+				},
+			},
+			expectedArgs: "-replace=example.com/grpc=example.com/grpc@v1.79.3\n-droprequire=example.com/grpc/stats/otel",
+		},
+		{
+			name: "drop with empty module path errors",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Drop: []string{""},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "drop with invalid module path errors",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Drop: []string{"INVALID PATH"},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "nil edits returns empty",
+			gen:          &GeneratorGomod{},
+			expectedArgs: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := gomodEditArgs(tt.gen)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if args != tt.expectedArgs {
+				t.Errorf("expected %q, got %q", tt.expectedArgs, args)
+			}
+		})
+	}
+}

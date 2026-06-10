@@ -212,6 +212,11 @@ type GomodEdits struct {
 	// Replace applies go.mod replace directives before downloading module dependencies.
 	// Each entry can be either a string "old => new" or a struct with Old and New fields.
 	Replace []GomodReplace `yaml:"replace,omitempty" json:"replace,omitempty"`
+	// Drop removes module requirements from go.mod via go mod edit -droprequire.
+	// Each entry is a module path to remove. This handles cases where a sub-module
+	// has been absorbed into its parent module in a newer version
+	// (e.g. google.golang.org/grpc/stats/opentelemetry merged into grpc at v1.79.0).
+	Drop []string `yaml:"drop,omitempty" json:"drop,omitempty"`
 }
 
 // GomodReplace represents a go.mod replace directive.
