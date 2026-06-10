@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/mod/module"
+
 	"github.com/moby/buildkit/client/llb"
 	"github.com/pkg/errors"
 )
@@ -102,7 +104,7 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 	return nil
 }
 
-// gomodEditArgs generates the list of -replace= arguments for go mod edit.
+// gomodEditArgs generates the list of go mod edit arguments from gomod edits.
 // Returns a newline-separated list of arguments that can be safely passed to go mod edit.
 func gomodEditArgs(g *GeneratorGomod) (string, error) {
 	if g == nil || g.Edits == nil {
@@ -118,6 +120,18 @@ func gomodEditArgs(g *GeneratorGomod) (string, error) {
 			return "", err
 		}
 		args = append(args, "-replace="+arg)
+	}
+
+	// Process drop-require directives
+	for _, mod := range g.Edits.Drop {
+		mod = strings.TrimSpace(mod)
+		if mod == "" {
+			return "", errors.New("invalid gomod drop: module path must be non-empty")
+		}
+		if err := module.CheckPath(mod); err != nil {
+			return "", errors.Errorf("invalid gomod drop %q: %v", mod, err)
+		}
+		args = append(args, "-droprequire="+mod)
 	}
 
 	if len(args) == 0 {
