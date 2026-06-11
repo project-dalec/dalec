@@ -7,6 +7,7 @@ import (
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/targets/linux/deb/debian"
+	debdistro "github.com/project-dalec/dalec/targets/linux/deb/distro"
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 	"github.com/project-dalec/dalec/targets/linux/flatcar"
 	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
@@ -15,60 +16,63 @@ import (
 	"github.com/project-dalec/dalec/targets/windows"
 )
 
+const testingAltVersionIDSuffix = "testingalt"
+
+type routeFunc func(prefix string, spec *dalec.Spec) ([]frontend.Route, error)
+
 func init() {
-	registerRoutes(debian.TrixieDefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return debian.TrixieConfig.Routes(debian.TrixieDefaultTargetKey, spec)
-	})
-	registerRoutes(debian.BookwormDefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return debian.BookwormConfig.Routes(debian.BookwormDefaultTargetKey, spec)
-	})
-	registerRoutes(debian.BullseyeDefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return debian.BullseyeConfig.Routes(debian.BullseyeDefaultTargetKey, spec)
+	registerDebRoutes(debian.TrixieDefaultTargetKey, debian.TrixieConfig)
+	registerDebRoutes(debian.BookwormDefaultTargetKey, debian.BookwormConfig)
+	registerDebRoutes(debian.BullseyeDefaultTargetKey, debian.BullseyeConfig)
+
+	registerDebRoutes(ubuntu.BionicDefaultTargetKey, ubuntu.BionicConfig)
+	registerDebRoutes(ubuntu.FocalDefaultTargetKey, ubuntu.FocalConfig)
+	registerDebRoutes(ubuntu.JammyDefaultTargetKey, ubuntu.JammyConfig)
+	registerDebRoutes(ubuntu.NobleDefaultTargetKey, ubuntu.NobleConfig)
+
+	registerRoutes(almalinux.V8TargetKey, almalinux.ConfigV8.Routes)
+	registerRoutes(almalinux.V9TargetKey, almalinux.ConfigV9.Routes)
+
+	registerRoutes(rockylinux.V8TargetKey, rockylinux.ConfigV8.Routes)
+	registerRoutes(rockylinux.V9TargetKey, rockylinux.ConfigV9.Routes)
+
+	registerRoutes(azlinux.AzLinux3TargetKey, azlinux.Azlinux3Config.Routes)
+	registerRoutes(azlinux.AzLinux4TargetKey, azlinux.Azlinux4Config.Routes)
+
+	registerRoutes(flatcar.TargetKey, flatcar.DefaultConfig.Routes)
+
+	registerRoutes(windows.DefaultTargetKey, windows.Routes)
+}
+
+func registerRoutes(name string, routes routeFunc) {
+	targets.RegisterRouteProvider(name, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
+		return routes(name, spec)
 	})
 
-	registerRoutes(ubuntu.BionicDefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return ubuntu.BionicConfig.Routes(ubuntu.BionicDefaultTargetKey, spec)
-	})
-	registerRoutes(ubuntu.FocalDefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return ubuntu.FocalConfig.Routes(ubuntu.FocalDefaultTargetKey, spec)
-	})
-	registerRoutes(ubuntu.JammyDefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return ubuntu.JammyConfig.Routes(ubuntu.JammyDefaultTargetKey, spec)
-	})
-	registerRoutes(ubuntu.NobleDefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return ubuntu.NobleConfig.Routes(ubuntu.NobleDefaultTargetKey, spec)
-	})
+	if !includeAltTestingTargets {
+		return
+	}
 
-	registerRoutes(almalinux.V8TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return almalinux.ConfigV8.Routes(almalinux.V8TargetKey, spec)
-	})
-	registerRoutes(almalinux.V9TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return almalinux.ConfigV9.Routes(almalinux.V9TargetKey, spec)
-	})
-
-	registerRoutes(rockylinux.V8TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return rockylinux.ConfigV8.Routes(rockylinux.V8TargetKey, spec)
-	})
-	registerRoutes(rockylinux.V9TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return rockylinux.ConfigV9.Routes(rockylinux.V9TargetKey, spec)
-	})
-
-	registerRoutes(azlinux.AzLinux3TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return azlinux.Azlinux3Config.Routes(azlinux.AzLinux3TargetKey, spec)
-	})
-	registerRoutes(azlinux.AzLinux4TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return azlinux.Azlinux4Config.Routes(azlinux.AzLinux4TargetKey, spec)
-	})
-
-	registerRoutes(flatcar.TargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return flatcar.DefaultConfig.Routes(flatcar.TargetKey, spec)
-	})
-
-	registerRoutes(windows.DefaultTargetKey, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return windows.Routes(windows.DefaultTargetKey, spec)
+	altName := targets.TestingAltTargetKey(name)
+	targets.RegisterRouteProvider(altName, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
+		return routes(altName, spec)
 	})
 }
 
-func registerRoutes(name string, routes func(ctx context.Context, spec *dalec.Spec) ([]frontend.Route, error)) {
-	targets.RegisterRouteProvider(name, routes)
+func registerDebRoutes(name string, cfg *debdistro.Config) {
+	targets.RegisterRouteProvider(name, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
+		return cfg.Routes(name, spec)
+	})
+
+	if !includeAltTestingTargets {
+		return
+	}
+
+	altName := targets.TestingAltTargetKey(name)
+	altCfg := *cfg
+	altCfg.VersionID += testingAltVersionIDSuffix
+
+	targets.RegisterRouteProvider(altName, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
+		return altCfg.Routes(altName, spec)
+	})
 }

@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,18 +129,12 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 		solveT(ctx, t, client, sr)
 	}
 
-	// Used to validate that caches with namespaced dirs are not shared between distros and that
-	// caches with no namespace are shared between distros.
-	checkDistro := func(ctx context.Context, t *testing.T, client gwclient.Client) {
-		distro2 := "noble"
-		if distro == distro2 {
-			distro2 = "jammy"
-		}
-
-		t.Log("using distro", distro2)
-		target := path.Join(distro2, "deb")
-
-		// Note: cache3/hello3 should have the content written by the first test
+	// Used to validate that caches with namespaced dirs are not shared between targets and that
+	// caches with no namespace are shared between targets.
+	checkAltTarget := func(ctx context.Context, t *testing.T, client gwclient.Client) {
+		altDistro := targets.TestingAltTargetKey(distro)
+		target := altDistro + strings.TrimPrefix(cfg.Package, distro)
+		t.Log("using alternate target", target)
 		for i, c := range caches {
 			dir := getDir(t, c)
 
@@ -152,11 +145,11 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 
 			switch {
 			case c.Dir != nil:
-				// Use the *original* distro name here since that is what wrote the file
+				// Use the *original* target name here since that is what wrote the file.
 				check := fmt.Sprintf("%s %d", distro, i)
 				cmds = append(cmds, fmt.Sprintf("grep %q %s", check, filepath.Join(dir, "hello")))
 			case c.GoBuild != nil || c.RustSCCache != nil || c.Bazel != nil:
-				// This should not exist because the cache is not shared between distros
+				// This should not exist because the cache is not shared between targets.
 				cmds = append(cmds, fmt.Sprintf("[ ! -f %q ]", filepath.Join(dir, "hello")))
 			}
 		}
@@ -174,10 +167,10 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 		cmds = cmds[:0]
 		checkCacheContents(ctx, t, client)
 
-		// Now make sure the cache is not shared with another distro
-		// This makes sure that that the 1st and 2nd cache are not shared with another distro, but the 3rd one is.
+		// Now make sure the cache is not shared with another target.
+		// This makes sure that that the 1st and 2nd cache are not shared with another target, but the 3rd one is.
 		cmds = cmds[:0]
-		checkDistro(ctx, t, client)
+		checkAltTarget(ctx, t, client)
 	})
 }
 
