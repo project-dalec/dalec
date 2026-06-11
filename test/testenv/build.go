@@ -53,7 +53,9 @@ func buildBaseFrontend(ctx context.Context, c gwclient.Client) (*gwclient.Result
 
 	// If the test runner requested frontend coverage, build the frontend binary
 	// with coverage instrumentation (Dockerfile uses DALEC_FRONTEND_COVERAGE).
-	frontendOpt := map[string]string{}
+	frontendOpt := map[string]string{
+		"build-arg:EXTRA_BUILD_FLAGS": "-tags alt_testing_targets",
+	}
 	if os.Getenv("DALEC_FRONTEND_GOCOVERDIR") != "" {
 		frontendOpt["build-arg:DALEC_FRONTEND_COVERAGE"] = "1"
 	}

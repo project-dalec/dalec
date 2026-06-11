@@ -6,14 +6,15 @@ COPY . .
 ENV CGO_ENABLED=0
 ARG TARGETARCH TARGETOS GOFLAGS=-trimpath
 ARG DALEC_FRONTEND_COVERAGE=0
+ARG EXTRA_BUILD_FLAGS=""
 ENV GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFLAGS=${GOFLAGS}
 RUN \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     if [ "${DALEC_FRONTEND_COVERAGE}" = "1" ]; then \
-	go build -cover -covermode=atomic -coverpkg=./... -o /frontend ./cmd/frontend ; \
+	go build ${EXTRA_BUILD_FLAGS} -cover -covermode=atomic -coverpkg=./... -o /frontend ./cmd/frontend ; \
     else \
-        go build -o /frontend ./cmd/frontend ; \
+        go build ${EXTRA_BUILD_FLAGS} -o /frontend ./cmd/frontend ; \
     fi
 
 FROM scratch AS frontend
