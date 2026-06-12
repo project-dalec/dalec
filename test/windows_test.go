@@ -131,6 +131,12 @@ deb [trusted=yes] copy:` + repoPath + `/ /
 		ctx := startTestSpan(baseCtx, t)
 		testWindowsZipFilename(ctx, t)
 	})
+
+	t.Run("subpackages", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testWindowsSubpackages(ctx, t)
+	})
 }
 
 // Windows is only supported on amd64 (ie there is no arm64 windows image currently)
@@ -828,6 +834,80 @@ func testWindowsDefaultPlatform(ctx context.Context, t *testing.T) {
 	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
 		solveT(ctx, t, gwc, sr)
+	})
+}
+
+// testWindowsSubpackages exercises the windowscross/zip subpackage behavior:
+// a single build produces one zip per package (primary + supplemental), and a
+// package that resolves to no artifacts is rejected because an empty zip is
+// meaningless.
+func testWindowsSubpackages(ctx context.Context, t *testing.T) {
+	const targetKey = "windowscross"
+
+	newSpec := func() *dalec.Spec {
+		return fillMetadata("test-win-subpkgs", &dalec.Spec{
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "echo primary > primary.exe; echo contrib > contrib.exe"},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"primary.exe": {},
+				},
+			},
+			Targets: map[string]dalec.Target{
+				targetKey: {
+					Packages: map[string]dalec.SubPackage{
+						"contrib": {
+							Description: "Contributed extras",
+							Artifacts: &dalec.Artifacts{
+								Binaries: map[string]dalec.ArtifactConfig{
+									"contrib.exe": {},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	t.Run("one zip per package", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		spec := newSpec()
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+			res := solveT(ctx, t, gwc, sr)
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			for _, name := range []string{spec.Name, spec.Name + "-contrib"} {
+				filename := fmt.Sprintf("/%s_%s-%s_%s.zip", name, spec.Version, spec.Revision, runtime.GOARCH)
+				stat, err := ref.StatFile(ctx, gwclient.StatRequest{Path: filename})
+				assert.NilError(t, err, "expected zip %s", filename)
+				assert.Equal(t, stat.Path, filepath.Base(filename))
+			}
+		})
+	})
+
+	t.Run("empty package is rejected", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		spec := newSpec()
+		// Add a subpackage with no artifacts; this should fail the build since
+		// it would produce an empty zip.
+		tgt := spec.Targets[targetKey]
+		tgt.Packages["empty"] = dalec.SubPackage{Description: "no artifacts here"}
+		spec.Targets[targetKey] = tgt
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+			_, err := gwc.Solve(ctx, sr)
+			assert.ErrorContains(t, err, "no artifacts")
+		})
 	})
 }
 
