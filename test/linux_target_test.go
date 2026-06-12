@@ -1026,23 +1026,33 @@ EOF
 				ctx := startTestSpan(ctx, t)
 
 				// Asserts that spec-declared runtime deps survive the
-				// cleanup pass as files on disk.
-				//
-				// End-to-end exec validation of a runtime dep is
-				// covered by the sibling
-				// virtual_package_runtime_dep_resolves test, which
-				// actually runs /usr/bin/awk after cleanup and checks
-				// its stdout. That test catches missing dynamic
-				// linkers, broken shared library closures, and other
-				// runtime-only regressions that a bare StatFile check
-				// would silently miss.
+				// cleanup pass both as files on disk AND as executable
+				// binaries. Executing them (rather than only stat-ing)
+				// catches missing dynamic linkers, broken shared library
+				// closures, and merged-usr symlink damage (e.g. a purged
+				// base-files removing /lib64 -> usr/lib64, which makes
+				// every dynamically linked binary fail to exec) that a
+				// bare StatFile check would silently miss.
 				spec := testLinuxSpec(t, dalec.Spec{
 					Tests: []*dalec.TestSpec{
 						{
-							Name: "runtime dep binary works after cleanup",
+							Name: "runtime dep binaries are present after cleanup",
 							Files: map[string]dalec.FileCheckOutput{
 								"/usr/bin/curl": {},
 								"/usr/bin/dpkg": {},
+							},
+						},
+						{
+							Name: "runtime dep binaries execute after cleanup",
+							Steps: []dalec.TestStep{
+								{
+									Command: "/usr/bin/curl --version",
+									Stdout:  dalec.CheckOutput{Contains: []string{"curl"}},
+								},
+								{
+									Command: "/usr/bin/dpkg --version",
+									Stdout:  dalec.CheckOutput{Contains: []string{"Debian"}},
+								},
 							},
 						},
 					},
