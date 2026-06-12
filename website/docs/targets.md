@@ -256,6 +256,17 @@ of the primary package.
 Subpackage names must be unique within a target and must not collide with the
 primary package name.
 
+On RPM and deb targets, a single package build (`<distro>/rpm`, `<distro>/deb`)
+produces all packages — the primary package plus every subpackage defined for
+the target — just like `rpmbuild` and `dpkg-buildpackage` emit all subpackages
+from one invocation. On the `windowscross/zip` target each package is emitted as
+its own `<name>_<version>-<revision>_<arch>.zip`. Because a zip must contain
+something, the `windowscross/zip` target errors if any package (primary or
+subpackage) resolves to no artifacts; on RPM and deb an artifact-less package is
+allowed (for example a metapackage that only declares dependencies). The
+`windowscross` container target installs the binaries from every package into
+the image.
+
 ## Special considerations
 
 ### Windows
