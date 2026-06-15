@@ -54,6 +54,12 @@ permissions:
   contents: read
   packages: read
 
+# Buildkit image under test. The CI builders are pinned to this so the
+# integration and e2e suites exercise this buildkitd rather than the engine's
+# embedded buildkit.
+env:
+  BUILDKIT_TEST_IMAGE: moby/buildkit:v0.31.0
+
 jobs:
   lint:
     runs-on: ubuntu-22.04
@@ -275,6 +281,15 @@ jobs:
           echo "================ CLEANUP COMPLETE ================"
       - name: Use azure ubuntu archive
         uses: ./.github/actions/dns-spoof-ubuntu-archive
+      - name: Setup builder
+        run: |
+          # Use a buildx container builder pinned to the buildkit version under
+          # test so the integration suite runs against it instead of the
+          # engine's embedded buildkit. dial-stdio (used by the test harness)
+          # and the bake pre-builds all target the current builder.
+          docker buildx create --use \
+            --driver-opt network=host \
+            --driver-opt image=${BUILDKIT_TEST_IMAGE}
       - name: Pre-build base images
         run: |
           set -eu
@@ -383,15 +398,20 @@ jobs:
           set -e
 
           dir="$(mktemp -d)"
-          f="${dir}/dockerd.log"
-          echo "DOCKERD_LOG_PATH=${f}" >> $GITHUB_OUTPUT
-          sudo journalctl -u docker > "${f}"
+          echo "DUMP_DIR=${dir}" >> $GITHUB_OUTPUT
+          sudo journalctl -u docker > "${dir}/dockerd.log"
+
+          # Buildkit now runs inside the buildx container builder, so grab its
+          # logs as well.
+          for c in $(docker ps -a --filter name=buildx_buildkit --format '{{.Names}}'); do
+            docker logs "${c}" > "${dir}/${c}.log" 2>&1 || true
+          done
       - name: Upload buildkit logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-dockerd-logs-${{ matrix.suite }}
-          path: ${{ steps.dump-logs.outputs.DOCKERD_LOG_PATH }}
+          path: ${{ steps.dump-logs.outputs.DUMP_DIR }}/*
           retention-days: 1
 
   unit:
@@ -476,12 +496,16 @@ jobs:
 
           docker run -d --net=host ghcr.io/${{ steps.format-repo.outputs.result }}/mirror/dockerhub/library/registry:latest
 
-          # If diff/merge are enabled we need to use a buildx builder to make sure the feature is supported.
-          # Otherwise we can just use the default docker builder.
+          # Use a buildx container builder pinned to the buildkit version under
+          # test so both diff/merge matrix legs exercise the same buildkitd
+          # rather than diff/merge=1 falling back to the engine's embedded buildkit.
+          docker buildx create --use \
+            --driver-opt network=host \
+            --driver-opt image=${BUILDKIT_TEST_IMAGE}
+          echo USE_BUILDX=1 >> $GITHUB_ENV
+
           if [ "${DALEC_DISABLE_DIFF_MERGE}" = "0" ]; then
-            docker buildx create --use --driver-opt network=host
             echo FRONTEND_BAKE_TARGET="frontend-ci-full" >> $GITHUB_ENV
-            echo USE_BUILDX=1 >> $GITHUB_ENV
           else
             echo DALEC_NO_CACHE_EXPORT="1" >> $GITHUB_ENV
             echo FRONTEND_BAKE_TARGET="frontend-ci" >> $GITHUB_ENV
