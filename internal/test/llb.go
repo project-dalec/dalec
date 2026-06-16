@@ -25,6 +25,7 @@ func LLBOpsFromState(ctx context.Context, t *testing.T, state llb.State) []LLBOp
 	var ops []LLBOp
 	for _, dt := range def.Def {
 		var op pb.Op
+		err := op.UnmarshalVT(dt)
 		assert.NilError(t, err, "error parsing op")
 		dgst := digest.FromBytes(dt)
 		ent := LLBOp{Digest: dgst, Op: &op, OpMetadata: def.Metadata[dgst].ToPB()}

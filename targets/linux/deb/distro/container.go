@@ -143,7 +143,7 @@ func installPackagesInContainer(input buildContainerInput, ro []llb.RunOption) l
 				frontend.IgnoreCache(input.Client, targets.IgnoreCacheKeyContainer),
 			)...,
 		).Root().
-			With(dalec.InstallPostSymlinks(input.Spec.GetImagePost(input.Target), input.Worker, opts...))
+			With(dalec.InstallPostSymlinks(input.Spec.GetImagePost(input.Target), input.Worker, frontend.NativeSymlinkSupport(input.Client), opts...))
 	}
 }
 

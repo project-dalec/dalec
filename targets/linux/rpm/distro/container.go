@@ -74,7 +74,7 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	).AddMount(workPath, rootfs)
 
 	if post := spec.GetImagePost(targetKey); post != nil && len(post.Symlinks) > 0 {
-		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, opts...))
+		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, frontend.NativeSymlinkSupport(client), opts...))
 	}
 
 	return rootfs
