@@ -36,6 +36,17 @@ func DisableDiffMerge(v bool) {
 	disableDiffMerge.Store(v)
 }
 
+var disableSymlink atomic.Bool
+
+// DisableSymlink allows disabling the use of the native [llb.Symlink] file action
+// in favor of creating symlinks by executing `ln -s` in a container.
+//
+// This is needed when the buildkit version does not support the symlink file action
+// (i.e. it does not advertise [pb.CapFileSymlinkCreate]).
+func DisableSymlink(v bool) {
+	disableSymlink.Store(v)
+}
+
 type copyOptionFunc func(*llb.CopyInfo)
 
 func (f copyOptionFunc) SetCopyOption(i *llb.CopyInfo) {
@@ -291,8 +302,6 @@ func ShArgsf(format string, args ...interface{}) llb.RunOption {
 // InstallPostSymlinks returns a RunOption that adds symlinks defined in the [PostInstall] underneath the provided rootfs path.
 func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.ConstraintsOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
-		const rootfsPath = "/tmp/rootfs"
-
 		if post == nil {
 			return in
 		}
@@ -301,46 +310,134 @@ func InstallPostSymlinks(post *PostInstall, worker llb.State, opts ...llb.Constr
 			return in
 		}
 
-		buf := bytes.NewBuffer(nil)
-		buf.WriteString("set -ex\n")
-
-		sortedKeys := SortMapKeys(post.Symlinks)
-		var needsMount bool
-		for _, oldpath := range sortedKeys {
-			cfg := post.Symlinks[oldpath]
-			newpaths := cfg.Paths
-			sort.Strings(newpaths)
-
-			for _, newpath := range newpaths {
-				fmt.Fprintf(buf, "mkdir -p %q\n", filepath.Join(rootfsPath, filepath.Dir(newpath)))
-				fmt.Fprintf(buf, "ln -s %q %q\n", oldpath, filepath.Join(rootfsPath, newpath))
-				if cfg.User != "" {
-					needsMount = true
-					fmt.Fprintf(buf, "chown -h %s %q\n", cfg.User, filepath.Join(rootfsPath, newpath))
-				}
-				if cfg.Group != "" {
-					needsMount = true
-					fmt.Fprintf(buf, "chgrp -h %s %q\n", cfg.Group, filepath.Join(rootfsPath, newpath))
-				}
-			}
+		if !disableSymlink.Load() {
+			return installPostSymlinksNative(post, in, opts...)
 		}
 
-		const name = "tmp.dalec.symlink.sh"
-		script := llb.Scratch().File(llb.Mkfile(name, 0o700, buf.Bytes()), opts...)
-
-		return worker.Run(
-			ShArgs("/tmp/add_symlink.sh"),
-			llb.AddMount("/tmp/add_symlink.sh", script, llb.SourcePath(name)),
-			RunOptFunc(func(ei *llb.ExecInfo) {
-				if needsMount {
-					llb.AddMount("/etc/group", in, llb.SourcePath("/etc/group")).SetRunOption(ei)
-					llb.AddMount("/etc/passwd", in, llb.SourcePath("/etc/passwd")).SetRunOption(ei)
-				}
-			}),
-			withConstraints(opts),
-			ProgressGroup("Add post-install symlinks"),
-		).AddMount(rootfsPath, in)
+		return installPostSymlinksExec(post, worker, in, opts...)
 	}
+}
+
+// installPostSymlinksNative creates the post-install symlinks using the native
+// [llb.Symlink] file action. It is used when the connected buildkit advertises
+// support for the symlink file action.
+func installPostSymlinksNative(post *PostInstall, in llb.State, opts ...llb.ConstraintsOpt) llb.State {
+	var chain *llb.FileAction
+
+	appendMkdir := func(dir string) {
+		// The symlink file action does not create parent directories and will
+		// fail if they do not exist, so create them first (without changing
+		// ownership, matching the `mkdir -p` behavior of the exec fallback).
+		if dir == "/" || dir == "." || dir == "" {
+			return
+		}
+		mkdir := llb.Mkdir(dir, 0o755, llb.WithParents(true))
+		if chain == nil {
+			chain = mkdir
+			return
+		}
+		chain = chain.Mkdir(dir, 0o755, llb.WithParents(true))
+	}
+
+	appendSymlink := func(oldpath, newpath string, symlinkOpts []llb.SymlinkOption) {
+		if chain == nil {
+			chain = llb.Symlink(oldpath, newpath, symlinkOpts...)
+			return
+		}
+		chain = chain.Symlink(oldpath, newpath, symlinkOpts...)
+	}
+
+	for _, oldpath := range SortMapKeys(post.Symlinks) {
+		cfg := post.Symlinks[oldpath]
+		newpaths := slices.Clone(cfg.Paths)
+		sort.Strings(newpaths)
+
+		var symlinkOpts []llb.SymlinkOption
+		if cfg.User != "" || cfg.Group != "" {
+			symlinkOpts = append(symlinkOpts, symlinkChown(cfg.User, cfg.Group))
+		}
+
+		for _, newpath := range newpaths {
+			appendMkdir(filepath.Dir(newpath))
+			appendSymlink(oldpath, newpath, symlinkOpts)
+		}
+	}
+
+	if chain == nil {
+		return in
+	}
+
+	return in.File(chain, withConstraints(opts), ProgressGroup("Add post-install symlinks"))
+}
+
+// symlinkChown builds an [llb.ChownOption] for a symlink that mirrors the
+// ownership behavior of the exec fallback (`chown -h` / `chgrp -h`).
+//
+// User and group names are resolved by buildkit against the file op's input
+// (the installed rootfs), which contains any users/groups created by the spec.
+//
+// Both the user and group are always set explicitly: chowning by user name alone
+// would also set the group to that user's primary group, whereas the exec
+// fallback leaves the unspecified side as root (id 0).
+func symlinkChown(userName, groupName string) llb.ChownOption {
+	user := llb.UserOpt{UID: 0}
+	if userName != "" {
+		user = llb.UserOpt{Name: userName}
+	}
+
+	group := llb.UserOpt{UID: 0}
+	if groupName != "" {
+		group = llb.UserOpt{Name: groupName}
+	}
+
+	return llb.ChownOpt{User: &user, Group: &group}
+}
+
+// installPostSymlinksExec creates the post-install symlinks by executing a shell
+// script in the worker. It is the fallback used when the connected buildkit does
+// not support the native symlink file action.
+func installPostSymlinksExec(post *PostInstall, worker, in llb.State, opts ...llb.ConstraintsOpt) llb.State {
+	const rootfsPath = "/tmp/rootfs"
+
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("set -ex\n")
+
+	sortedKeys := SortMapKeys(post.Symlinks)
+	var needsMount bool
+	for _, oldpath := range sortedKeys {
+		cfg := post.Symlinks[oldpath]
+		newpaths := slices.Clone(cfg.Paths)
+		sort.Strings(newpaths)
+
+		for _, newpath := range newpaths {
+			fmt.Fprintf(buf, "mkdir -p %q\n", filepath.Join(rootfsPath, filepath.Dir(newpath)))
+			fmt.Fprintf(buf, "ln -s %q %q\n", oldpath, filepath.Join(rootfsPath, newpath))
+			if cfg.User != "" {
+				needsMount = true
+				fmt.Fprintf(buf, "chown -h %s %q\n", cfg.User, filepath.Join(rootfsPath, newpath))
+			}
+			if cfg.Group != "" {
+				needsMount = true
+				fmt.Fprintf(buf, "chgrp -h %s %q\n", cfg.Group, filepath.Join(rootfsPath, newpath))
+			}
+		}
+	}
+
+	const name = "tmp.dalec.symlink.sh"
+	script := llb.Scratch().File(llb.Mkfile(name, 0o700, buf.Bytes()), opts...)
+
+	return worker.Run(
+		ShArgs("/tmp/add_symlink.sh"),
+		llb.AddMount("/tmp/add_symlink.sh", script, llb.SourcePath(name)),
+		RunOptFunc(func(ei *llb.ExecInfo) {
+			if needsMount {
+				llb.AddMount("/etc/group", in, llb.SourcePath("/etc/group")).SetRunOption(ei)
+				llb.AddMount("/etc/passwd", in, llb.SourcePath("/etc/passwd")).SetRunOption(ei)
+			}
+		}),
+		withConstraints(opts),
+		ProgressGroup("Add post-install symlinks"),
+	).AddMount(rootfsPath, in)
 }
 
 func (s *Spec) GetSigner(targetKey string) (*PackageSigner, bool) {
