@@ -223,11 +223,26 @@ func filterPath(p string) string {
 // This makes sure that any changes made during test steps are discarded but makes sure
 // there is a dependency on the intermediate state so buildkit will execute it.
 //
-// NOTE: This is a hack to work around the fact that buildkit does not currently
-// have a proper way to express "run this for validation only".
+// When the buildkit daemon supports the PassthroughOp (buildkit v0.31.0+), this
+// is expressed directly via [llb.State.Requires]: the original state is returned
+// while requiring the validation state to be evaluated, with no extra exec.
+//
+// Otherwise it falls back to a no-op command (running the frontend binary) purely
+// to force evaluation of the validation state. This is a hack to work around the
+// fact that older buildkit does not have a proper way to express "run this for
+// validation only".
 func WithFinalState(st llb.State, opts ...ValidationOpt) llb.StateOption {
-	return trueCmd.WithOutput(st, opts...)
+	return func(in llb.State) llb.State {
+		if dalec.PassthroughOpSupported() {
+			return st.Requires(finalStateRequiresID, in)
+		}
+		return in.With(trueCmd.WithOutput(st, opts...))
+	}
 }
+
+// finalStateRequiresID is the opaque identifier used for the PassthroughOp
+// created by [WithFinalState].
+const finalStateRequiresID = "dalec.testrunner.requires"
 
 func withCheckOutput(filename string, checker *dalec.CheckOutput, opts ...ValidationOpt) []llb.StateOption {
 	if checker.IsEmpty() {

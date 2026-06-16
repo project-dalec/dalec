@@ -4479,6 +4479,26 @@ func testImageConfig(ctx context.Context, t *testing.T, target string, opts ...s
 }
 
 func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
+	// The test runner wires the "evaluate for validation only" dependency
+	// differently depending on whether the buildkit daemon supports the
+	// PassthroughOp. Exercise both code paths: the default (PassthroughOp when
+	// the daemon supports it) and the legacy fallback forced via
+	// DALEC_DISABLE_PASSTHROUGH.
+	for _, mode := range []struct {
+		name string
+		opts []srOpt
+	}{
+		{name: "passthrough"},
+		{name: "passthrough disabled", opts: []srOpt{withBuildArg("DALEC_DISABLE_PASSTHROUGH", "1")}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Parallel()
+			testLinuxPackageTestsFailMode(ctx, t, cfg, mode.opts...)
+		})
+	}
+}
+
+func testLinuxPackageTestsFailMode(ctx context.Context, t *testing.T, cfg testLinuxConfig, modeOpts ...srOpt) {
 	t.Run("negative test", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
@@ -4688,7 +4708,9 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 						spec.Tests = []*dalec.TestSpec{tc.test}
 
 						testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-							sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+							srOpts := []srOpt{withSpec(ctx, t, spec), withBuildTarget(target), withIgnoreCache(frontend.IgnoreCacheTestsKey)}
+							srOpts = append(srOpts, modeOpts...)
+							sr := newSolveRequest(srOpts...)
 							_, err := client.Solve(ctx, sr)
 							assert.Assert(t, err != nil)
 
@@ -4881,7 +4903,9 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			t.Parallel()
 			ctx = startTestSpan(baseCtx, t)
 			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+				srOpts := []srOpt{withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package), withIgnoreCache(frontend.IgnoreCacheTestsKey)}
+				srOpts = append(srOpts, modeOpts...)
+				sr := newSolveRequest(srOpts...)
 				res := solveT(ctx, t, client, sr)
 				_, err := res.SingleRef()
 				assert.NilError(t, err)
@@ -4892,7 +4916,9 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 			t.Parallel()
 			ctx := startTestSpan(baseCtx, t)
 			testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withIgnoreCache(frontend.IgnoreCacheTestsKey))
+				srOpts := []srOpt{withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container), withIgnoreCache(frontend.IgnoreCacheTestsKey)}
+				srOpts = append(srOpts, modeOpts...)
+				sr := newSolveRequest(srOpts...)
 				res := solveT(ctx, t, client, sr)
 				_, err := res.SingleRef()
 				assert.NilError(t, err)

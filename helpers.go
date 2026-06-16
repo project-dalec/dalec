@@ -36,6 +36,22 @@ func DisableDiffMerge(v bool) {
 	disableDiffMerge.Store(v)
 }
 
+var passthroughOpSupported atomic.Bool
+
+// SetPassthroughOpSupported records whether the connected buildkit daemon
+// supports the LLB PassthroughOp (added in buildkit v0.31.0).
+//
+// The default is false so that older buildkit daemons, which do not support the
+// op, keep using the backwards-compatible behavior.
+func SetPassthroughOpSupported(v bool) {
+	passthroughOpSupported.Store(v)
+}
+
+// PassthroughOpSupported reports whether the LLB PassthroughOp may be used.
+func PassthroughOpSupported() bool {
+	return passthroughOpSupported.Load()
+}
+
 type copyOptionFunc func(*llb.CopyInfo)
 
 func (f copyOptionFunc) SetCopyOption(i *llb.CopyInfo) {

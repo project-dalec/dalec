@@ -100,6 +100,10 @@ func (r *Router) Handler(opts ...func(context.Context, gwclient.Client, *Router)
 			dalec.DisableDiffMerge(true)
 		}
 
+		if SupportsPassthroughOp(client) {
+			dalec.SetPassthroughOpSupported(true)
+		}
+
 		for _, opt := range opts {
 			if err := opt(ctx, client, r); err != nil {
 				return nil, err

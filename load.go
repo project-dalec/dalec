@@ -37,6 +37,8 @@ func knownArg(key string) bool {
 		return true
 	case "DALEC_DISABLE_DIFF_MERGE":
 		return true
+	case "DALEC_DISABLE_PASSTHROUGH":
+		return true
 	case "DALEC_SKIP_SIGNING":
 		return true
 	case "DALEC_SIGNING_CONFIG_CONTEXT_NAME":
