@@ -174,6 +174,25 @@ func checkDiffMerge(client gwclient.Client) bool {
 	return true
 }
 
+var (
+	supportsPassthroughOpOnce sync.Once
+	supportsPassthroughOp     atomic.Bool
+)
+
+// SupportsPassthroughOp checks if the given client supports the LLB
+// PassthroughOp (added in buildkit v0.31.0).
+func SupportsPassthroughOp(client gwclient.Client) bool {
+	supportsPassthroughOpOnce.Do(func() {
+		if client.BuildOpts().Opts["build-arg:DALEC_DISABLE_PASSTHROUGH"] == "1" {
+			supportsPassthroughOp.Store(false)
+			return
+		}
+		caps := client.BuildOpts().LLBCaps
+		supportsPassthroughOp.Store(caps.Supports(pb.CapPassthroughOp) == nil)
+	})
+	return supportsPassthroughOp.Load()
+}
+
 // copyForForward copies all the inputs and build opts from the initial request in order to forward to another frontend.
 func copyForForward(ctx context.Context, client gwclient.Client) solveRequestOpt {
 	return func(req *gwclient.SolveRequest) error {
