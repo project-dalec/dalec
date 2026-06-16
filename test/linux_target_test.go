@@ -5954,90 +5954,126 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 	t.Run("creates_post_install_symlinks", func(t *testing.T) {
 		t.Parallel()
 
-		ctx := startTestSpan(ctx, t)
-
-		spec := testLinuxSpec(t, dalec.Spec{
-			Sources: map[string]dalec.Source{
-				"src1": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o700,
+		// newSpec returns a fresh spec per run so that each mode gets its own
+		// copy. This avoids a data race and prevents the Path->Paths
+		// normalization from mutating a spec shared between subtests.
+		newSpec := func() *dalec.Spec {
+			spec := testLinuxSpec(t, dalec.Spec{
+				Sources: map[string]dalec.Source{
+					"src1": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho hello world",
+								Permissions: 0o700,
+							},
+						},
+					},
+					"src3": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho goodbye",
+								Permissions: 0o700,
+							},
 						},
 					},
 				},
-				"src3": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho goodbye",
-							Permissions: 0o700,
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"src1": {},
+						"src3": {},
+					},
+					Users: []dalec.AddUserConfig{
+						{
+							Name: "need",
+						},
+					},
+					Groups: []dalec.AddGroupConfig{
+						{
+							Name: "coffee",
 						},
 					},
 				},
-			},
-			Artifacts: dalec.Artifacts{
-				Binaries: map[string]dalec.ArtifactConfig{
-					"src1": {},
-					"src3": {},
+				Image: &dalec.ImageConfig{
+					Post: &dalec.PostInstall{
+						Symlinks: map[string]dalec.SymlinkTarget{
+							// User-only ownership: the group must stay root (gid 0).
+							// Uses the singular Path field to exercise its normalization.
+							"/usr/bin/src1": {
+								Path: "/src1",
+								User: "need",
+							},
+							// Group-only ownership: the user must stay root (uid 0).
+							// The link lands in a directory that does not exist yet,
+							// exercising parent-directory creation. The target is not
+							// installed, so this is a dangling symlink.
+							"/usr/bin/src2": {
+								Paths: []string{"/non/existing/dir/src2"},
+								Group: "coffee",
+							},
+							// User+group ownership across multiple paths, both of
+							// which also land in non-existing directories.
+							"/usr/bin/src3": {
+								Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
+								User:  "need",
+								Group: "coffee",
+							},
+						},
+					},
 				},
-				Users: []dalec.AddUserConfig{
+				Tests: []*dalec.TestSpec{
 					{
-						Name: "need",
-					},
-				},
-				Groups: []dalec.AddGroupConfig{
-					{
-						Name: "coffee",
-					},
-				},
-			},
-			Image: &dalec.ImageConfig{
-				Post: &dalec.PostInstall{
-					Symlinks: map[string]dalec.SymlinkTarget{
-						"/usr/bin/src1": {
-							Path: "/src1",
-							User: "need",
+						Name: "Post-install symlinks should be created and have correct ownership",
+						Files: map[string]dalec.FileCheckOutput{
+							"/src1":                  {},
+							"/non/existing/dir/src3": {},
 						},
-						"/usr/bin/src3": {
-							Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
-							User:  "need",
-							Group: "coffee",
-						},
-					},
-				},
-			},
-			Tests: []*dalec.TestSpec{
-				{
-					Name: "Post-install symlinks should be created and have correct ownership",
-					Files: map[string]dalec.FileCheckOutput{
-						"/src1":                  {},
-						"/non/existing/dir/src3": {},
-					},
-					Steps: []dalec.TestStep{
-						{Command: "/usr/bin/env bash -exc 'test -L /src1'"},
-						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
-						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+						Steps: []dalec.TestStep{
+							{Command: "/usr/bin/env bash -exc 'test -L /src1'"},
+							{Command: "/usr/bin/env bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
+							{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
 
-						{Command: "/usr/bin/env bash -exc 'test -L /non/existing/dir/src3'"},
-						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/usr/bin/env bash -exc 'test -L /non/existing/dir2/src3'"},
-						{Command: "/usr/bin/env bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-						{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+							{Command: "/usr/bin/env bash -exc 'test -L /non/existing/dir/src2'"},
+							{Command: "/usr/bin/env bash -exc 'test \"$(readlink /non/existing/dir/src2)\" = \"/usr/bin/src2\"'"},
+							{Command: "/usr/bin/env bash -exc 'NEED_UID=0; COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+
+							{Command: "/usr/bin/env bash -exc 'test -L /non/existing/dir/src3'"},
+							{Command: "/usr/bin/env bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
+							{Command: "/usr/bin/env bash -exc 'test -L /non/existing/dir2/src3'"},
+							{Command: "/usr/bin/env bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
+							{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/usr/bin/env bash -exc 'NEED_UID=$(grep ^need /etc/passwd | cut -d: -f3); COFFEE_GID=$(grep ^coffee /etc/group | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+							{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+						},
 					},
 				},
-			},
+			})
+			return &spec
+		}
+
+		run := func(t *testing.T, extraOpts ...srOpt) {
+			ctx := startTestSpan(ctx, t)
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				opts := append([]srOpt{
+					withSpec(ctx, t, newSpec()),
+					withBuildTarget(target),
+				}, extraOpts...)
+				sr := newSolveRequest(opts...)
+				solveT(ctx, t, gwc, sr)
+			})
+		}
+
+		// Default path: native buildkit symlink file action (when supported).
+		t.Run("native_symlink_file_action", func(t *testing.T) {
+			t.Parallel()
+			run(t)
 		})
 
-		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(
-				withSpec(ctx, t, &spec),
-				withBuildTarget(target),
-			)
-			solveT(ctx, t, gwc, sr)
+		// Fallback path: force the legacy shell-exec implementation.
+		t.Run("exec_fallback", func(t *testing.T) {
+			t.Parallel()
+			run(t, withBuildArg("DALEC_DISABLE_SYMLINK", "1"))
 		})
 	})
 
