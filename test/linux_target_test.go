@@ -1070,6 +1070,65 @@ EOF
 					solveT(ctx, t, gwc, sr)
 				})
 			})
+
+			t.Run("keeps_runtime_dep_whose_name_is_a_prefix_of_the_package_name", func(t *testing.T) {
+				// Regression test for the cleanup script's unsafe
+				// `grep -qw` package-name matching in resolve_deps. The
+				// `-w` flag treats '-' as a word boundary, so a shorter
+				// package name spuriously matches as a sub-token of a
+				// longer name already in the resolved set.
+				//
+				// We force the collision deterministically by naming the
+				// spec package a dash-superstring of its runtime dep:
+				// the package "curl-prefix-collision" runtime-depends on
+				// "curl". resolve_deps seeds with the spec package first,
+				// so " curl-prefix-collision" is in the resolved set when
+				// the bare "curl" dependency is dequeued; the check
+				// `echo "${resolved}" | grep -qw curl` then matches the
+				// "curl" sub-token inside "curl-prefix-collision" and
+				// wrongly concludes curl is already resolved.
+				//
+				// curl itself survives on disk (the identical bug in the
+				// purge loops also skips it), but because resolve_deps
+				// never walks curl's own dependencies, libcurl4t64 —
+				// reachable only through curl — never enters the keep set
+				// and IS purged (its name collides with nothing). curl is
+				// then present but unable to exec for want of its shared
+				// library. A space-delimited exact match keeps curl and
+				// its dependency closure intact.
+				t.Parallel()
+				ctx := startTestSpan(ctx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Tests: []*dalec.TestSpec{
+						{
+							Name: "curl and its shared libraries survive the name-prefix collision",
+							Files: map[string]dalec.FileCheckOutput{
+								"/usr/bin/curl": {},
+							},
+							Steps: []dalec.TestStep{
+								{
+									Command: "/usr/bin/curl --version",
+									Stdout:  dalec.CheckOutput{Contains: []string{"curl"}},
+								},
+							},
+						},
+					},
+				})
+				// Make the package name a dash-superstring of "curl" so
+				// the `grep -qw curl` check matches the package name.
+				spec.Name = "curl-prefix-collision"
+				spec.Dependencies = &dalec.PackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"curl": {},
+					},
+				}
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+					solveT(ctx, t, gwc, sr)
+				})
+			})
 		})
 
 		t.Run("squash_produces_single_layer", func(t *testing.T) {

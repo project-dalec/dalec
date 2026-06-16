@@ -384,7 +384,8 @@ resolve_deps() {
         pkg=$(echo "${queue}" | head -n1)
         queue=$(echo "${queue}" | tail -n +2)
 
-        if [ -z "${pkg}" ] || echo "${resolved}" | grep -qw "${pkg}"; then continue; fi
+        if [ -z "${pkg}" ]; then continue; fi
+        case " ${resolved} " in *" ${pkg} "*) continue ;; esac
 
         resolved="${resolved} ${pkg}"
 
@@ -398,9 +399,8 @@ resolve_deps() {
             # Walk all alternatives ("pkg-a|pkg-b") so we don't lose track
             # of whichever option is actually installed.
             for dep in $(echo "${dep_alt}" | tr '|' ' '); do
-                if [ -z "${dep}" ] || echo "${resolved}" | grep -qw "${dep}"; then
-                    continue
-                fi
+                if [ -z "${dep}" ]; then continue; fi
+                case " ${resolved} " in *" ${dep} "*) continue ;; esac
 
                 # Real, directly-installed package.
                 if dpkg -s "${dep}" 2>/dev/null | grep -q '^Status: install ok installed'; then
@@ -425,7 +425,7 @@ resolve_deps() {
                         }
                     ')
                 for prov in ${providers}; do
-                    if echo "${resolved}" | grep -qw "${prov}"; then continue; fi
+                    case " ${resolved} " in *" ${prov} "*) continue ;; esac
                     queue=$(printf '%s\n%s' "${queue}" "${prov}")
                 done
             done
@@ -545,7 +545,7 @@ purge_last=""
 # keep_set seeding above) because it owns the merged-usr root symlinks
 # required by every dynamically linked binary in the image.
 for pkg in dpkg dash coreutils libc-bin grep findutils; do
-    if echo "${keep_set}" | grep -qw "${pkg}"; then continue; fi
+    case " ${keep_set} " in *" ${pkg} "*) continue ;; esac
 
     # dpkg can't purge itself from inside the container; signal the worker
     # step to do it from outside instead.
@@ -558,8 +558,8 @@ for pkg in dpkg dash coreutils libc-bin grep findutils; do
 done
 for pkg in $(resolve_deps "$(echo ${purge_last} | tr ' ' '\n')"); do
     if [ "${pkg}" = "dpkg" ]; then continue; fi
-    if echo " ${keep_set} " | grep -q " ${pkg} "; then continue; fi
-    if echo " ${purge_last} " | grep -q " ${pkg} "; then continue; fi
+    case " ${keep_set} " in *" ${pkg} "*) continue ;; esac
+    case " ${purge_last} " in *" ${pkg} "*) continue ;; esac
     purge_last="${purge_last} ${pkg}"
 done
 
@@ -569,8 +569,8 @@ purge_first=""
 # Strip :arch suffixes (e.g. libc6:amd64 -> libc6) so names match.
 for pkg in $(dpkg-query -W -f='${Package}\n' | sed 's/:.*//g'); do
     if [ "${pkg}" = "dpkg" ]; then continue; fi
-    if echo "${keep_set}" | grep -qw "${pkg}"; then continue; fi
-    if echo "${purge_last}" | grep -qw "${pkg}"; then continue; fi
+    case " ${keep_set} " in *" ${pkg} "*) continue ;; esac
+    case " ${purge_last} " in *" ${pkg} "*) continue ;; esac
     purge_first="${purge_first} ${pkg}"
 done
 
