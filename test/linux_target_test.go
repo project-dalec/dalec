@@ -31,6 +31,8 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
+	"github.com/project-dalec/dalec/internal/test"
+	"github.com/project-dalec/dalec/targets"
 	"github.com/project-dalec/dalec/test/testenv"
 	"golang.org/x/exp/maps"
 	"gotest.tools/v3/assert"
@@ -168,7 +170,7 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(testConfig.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(testConfig.Target.Package))
 			sr.Evaluate = true
 			_, err := gwc.Solve(ctx, sr)
 			var xErr *moby_buildkit_v1_frontend.ExitError
@@ -202,12 +204,74 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		testTargetArtifactsTakePrecedence(ctx, t, testConfig.Target)
 	})
 
-	t.Run("container", func(t *testing.T) {
+	t.Run("build_steps", func(t *testing.T) {
 		t.Parallel()
-		ctx := startTestSpan(baseCtx, t)
 
-		const src2Patch3File = "patch3"
-		src2Patch3Content := []byte(`
+		t.Run("multiline_command_works_with_env_vars", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							// Test that a multiline command works with env vars
+							Env: map[string]string{
+								"FOO": "foo",
+								"BAR": "bar",
+							},
+							Command: `
+echo "${FOO}_0" > foo0.txt
+echo "${FOO}_1" > foo1.txt
+echo "$BAR" > bar.txt
+`,
+						},
+					},
+				},
+
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						// These are files we created in the build step
+						// They aren't really binaries but we want to test that they are created and have the right content
+						"foo0.txt": {},
+						"foo1.txt": {},
+						"bar.txt":  {},
+					},
+				},
+
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Check that multi-line command (from build step) with env vars propagates env vars to whole command",
+						Files: map[string]dalec.FileCheckOutput{
+							"/usr/bin/foo0.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_0\n"}},
+							"/usr/bin/foo1.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_1\n"}},
+							"/usr/bin/bar.txt":  {CheckOutput: dalec.CheckOutput{StartsWith: "bar\n"}},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Package),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+	})
+
+	t.Run("sources", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("patches_are_applied_in_order", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			const src2Patch3File = "patch3"
+			src2Patch3Content := []byte(`
 diff --git a/file3 b/file3
 new file mode 100700
 index 0000000..5260cb1
@@ -219,7 +283,7 @@ index 0000000..5260cb1
 +echo "Added another new file"
 `)
 
-		src2Patch4Content := []byte(`
+			src2Patch4Content := []byte(`
 diff --git a/file4 b/file4
 new file mode 100700
 index 0000000..5260cb1
@@ -231,7 +295,7 @@ index 0000000..5260cb1
 +echo "Added yet another new file"
 `)
 
-		src2Patch5Content := []byte(`
+			src2Patch5Content := []byte(`
 diff --git a/file5 b/file5
 new file mode 100700
 index 0000000..5260cb1
@@ -243,47 +307,33 @@ index 0000000..5260cb1
 +echo "Added yet again...another new file"
 `)
 
-		const src2Patch4File = "patches/patch4"
-		const src2Patch5File = "patches/patch5"
-		const patchContextName = "patch-context"
+			const src2Patch4File = "patches/patch4"
+			const src2Patch5File = "patches/patch5"
+			const patchContextName = "patch-context"
 
-		patchContext := llb.Scratch().
-			File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content)).
-			File(llb.Mkdir("patches", 0o755)).
-			File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content)).
-			File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content))
+			opts := dalec.ProgressGroup("test-patch-sources")
 
-		spec := dalec.Spec{
-			Name:        "test-container-build",
-			Version:     "0.0.1",
-			Revision:    "1",
-			License:     "MIT",
-			Website:     "https://github.com/project-dalec/dalec",
-			Vendor:      "Dalec",
-			Packager:    "Dalec",
-			Description: "Testing container target",
-			Sources: map[string]dalec.Source{
-				"src1": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o700,
-						},
-					},
-				},
-				"src2": {
-					Inline: &dalec.SourceInline{
-						Dir: &dalec.SourceInlineDir{
-							Files: map[string]*dalec.SourceInlineFile{
-								"file1": {Contents: "file1 contents\n"},
+			patchContext := llb.Scratch().
+				File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content), opts).
+				File(llb.Mkdir("patches", 0o755), opts).
+				File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content), opts).
+				File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content), opts)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Sources: map[string]dalec.Source{
+					"src2": {
+						Inline: &dalec.SourceInline{
+							Dir: &dalec.SourceInlineDir{
+								Files: map[string]*dalec.SourceInlineFile{
+									"file1": {Contents: "file1 contents\n"},
+								},
 							},
 						},
 					},
-				},
-				"src2-patch1": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents: `
+					"src2-patch1": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents: `
 diff --git a/file1 b/file1
 index 84d55c5..22b9b11 100644
 --- a/file1
@@ -292,15 +342,15 @@ index 84d55c5..22b9b11 100644
 -file1 contents
 +file1 contents patched
 `,
+							},
 						},
 					},
-				},
-				"src2-patch2": {
-					Inline: &dalec.SourceInline{
-						Dir: &dalec.SourceInlineDir{
-							Files: map[string]*dalec.SourceInlineFile{
-								"the-patch": {
-									Contents: `
+					"src2-patch2": {
+						Inline: &dalec.SourceInline{
+							Dir: &dalec.SourceInlineDir{
+								Files: map[string]*dalec.SourceInlineFile{
+									"the-patch": {
+										Contents: `
 diff --git a/file2 b/file2
 new file mode 100700
 index 0000000..5260cb1
@@ -311,155 +361,214 @@ index 0000000..5260cb1
 +
 +echo "Added a new file"
 `,
+									},
 								},
 							},
 						},
 					},
-				},
-				"src2-patch3": {
-					Context: &dalec.SourceContext{
-						Name: patchContextName,
+					"src2-patch3": {
+						Context: &dalec.SourceContext{
+							Name: patchContextName,
+						},
+					},
+					"src2-patch4": {
+						Context: &dalec.SourceContext{
+							Name: patchContextName,
+						},
+						Includes: []string{src2Patch4File},
+					},
+					"src2-patch5": {
+						Context: &dalec.SourceContext{
+							Name: patchContextName,
+						},
+						Path: src2Patch5File,
 					},
 				},
-				"src2-patch4": {
-					Context: &dalec.SourceContext{
-						Name: patchContextName,
+				Patches: map[string][]dalec.PatchSpec{
+					"src2": {
+						{Source: "src2-patch1"},
+						{Source: "src2-patch2", Path: "the-patch"},
+						{Source: "src2-patch3", Path: src2Patch3File},
+						{Source: "src2-patch4", Path: src2Patch4File},
+						{Source: "src2-patch5", Path: filepath.Base(src2Patch5File)},
 					},
-					Includes: []string{src2Patch4File},
 				},
-				"src2-patch5": {
-					Context: &dalec.SourceContext{
-						Name: patchContextName,
+
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						{
+							// file added by patch
+							Command: "ls -lh ./src2/file2",
+						},
+						{
+							// file added by patch
+							Command: "test -f ./src2/file2",
+						},
+						{
+							// file added by patch
+							Command: "test -x ./src2/file2",
+						},
+						{
+							Command: "grep 'Added a new file' ./src2/file2",
+						},
+						{
+							// file added by patch
+							Command: "test -f ./src2/file3",
+						},
+						{
+							// file added by patch
+							Command: "test -x ./src2/file3",
+						},
+						{
+							Command: "grep 'Added another new file' ./src2/file3",
+						},
 					},
-					Path: src2Patch5File,
 				},
-				"src3": {
+
+				Image: &dalec.ImageConfig{
+					Post: &dalec.PostInstall{
+						Symlinks: map[string]dalec.SymlinkTarget{
+							"/usr/bin/src2": {
+								Paths: []string{"/non/existing/dir/src2"},
+								Group: "coffee",
+							},
+						},
+					},
+				},
+
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"src2/file2": {},
+					},
+					Links: []dalec.ArtifactSymlinkConfig{
+						{
+							Source: "/usr/bin/src2/file2",
+							Dest:   "/bin/owned-link2",
+							User:   "need",
+						},
+					},
+					Users: []dalec.AddUserConfig{
+						{
+							Name: "need",
+						},
+					},
+					Groups: []dalec.AddGroupConfig{
+						{
+							Name: "coffee",
+						},
+					},
+				},
+
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Check that the binary artifacts execute and provide the expected output",
+						Steps: []dalec.TestStep{
+							{
+								Command: "/usr/bin/file2",
+								Stdout:  dalec.CheckOutput{Equals: "Added a new file\n"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+						},
+					},
+					{
+						Name: "Post-install symlinks should be created and have correct ownership",
+						Steps: []dalec.TestStep{
+							{Command: "/bin/bash -exc 'test -L /non/existing/dir/src2'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src2)\" = \"/usr/bin/src2\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						},
+					},
+					{
+						Name: "Artifact symlinks should have correct ownership",
+						Steps: []dalec.TestStep{
+							{Command: "/bin/bash -exc 'test -L /bin/owned-link2'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link2)\" = \"/usr/bin/src2/file2\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Package),
+					withBuildContext(ctx, t, patchContextName, patchContext),
+				)
+				sr.Evaluate = true
+
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("are_available_in_build_steps", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Sources: map[string]dalec.Source{
+					"src1": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho hello world",
+								Permissions: 0o700,
+							},
+						},
+					},
+				},
+				Build: dalec.ArtifactBuild{
+					Steps: []dalec.BuildStep{
+						// These are "build" steps where we aren't really building things just verifying
+						// that sources are in the right place and have the right permissions and content
+						{
+							// file added by patch
+							Command: "test -f ./src1",
+						},
+						{
+							Command: "test -x ./src1",
+						},
+						{
+							Command: "test ! -d ./src1",
+						},
+						{
+							Command: "./src1 | grep 'hello world'",
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Package),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+	})
+
+	t.Run("artifacts", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"src1": {
 					Inline: &dalec.SourceInline{
 						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho goodbye",
+							Contents:    "#!/usr/bin/env bash\necho hello world",
 							Permissions: 0o700,
 						},
 					},
 				},
 			},
-			Patches: map[string][]dalec.PatchSpec{
-				"src2": {
-					{Source: "src2-patch1"},
-					{Source: "src2-patch2", Path: "the-patch"},
-					{Source: "src2-patch3", Path: src2Patch3File},
-					{Source: "src2-patch4", Path: src2Patch4File},
-					{Source: "src2-patch5", Path: filepath.Base(src2Patch5File)},
-				},
-			},
-
-			Dependencies: &dalec.PackageDependencies{
-				Runtime: map[string]dalec.PackageConstraints{
-					"bash":      {},
-					"coreutils": {},
-				},
-			},
-
-			Build: dalec.ArtifactBuild{
-				Steps: []dalec.BuildStep{
-					// These are "build" steps where we aren't really building things just verifying
-					// that sources are in the right place and have the right permissions and content
-					{
-						// file added by patch
-						Command: "test -f ./src1",
-					},
-					{
-						Command: "test -x ./src1",
-					},
-					{
-						Command: "test ! -d ./src1",
-					},
-					{
-						Command: "./src1 | grep 'hello world'",
-					},
-					{
-						// file added by patch
-						Command: "ls -lh ./src2/file2",
-					},
-					{
-						// file added by patch
-						Command: "test -f ./src2/file2",
-					},
-					{
-						// file added by patch
-						Command: "test -x ./src2/file2",
-					},
-					{
-						Command: "grep 'Added a new file' ./src2/file2",
-					},
-					{
-						// file added by patch
-						Command: "test -f ./src2/file3",
-					},
-					{
-						// file added by patch
-						Command: "test -x ./src2/file3",
-					},
-					{
-						Command: "grep 'Added another new file' ./src2/file3",
-					},
-					{
-						// Test that a multiline command works with env vars
-						Env: map[string]string{
-							"FOO": "foo",
-							"BAR": "bar",
-						},
-						Command: `
-echo "${FOO}_0" > foo0.txt
-echo "${FOO}_1" > foo1.txt
-echo "$BAR" > bar.txt
-`,
-					},
-				},
-			},
-
-			Image: &dalec.ImageConfig{
-				Post: &dalec.PostInstall{
-					Symlinks: map[string]dalec.SymlinkTarget{
-						"/usr/bin/src1": {
-							Path: "/src1",
-							User: "need",
-						},
-						"/usr/bin/src2": {
-							Paths: []string{"/non/existing/dir/src2"},
-							Group: "coffee",
-						},
-						"/usr/bin/src3": {
-							Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
-							User:  "need",
-							Group: "coffee",
-						},
-					},
-				},
-			},
-
 			Artifacts: dalec.Artifacts{
 				Binaries: map[string]dalec.ArtifactConfig{
-					"src1":       {},
-					"src2/file2": {},
-					"src3":       {},
-					// These are files we created in the build step
-					// They aren't really binaries but we want to test that they are created and have the right content
-					"foo0.txt": {},
-					"foo1.txt": {},
-					"bar.txt":  {},
+					"src1": {},
 				},
 				Links: []dalec.ArtifactSymlinkConfig{
-					{
-						Source: "/usr/bin/src3",
-						Dest:   "/bin/owned-link",
-						User:   "need",
-						Group:  "coffee",
-					},
-					{
-						Source: "/usr/bin/src2/file2",
-						Dest:   "/bin/owned-link2",
-						User:   "need",
-					},
 					{
 						Source: "/usr/bin/src1",
 						Dest:   "/bin/owned-link3",
@@ -482,79 +591,7 @@ echo "$BAR" > bar.txt
 					},
 				},
 			},
-
 			Tests: []*dalec.TestSpec{
-				{
-					Name: "Verify source mounts work",
-					Mounts: []dalec.SourceMount{
-						{
-							Dest: "/foo",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									File: &dalec.SourceInlineFile{
-										Contents: "hello world",
-									},
-								},
-							},
-						},
-						{
-							Dest: "/nested/foo",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									File: &dalec.SourceInlineFile{
-										Contents: "hello world nested",
-									},
-								},
-							},
-						},
-						{
-							Dest: "/dir",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									Dir: &dalec.SourceInlineDir{
-										Files: map[string]*dalec.SourceInlineFile{
-											"foo": {Contents: "hello from dir"},
-										},
-									},
-								},
-							},
-						},
-						{
-							Dest: "/nested/dir",
-							Spec: dalec.Source{
-								Inline: &dalec.SourceInline{
-									Dir: &dalec.SourceInlineDir{
-										Files: map[string]*dalec.SourceInlineFile{
-											"foo": {Contents: "hello from nested dir"},
-										},
-									},
-								},
-							},
-						},
-					},
-					Steps: []dalec.TestStep{
-						{
-							Command: "/bin/sh -c 'cat /foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello world"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-						{
-							Command: "/bin/sh -c 'cat /nested/foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello world nested"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-						{
-							Command: "/bin/sh -c 'cat /dir/foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello from dir"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-						{
-							Command: "/bin/sh -c 'cat /nested/dir/foo'",
-							Stdout:  dalec.CheckOutput{Equals: "hello from nested dir"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-					},
-				},
 				{
 					Name: "Check that the binary artifacts execute and provide the expected output",
 					Steps: []dalec.TestStep{
@@ -563,72 +600,11 @@ echo "$BAR" > bar.txt
 							Stdout:  dalec.CheckOutput{Equals: "hello world\n"},
 							Stderr:  dalec.CheckOutput{Empty: true},
 						},
-						{
-							Command: "/usr/bin/file2",
-							Stdout:  dalec.CheckOutput{Equals: "Added a new file\n"},
-							Stderr:  dalec.CheckOutput{Empty: true},
-						},
-					},
-				},
-				{
-					Name: "Check that multi-line command (from build step) with env vars propagates env vars to whole command",
-					Files: map[string]dalec.FileCheckOutput{
-						"/usr/bin/foo0.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_0\n"}},
-						"/usr/bin/foo1.txt": {CheckOutput: dalec.CheckOutput{StartsWith: "foo_1\n"}},
-						"/usr/bin/bar.txt":  {CheckOutput: dalec.CheckOutput{StartsWith: "bar\n"}},
-					},
-				},
-				{
-					Name: "Post-install symlinks should be created and have correct ownership",
-					Files: map[string]dalec.FileCheckOutput{
-						"/src1":                  {},
-						"/non/existing/dir/src3": {},
-					},
-					Steps: []dalec.TestStep{
-						{Command: "/bin/bash -exc 'test -L /src1'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir/src2'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src2)\" = \"/usr/bin/src2\"'"},
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir/src3'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'test -L /non/existing/dir2/src3'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-						{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-						{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
-					},
-				},
-				{
-					Name: "Check /etc/os-release",
-					Files: map[string]dalec.FileCheckOutput{
-						"/etc/os-release": {
-							CheckOutput: dalec.CheckOutput{
-								Matches: []string{
-									// Some distros have quotes around the values
-									// Regex is to match the values with or without quotes
-									// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rather than the full document.
-									//
-									// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
-									`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
-									`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
-								},
-							},
-						},
 					},
 				},
 				{
 					Name: "Artifact symlinks should have correct ownership",
 					Steps: []dalec.TestStep{
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link)\" = \"/usr/bin/src3\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
-						{Command: "/bin/bash -exc 'test -L /bin/owned-link2'"},
-						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link2)\" = \"/usr/bin/src2/file2\"'"},
-						{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link2); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
 						{Command: "/bin/bash -exc 'test -L /bin/owned-link3'"},
 						{Command: "/bin/bash -exc 'test \"$(readlink /bin/owned-link3)\" = \"/usr/bin/src1\"'"},
 						{Command: "/bin/bash -exc 'NEED_UID=0; COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /bin/owned-link3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
@@ -638,43 +614,651 @@ echo "$BAR" > bar.txt
 					},
 				},
 			},
-		}
+		})
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 			sr := newSolveRequest(
 				withSpec(ctx, t, &spec),
-				withBuildTarget(testConfig.Target.Container),
-				withBuildContext(ctx, t, patchContextName, patchContext),
+				withBuildTarget(testConfig.Target.Package),
 			)
-			sr.Evaluate = true
+			solveT(ctx, t, gwc, sr)
+		})
+	})
 
-			beforeBuild := time.Now()
-			res := solveT(ctx, t, gwc, sr)
+	t.Run("tests", func(t *testing.T) {
+		t.Parallel()
 
-			dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
-			assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+		t.Run("have_access_to_source_mounts", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(baseCtx, t)
 
-			var cfg dalec.DockerImageSpec
-			assert.Assert(t, json.Unmarshal(dt, &cfg))
-			assert.Check(t, cfg.Created.After(beforeBuild))
-			assert.Check(t, cfg.Created.Before(time.Now()))
-
-			// Make sure the test framework was actually executed by the build target.
-			// This appends a test case so that is expected to fail and as such cause the build to fail.
-			spec.Tests = append(spec.Tests, &dalec.TestSpec{
-				Name: "Test framework should be executed",
-				Steps: []dalec.TestStep{
-					{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+			spec := testLinuxSpec(t, dalec.Spec{
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Verify source mounts work",
+						Mounts: []dalec.SourceMount{
+							{
+								Dest: "/foo",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										File: &dalec.SourceInlineFile{
+											Contents: "hello world",
+										},
+									},
+								},
+							},
+							{
+								Dest: "/nested/foo",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										File: &dalec.SourceInlineFile{
+											Contents: "hello world nested",
+										},
+									},
+								},
+							},
+							{
+								Dest: "/dir",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										Dir: &dalec.SourceInlineDir{
+											Files: map[string]*dalec.SourceInlineFile{
+												"foo": {Contents: "hello from dir"},
+											},
+										},
+									},
+								},
+							},
+							{
+								Dest: "/nested/dir",
+								Spec: dalec.Source{
+									Inline: &dalec.SourceInline{
+										Dir: &dalec.SourceInlineDir{
+											Files: map[string]*dalec.SourceInlineFile{
+												"foo": {Contents: "hello from nested dir"},
+											},
+										},
+									},
+								},
+							},
+						},
+						Steps: []dalec.TestStep{
+							{
+								Command: "/bin/sh -c 'cat /foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello world"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+							{
+								Command: "/bin/sh -c 'cat /nested/foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello world nested"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+							{
+								Command: "/bin/sh -c 'cat /dir/foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello from dir"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+							{
+								Command: "/bin/sh -c 'cat /nested/dir/foo'",
+								Stdout:  dalec.CheckOutput{Equals: "hello from nested dir"},
+								Stderr:  dalec.CheckOutput{Empty: true},
+							},
+						},
+					},
 				},
 			})
 
-			// update the spec in the solve request
-			withSpec(ctx, t, &spec)(&newSolveRequestConfig{req: &sr})
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Package),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+	})
 
-			_, err := gwc.Solve(ctx, sr)
-			if err == nil {
-				t.Fatal("expected test spec to run with error but got none")
+	t.Run("container", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("depsonly", func(t *testing.T) {
+			if testConfig.Target.DepsOnly == "" {
+				t.Skip("depsonly target not defined")
 			}
+
+			t.Parallel()
+			ctx := startTestSpan(ctx, t)
+			testDepsOnly(ctx, t, testConfig)
+		})
+
+		t.Run("creates_post_install_symlinks", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Sources: map[string]dalec.Source{
+					"src1": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho hello world",
+								Permissions: 0o700,
+							},
+						},
+					},
+					"src3": {
+						Inline: &dalec.SourceInline{
+							File: &dalec.SourceInlineFile{
+								Contents:    "#!/usr/bin/env bash\necho goodbye",
+								Permissions: 0o700,
+							},
+						},
+					},
+				},
+				Artifacts: dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"src1": {},
+						"src3": {},
+					},
+					Users: []dalec.AddUserConfig{
+						{
+							Name: "need",
+						},
+					},
+					Groups: []dalec.AddGroupConfig{
+						{
+							Name: "coffee",
+						},
+					},
+				},
+				Image: &dalec.ImageConfig{
+					Post: &dalec.PostInstall{
+						Symlinks: map[string]dalec.SymlinkTarget{
+							"/usr/bin/src1": {
+								Path: "/src1",
+								User: "need",
+							},
+							"/usr/bin/src3": {
+								Paths: []string{"/non/existing/dir/src3", "/non/existing/dir2/src3"},
+								User:  "need",
+								Group: "coffee",
+							},
+						},
+					},
+				},
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Post-install symlinks should be created and have correct ownership",
+						Files: map[string]dalec.FileCheckOutput{
+							"/src1":                  {},
+							"/non/existing/dir/src3": {},
+						},
+						Steps: []dalec.TestStep{
+							{Command: "/bin/bash -exc 'test -L /src1'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /src1)\" = \"/usr/bin/src1\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=0; LINK_OWNER=$(stat -c \"%u:%g\" /src1); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/src1", Stdout: dalec.CheckOutput{Equals: "hello world\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+
+							{Command: "/bin/bash -exc 'test -L /non/existing/dir/src3'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir/src3)\" = \"/usr/bin/src3\"'"},
+							{Command: "/bin/bash -exc 'test -L /non/existing/dir2/src3'"},
+							{Command: "/bin/bash -exc 'test \"$(readlink /non/existing/dir2/src3)\" = \"/usr/bin/src3\"'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/bin/bash -exc 'NEED_UID=$(getent passwd need | cut -d: -f3); COFFEE_GID=$(getent group coffee | cut -d: -f3); LINK_OWNER=$(stat -c \"%u:%g\" /non/existing/dir2/src3); [ \"$LINK_OWNER\" = \"$NEED_UID:$COFFEE_GID\" ]'"},
+							{Command: "/non/existing/dir/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+							{Command: "/non/existing/dir2/src3", Stdout: dalec.CheckOutput{Equals: "goodbye\n"}, Stderr: dalec.CheckOutput{Empty: true}},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("contains_etc_os_release_file", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Check /etc/os-release",
+						Files: map[string]dalec.FileCheckOutput{
+							"/etc/os-release": {
+								CheckOutput: dalec.CheckOutput{
+									Matches: []string{
+										// Some distros have quotes around the values
+										// Regex is to match the values with or without quotes
+										// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rather than the full document.
+										//
+										// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
+										`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
+										`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
+									},
+								},
+							},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+
+		t.Run("runs_tests", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			// Make sure the test framework was actually executed by the build target.
+			// This appends a test case so that is expected to fail and as such cause the build to fail.
+			spec := testLinuxSpec(t, dalec.Spec{
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "Test framework should be executed",
+						Steps: []dalec.TestStep{
+							{Command: "/bin/sh -c 'echo this command should fail; exit 42'"},
+						},
+					},
+				},
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				sr.Evaluate = true
+
+				_, err := gwc.Solve(ctx, sr)
+				if err == nil {
+					t.Fatal("Expected test spec to run with error but got none")
+				}
+			})
+		})
+
+		t.Run("has_image_config_available_with_build_time", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+				)
+				sr.Evaluate = true
+
+				beforeBuild := time.Now()
+				res := solveT(ctx, t, gwc, sr)
+
+				dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+				assert.Assert(t, ok, "result metadata should contain an image config: available metadata: %s", strings.Join(maps.Keys(res.Metadata), ", "))
+
+				var cfg dalec.DockerImageSpec
+				assert.Assert(t, json.Unmarshal(dt, &cfg))
+				assert.Check(t, cfg.Created.After(beforeBuild))
+				assert.Check(t, cfg.Created.Before(time.Now()))
+			})
+		})
+
+		t.Run("respects_container_cache_key", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+					withIgnoreCache(targets.IgnoreCacheKeyContainer),
+				)
+
+				res := solveT(ctx, t, gwc, sr)
+
+				ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
+				if err != nil {
+					t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
+				}
+
+				cacheIgnored := []test.LLBOp{}
+				execFound := false
+
+				for _, op := range ops {
+					if op.OpMetadata.IgnoreCache {
+						cacheIgnored = append(cacheIgnored, op)
+					}
+
+					e := op.Op.GetExec()
+					pg := op.OpMetadata.ProgressGroup.Name
+					if e == nil || (pg != "Install spec package" && pg != "Install RPMs") {
+						continue
+					}
+
+					execFound = true
+
+					if !op.OpMetadata.IgnoreCache {
+						t.Errorf("Expected install step to have cache ignore enabled")
+					}
+				}
+
+				if !execFound {
+					t.Errorf("No exec ops found in the build")
+				}
+
+				if len(cacheIgnored) > 1 {
+					ops, err := test.LLBOpsToJSON(cacheIgnored)
+					if err != nil {
+						t.Errorf("Error converting ops to JSON: %v", err)
+					}
+
+					t.Errorf("Expected only one operation to have cache ignore enabled, found %d: \n%s", len(cacheIgnored), ops)
+				}
+			})
+		})
+
+		t.Run("respects_ignoring_all_caches", func(t *testing.T) {
+			t.Parallel()
+
+			ctx := startTestSpan(baseCtx, t)
+
+			spec := testLinuxSpec(t, dalec.Spec{})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget(testConfig.Target.Container),
+					withIgnoreCache(),
+				)
+
+				res := solveT(ctx, t, gwc, sr)
+
+				ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
+				if err != nil {
+					t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
+				}
+
+				badOps := []test.LLBOp{}
+
+				for _, op := range ops {
+					if op.OpMetadata.IgnoreCache {
+						continue
+					}
+
+					badOps = append(badOps, op)
+				}
+
+				if len(badOps) != 0 {
+					opsJSON, err := test.LLBOpsToJSON(badOps)
+					if err != nil {
+						t.Fatalf("Unexpected error converting bad ops to JSON: %v", err)
+					}
+
+					t.Fatalf("Unexpected %d operations without cache ignore:\n%s", len(badOps), opsJSON)
+				}
+			})
+		})
+
+		t.Run("when_installing_spec_package", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("makes_extra_repos_from_spec_available", func(t *testing.T) {
+				t.Parallel()
+
+				ctx := startTestSpan(baseCtx, t)
+
+				// Create repository configurations for different phases
+				// This test verifies that repos configured for "install" are properly processed during container build
+				// and that repos configured for other phases (like "build") don't interfere
+				installRepoConfig := llb.Scratch().File(
+					llb.Mkfile("install-repo.list", 0o644, []byte("# Install phase repository config\n")),
+					dalec.ProgressGroup("Create install repo config"),
+				)
+
+				buildRepoConfig := llb.Scratch().File(
+					llb.Mkfile("build-repo.list", 0o644, []byte("# Unexpected repo\n")),
+					dalec.ProgressGroup("Create build repo config"),
+				)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Dependencies: &dalec.PackageDependencies{
+						ExtraRepos: []dalec.PackageRepositoryConfig{
+							{
+								Config: map[string]dalec.Source{
+									"install-repo.list": {
+										Context: &dalec.SourceContext{
+											Name: "install-repo-config",
+										},
+										Path: "install-repo.list",
+									},
+								},
+								Envs: []string{"install"},
+							},
+							{
+								Config: map[string]dalec.Source{
+									"build-repo.list": {
+										Context: &dalec.SourceContext{
+											Name: "build-repo-config",
+										},
+										Path: "build-repo.list",
+									},
+								},
+								Envs: []string{"build"},
+							},
+						},
+					},
+					Build: dalec.ArtifactBuild{
+						Steps: []dalec.BuildStep{
+							{
+								Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+cat /etc/apt/sources.list.d/*
+grep 'Unexpected repo' /etc/apt/sources.list.d/* && exit 1 || exit 0
+EOF
+`,
+							},
+						},
+					},
+				})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(
+						withSpec(ctx, t, &spec),
+						withBuildTarget(testConfig.Target.Container),
+						withBuildContext(ctx, t, "install-repo-config", installRepoConfig),
+						withBuildContext(ctx, t, "build-repo-config", buildRepoConfig),
+					)
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+
+			t.Run("enables_dpkg_debug", func(t *testing.T) {
+				t.Parallel()
+
+				ctx := startTestSpan(baseCtx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Build: dalec.ArtifactBuild{
+						Steps: []dalec.BuildStep{
+							{
+								Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+grep debug=2 /etc/dpkg/dpkg.cfg.d/99-dalec-debug
+EOF
+`,
+							},
+						},
+					},
+				})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(
+						withSpec(ctx, t, &spec),
+						withBuildTarget(testConfig.Target.Container),
+					)
+
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+
+			t.Run("allows_upgrades", func(t *testing.T) {
+				t.Parallel()
+
+				ctx := startTestSpan(baseCtx, t)
+
+				spec := testLinuxSpec(t, dalec.Spec{
+					Build: dalec.ArtifactBuild{
+						Steps: []dalec.BuildStep{
+							{
+								Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+if [ "${DALEC_UPGRADE}" != "true" ]; then echo "Expected DALEC_UPGRADE to be \"true\", got \"${DALEC_UPGRADE}\""; exit 1; fi
+EOF
+	`,
+							},
+						},
+					},
+				})
+
+				testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+					sr := newSolveRequest(
+						withSpec(ctx, t, &spec),
+						withBuildTarget(testConfig.Target.Container),
+					)
+
+					solveT(ctx, t, gwc, sr)
+				})
+			})
+
+			t.Run("handles_ubuntu_dpkg_excludes_config", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("by_masking_when_target_has_docs", func(t *testing.T) {
+					t.Parallel()
+
+					ctx := startTestSpan(baseCtx, t)
+
+					spec := testLinuxSpec(t, dalec.Spec{
+						Sources: map[string]dalec.Source{
+							"foo": {
+								Inline: &dalec.SourceInline{
+									File: &dalec.SourceInlineFile{
+										Contents: "hello world!",
+									},
+								},
+							},
+						},
+						Artifacts: dalec.Artifacts{
+							Docs: map[string]dalec.ArtifactConfig{
+								"foo": {},
+							},
+						},
+						Build: dalec.ArtifactBuild{
+							Steps: []dalec.BuildStep{
+								{
+									Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+[ -s /etc/dpkg/dpkg.cfg.d/excludes ] && exit 1
+exit 0
+EOF
+	`,
+								},
+							},
+						},
+					})
+
+					testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+						sr := newSolveRequest(
+							withSpec(ctx, t, &spec),
+							withBuildTarget(testConfig.Target.Container),
+						)
+
+						solveT(ctx, t, gwc, sr)
+					})
+				})
+
+				t.Run("by_not_masking_when_target_has_no_docs", func(t *testing.T) {
+					t.Parallel()
+
+					ctx := startTestSpan(baseCtx, t)
+
+					spec := testLinuxSpec(t, dalec.Spec{
+						Build: dalec.ArtifactBuild{
+							Steps: []dalec.BuildStep{
+								{
+									Command: `
+# This is not a debian build, skip this.
+[ ! -d debian ] && exit 0;
+
+# Inject a custom postinst script to inspect the install environment
+[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)
+[ -x debian/postinst ] || chmod +x debian/postinst
+cat >> debian/postinst << 'EOF'
+set -x
+
+# If file does not exist, all good.
+[ ! -f /etc/dpkg/dpkg.cfg.d/excludes ] && exit 0
+
+# if file exists, ensure it is not masked.
+if [ ! -s /etc/dpkg/dpkg.cfg.d/excludes ]; then echo "Unexpected masking found"; exit 1; fi
+EOF
+	`,
+								},
+							},
+						},
+					})
+
+					testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+						sr := newSolveRequest(
+							withSpec(ctx, t, &spec),
+							withBuildTarget(testConfig.Target.Container),
+						)
+
+						solveT(ctx, t, gwc, sr)
+					})
+				})
+			})
 		})
 	})
 
@@ -725,11 +1309,13 @@ index 0000000..5260cb1
 		const src2Patch5File = "patches/patch5"
 		const patchContextName = "patch-context"
 
+		opts := dalec.ProgressGroup("test-patch-sources")
+
 		patchContext := llb.Scratch().
-			File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content)).
-			File(llb.Mkdir("patches", 0o755)).
-			File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content)).
-			File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content))
+			File(llb.Mkfile(src2Patch3File, 0o600, src2Patch3Content), opts).
+			File(llb.Mkdir("patches", 0o755), opts).
+			File(llb.Mkfile(src2Patch4File, 0o600, src2Patch4Content), opts).
+			File(llb.Mkfile(src2Patch5File, 0o600, src2Patch5Content), opts)
 
 		spec := dalec.Spec{
 			Name:        "test-sysext-build",
@@ -1161,12 +1747,11 @@ echo "$BAR" > bar.txt
 				t.Fatalf("error marshalling llb: %v", defErr)
 			}
 
-			res, resErr := gwc.Solve(ctx, gwclient.SolveRequest{
+			sr = gwclient.SolveRequest{
 				Definition: def.ToPB(),
-			})
-			if resErr != nil {
-				t.Fatalf("error solving: %+v", stack.Formatter(resErr))
 			}
+
+			res = solveT(ctx, t, gwc, sr)
 
 			ref, refErr = res.SingleRef()
 			if refErr != nil {
@@ -1261,7 +1846,7 @@ WantedBy=multi-user.target
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 
@@ -1287,7 +1872,7 @@ WantedBy=multi-user.target
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 
@@ -1316,7 +1901,7 @@ WantedBy=multi-user.target
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -1432,7 +2017,7 @@ Environment="FOO_ARGS=--some-foo-args"
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -1489,7 +2074,7 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -1543,7 +2128,755 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace directive", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-replace",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod replace directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: "module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n"},
+								"main.go": {Contents: `package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`},
+							},
+						},
+					},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify go.mod was patched with replace directive and correct version
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Build the code - will fail if replace didn't work
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace directive incompatible version", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-replace-incompatible",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod replace directive with in-compatible version",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod": {Contents: "module example.com/test\n\ngo 1.18\n\nrequire github.com/docker/cli v29.2.1+incompatible\n"},
+								"main.go": {Contents: `package main
+
+import _ "github.com/docker/cli/pkg/kvfile"
+
+func main() {}
+`},
+							},
+						},
+					},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/docker/cli", Update: "github.com/docker/cli@v29.2.1"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/docker/cli => github.com/docker/cli v29.2.1+incompatible' ./src/go.mod"},
+					{Command: "[ -d \"${GOMODCACHE}/github.com/docker/cli@v29.2.1+incompatible\" ]"},
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod multi-module with paths", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		opts := dalec.ProgressGroup("gomod-multi-module")
+
+		// Create a multi-module repo with two modules
+		contextSt := llb.Scratch().
+			File(llb.Mkdir("/module1", 0755), opts).
+			File(llb.Mkfile("/module1/go.mod", 0644, []byte("module example.com/module1\n\ngo 1.18\n")), opts).
+			File(llb.Mkfile("/module1/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("module1")
+	assert.True(nil, true)
+}
+`)), opts).
+			File(llb.Mkdir("/module2", 0755), opts).
+			File(llb.Mkfile("/module2/go.mod", 0644, []byte("module example.com/module2\n\ngo 1.18\n")), opts).
+			File(llb.Mkfile("/module2/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("module2")
+	assert.True(nil, true)
+}
+`)), opts)
+
+		const contextName = "multi-module-edits"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-multi-module",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod multi-module with paths",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Paths: []string{"module1", "module2"},
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify@v1.7.0", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify both modules were patched with replace directive
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/module1/go.mod"},
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/module2/go.mod"},
+					{Command: "cd ./src/module1 && go build"},
+					{Command: "cd ./src/module2 && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod with subpath", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		opts := dalec.ProgressGroup("gomod-subpath")
+
+		// Create a context with a subdirectory structure
+		contextSt := llb.Scratch().
+			File(llb.Mkdir("/subdir", 0755), opts).
+			File(llb.Mkfile("/subdir/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n")), opts).
+			File(llb.Mkfile("/subdir/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), opts)
+
+		const contextName = "subpath-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-subpath",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod with subpath",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Subpath: "subdir",
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify@v1.7.0", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify the go.mod in subdir was patched with replace directive
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/subdir/go.mod"},
+					{Command: "cd ./src/subdir && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace with vendor directory", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), pg).
+			File(llb.Mkdir("/vendor/github.com/stretchr/testify/assert", 0755, llb.WithParents(true)), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte(`# github.com/stretchr/testify v1.9.0
+## explicit; go 1.17
+github.com/stretchr/testify/assert
+`)), pg).
+			File(llb.Mkfile("/vendor/github.com/stretchr/testify/VERSION", 0644, []byte("v1.9.0\n")), pg).
+			File(llb.Mkfile("/vendor/github.com/stretchr/testify/assert/assertions.go", 0644, []byte(`// Package assert - stub for v1.9.0
+package assert
+
+// True stub
+func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
+	return value
+}
+`)), pg)
+
+		const contextName = "vendor-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-vendor",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod replace with vendor directory",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					{Command: "grep -F 'v1.8.0' ./src/vendor/modules.txt"},
+					{Command: "cd ./src && go build -mod=vendor"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace with go work only", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), pg)
+
+		const contextName = "gowork-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod with go.work",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Verify go.work was updated to match go.mod version if it was bumped
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace with go work and vendor", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), pg).
+			File(llb.Mkdir("/vendor/github.com/stretchr/testify/assert", 0755, llb.WithParents(true)), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte(`## workspace
+# github.com/stretchr/testify v1.9.0
+## explicit; go 1.17
+github.com/stretchr/testify/assert
+`)), pg).
+			File(llb.Mkfile("/vendor/github.com/stretchr/testify/assert/assertions.go", 0644, []byte(`// Package assert - stub for v1.9.0
+package assert
+
+// True stub
+func True(t interface{}, value bool, msgAndArgs ...interface{}) bool {
+	return value
+}
+`)), pg)
+
+		const contextName = "gowork-vendor-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork-vendor",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod with go.work and vendor",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Verify go.work was patched
+					{Command: "test -f ./src/go.work"},
+					// Verify it builds (vendor may or may not be complete depending on Go version)
+					// Go 1.22+ will have full vendor via 'go work vendor'
+					// Go < 1.22 will have partial vendor via 'GOWORK=off go mod vendor'
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod replace with go work and vendor syncs workspace transitive deps", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// 'go work vendor' requires Go 1.22+. On older distros the script falls back
+		// to 'GOWORK=off go mod vendor', which does not walk workspace sub-modules.
+		// Skip rather than fail on those targets.
+		skip.If(t, !testConfig.SupportsGomodVersionUpdate,
+			"Test requires Go 1.22+ for 'go work vendor' support")
+
+		// This test specifically covers the case where a replace directive introduces
+		// a transitive dependency that is only reachable through a workspace sub-module,
+		// not the root module. With the correct 'go work vendor' behaviour, the dep
+		// must appear in vendor/. With the broken 'GOWORK=off go mod vendor' fallback
+		// it will be missing, causing a GOPROXY=off build failure.
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			// Root module — no dependencies at all. This is critical: with GOWORK=off
+			// go mod vendor, the root has nothing to vendor so testify would be absent.
+			// Only 'go work vendor' walks the full workspace and vendors sub-module deps.
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/root\n\ngo 1.18\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\nuse ./sub\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+func main() {}
+`)), pg).
+			// Sub-module — requires testify. Only reachable via go.work, not via root go.mod.
+			File(llb.Mkdir("/sub", 0755), pg).
+			File(llb.Mkfile("/sub/go.mod", 0644, []byte(
+				"module example.com/sub\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n",
+			)), pg).
+			File(llb.Mkfile("/sub/sub.go", 0644, []byte(`package sub
+import _ "github.com/stretchr/testify/assert"
+`)), pg).
+			// Minimal vendor dir — just a marker file so gomod-patch.sh knows to run
+			// 'go work vendor'. Contains NO pre-existing testify files, so if testify
+			// appears in vendor after patching it proves 'go work vendor' ran (not
+			// 'GOWORK=off go mod vendor', which would produce an empty vendor for a
+			// root module with no dependencies). Adding files via patch is safe from
+			// the dpkg-source --include-removal issue; only deletions are skipped.
+			File(llb.Mkdir("/vendor", 0755), pg).
+			File(llb.Mkfile("/vendor/modules.txt", 0644, []byte("## workspace\n")), pg)
+
+		const contextName = "gowork-vendor-transitive-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork-vendor-transitive",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing that go work vendor syncs workspace sub-module transitive deps",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										// Bump testify — this is only a dep of the sub-module,
+										// not the root. GOWORK=off go mod vendor would miss it.
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// testify/assert must be present in the vendor directory.
+					// This is only possible if 'go work vendor' walked the full workspace
+					// graph and included the sub-module's dependencies. If the broken
+					// 'GOWORK=off go mod vendor' fallback ran instead, only the root module's
+					// dependencies would be vendored — and the root module doesn't require
+					// testify, so it would be absent.
+					{Command: "test -d ./src/vendor/github.com/stretchr/testify/assert"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod go work version sync", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		skip.If(t, !testConfig.SupportsGomodVersionUpdate,
+			"Test requires Go 1.21+ for automatic toolchain management")
+
+		// Start with go.mod and go.work both at go 1.18
+		// Verify that go.work stays in sync with go.mod
+		pg := dalec.ProgressGroup("Setup test context")
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire go.etcd.io/etcd/client/v3 v3.5.0\n")), pg).
+			File(llb.Mkfile("/go.work", 0644, []byte("go 1.18\n\nuse .\n")), pg).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	_ "go.etcd.io/etcd/client/v3"
+)
+func main() {
+	fmt.Println("hello")
+}
+`)), pg)
+
+		const contextName = "gowork-version-sync-test"
+		spec := &dalec.Spec{
+			Name:        "test-gomod-gowork-version-sync",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod go.work version synchronization",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										// v3.5.14 requires go 1.21, which will bump go.mod from 1.18 to 1.21
+										{Original: "go.etcd.io/etcd/client/v3", Update: "go.etcd.io/etcd/client/v3@v3.5.14"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace go.etcd.io/etcd/client/v3' ./src/go.mod"},
+					{Command: "grep -F 'go.etcd.io/etcd/client/v3 v3.5.14' ./src/go.mod"},
+					// Verify go.work exists
+					{Command: "test -f ./src/go.work"},
+					// Verify the go versions in go.mod and go.work match exactly
+					{Command: "test \"$(grep '^go ' ./src/go.mod | head -1)\" = \"$(grep '^go ' ./src/go.work | head -1)\""},
+					// Verify it builds without version mismatch errors
+					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("git source with keep git dir and gomod replace", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		// Verifies that sources with a .git directory work with gomod replace.
+		opts := dalec.ProgressGroup("keepgitdir-gomod-replace")
+
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0644, []byte("module example.com/test\n\ngo 1.18\n\nrequire github.com/stretchr/testify v1.9.0\n")), opts).
+			File(llb.Mkfile("/main.go", 0644, []byte(`package main
+import (
+	"fmt"
+	"github.com/stretchr/testify/assert"
+)
+func main() {
+	fmt.Println("hello")
+	assert.True(nil, true)
+}
+`)), opts).
+			File(llb.Mkdir("/.git", 0755), opts).
+			File(llb.Mkfile("/.git/config", 0644, []byte("[core]\nrepositoryformatversion = 0\n")), opts).
+			File(llb.Mkfile("/.git/HEAD", 0644, []byte("ref: refs/heads/main\n")), opts)
+
+		const contextName = "keepgitdir-context"
+		spec := &dalec.Spec{
+			Name:        "test-keepgitdir-gomod-replace",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing keepGitDir with gomod replace directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "github.com/stretchr/testify", Update: "github.com/stretchr/testify@v1.8.0"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify go.mod was patched with replace directive
+					{Command: "grep -F 'replace github.com/stretchr/testify' ./src/go.mod"},
+					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
+					// Use -buildvcs=false since we have a fake .git directory
+					{Command: "cd ./src && go build -buildvcs=false"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			req.Evaluate = true
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -1672,7 +3005,7 @@ func Value() string {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -1725,7 +3058,7 @@ func Value() string {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			solveT(ctx, t, client, req)
 		})
 	})
@@ -2204,7 +3537,7 @@ func Value() string {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			sr := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			sr := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			sr.Evaluate = true
 			solveT(ctx, t, client, sr)
 		})
@@ -2331,7 +3664,7 @@ func Value() string {
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			sr := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+			sr := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
 			sr.Evaluate = true
 			solveT(ctx, t, client, sr)
 		})
@@ -2547,7 +3880,7 @@ func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetCon
 	}
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		reqOpts := append([]srOpt{withBuildTarget(targetCfg.Container), withSpec(ctx, t, spec)}, opts...)
+		reqOpts := append([]srOpt{withBuildTarget(targetCfg.Package), withSpec(ctx, t, spec)}, opts...)
 		req := newSolveRequest(reqOpts...)
 		solveT(ctx, t, client, req)
 	})
@@ -2594,7 +3927,7 @@ func testCustomLinuxWorker(ctx context.Context, t *testing.T, targetCfg targetCo
 		}
 
 		// Make sure the built-in worker can't build this package
-		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Container))
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Package))
 		_, err := gwc.Solve(ctx, sr)
 		if err == nil {
 			t.Fatal("expected solve to fail")
@@ -2623,7 +3956,7 @@ func testCustomLinuxWorker(ctx context.Context, t *testing.T, targetCfg targetCo
 
 		// Now build again with our custom worker
 		// Note, we are solving the main spec, not depSpec here.
-		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, workerCfg.ContextName, worker), withBuildTarget(targetCfg.Container))
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, workerCfg.ContextName, worker), withBuildTarget(targetCfg.Package))
 		solveT(ctx, t, gwc, sr)
 
 		// TODO: we should have a test to make sure this also works with source policies.
@@ -2740,8 +4073,12 @@ func testPinnedBuildDeps(ctx context.Context, t *testing.T, cfg testLinuxConfig)
 			pkg := reqToState(ctx, client, sr, t)
 			pkgs = append(pkgs, pkg)
 		}
+
+		pg := dalec.ProgressGroup("Get worker")
+
 		repoPath := filepath.Join("/opt/repo", createRepoSuffix())
-		return w.With(cfg.Worker.CreateRepo(llb.Merge(pkgs), repoPath))
+
+		return w.With(cfg.Worker.CreateRepo(llb.Merge(pkgs, pg), repoPath))
 	}
 
 	for _, tt := range tests {
@@ -2816,7 +4153,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
 			assert.NilError(t, err)
@@ -2871,7 +4208,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
 			assert.NilError(t, err)
@@ -2938,7 +4275,7 @@ func testLinuxLibArtirfacts(ctx context.Context, t *testing.T, cfg testLinuxConf
 		}
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
-			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 			res := solveT(ctx, t, gwc, sr)
 			_, err := res.SingleRef()
 			assert.NilError(t, err)
@@ -2982,7 +4319,7 @@ func testLinuxSymlinkArtifacts(ctx context.Context, t *testing.T, cfg testLinuxC
 	}
 
 	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Package))
 		res := solveT(ctx, t, client, sr)
 		_, err := res.SingleRef()
 		assert.NilError(t, err)
@@ -3489,6 +4826,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 				assert.NilError(t, err)
 			})
 		})
+
 	})
 }
 
@@ -3661,7 +4999,6 @@ func testDisableStrip(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
 
 			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Target.Container))
 			solveT(ctx, t, client, req)
-
 		})
 	})
 
@@ -4101,6 +5438,8 @@ int main() {
 					}
 				}
 
+				assert.NilError(t, scanner.Err())
+
 				if spec.Artifacts.DisableAutoRequires {
 					assert.Check(t, !found, "auto-requires found: %s\n%s", path, buf)
 				} else {
@@ -4355,7 +5694,6 @@ echo "This is a third test binary"
 		Targets: map[string]dalec.Target{
 			"azlinux3":    rpmTarget,
 			"azlinux4":    rpmTarget,
-			"mariner2":    rpmTarget,
 			"almalinux8":  rpmTarget,
 			"almalinux9":  rpmTarget,
 			"rockylinux8": rpmTarget,
@@ -4425,4 +5763,111 @@ echo "This is a third test binary"
 			t.Fatal(err)
 		}
 	})
+}
+
+func testDepsOnly(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	t.Run("minimal spec", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := &dalec.Spec{
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: map[string]dalec.PackageConstraints{
+					"curl": {},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testConfig.Target.DepsOnly))
+			res := solveT(ctx, t, client, req)
+
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/bin/curl"})
+			assert.NilError(t, err)
+		})
+	})
+
+	t.Run("full spec", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		// Full spec includes sources, build steps, and a shell script artifact.
+		// The deps-only target should install only runtime deps (curl) and NOT
+		// include the built artifact (/usr/bin/my-script) or its implicit dep.
+		spec := fillMetadata("test-deps-only-full", &dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"my-script": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents:    "#!/usr/bin/env bash\necho hello from deps-only test\n",
+							Permissions: 0o700,
+						},
+					},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "/bin/true"},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"my-script": {},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: map[string]dalec.PackageConstraints{
+					"curl": {},
+				},
+			},
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testConfig.Target.DepsOnly))
+			res := solveT(ctx, t, client, req)
+
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			// Runtime dep should be installed.
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/bin/curl"})
+			assert.NilError(t, err)
+
+			// The shell script artifact should NOT be present — deps-only
+			// never builds the package, so no artifacts are installed.
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/bin/my-script"})
+			assert.ErrorContains(t, err, "no such file")
+		})
+	})
+}
+
+func testLinuxSpec(t *testing.T, userSpec dalec.Spec) dalec.Spec {
+	t.Helper()
+
+	result := dalec.Spec{
+		Name:        "test-container-build",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Testing container target",
+
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+			},
+		},
+	}
+
+	userSpecRaw, err := json.Marshal(userSpec)
+	assert.NilError(t, err, "marshaling user spec to json")
+
+	assert.NilError(t, json.Unmarshal(userSpecRaw, &result), "unmarshalling user spec into result spec")
+
+	return result
 }

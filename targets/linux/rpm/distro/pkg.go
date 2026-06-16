@@ -107,12 +107,18 @@ func (cfg *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec
 		return dalec.NoopStateOption
 	}
 
+	opts = append(opts, dalec.ProgressGroup("Install test dependencies"))
+
 	return func(in llb.State) llb.State {
 		repos := spec.GetTestRepos(targetKey)
 		repoMounts, keyPaths := cfg.RepoMounts(repos, sOpt, opts...)
-		importRepos := []DnfInstallOpt{DnfAtRoot("/tmp/rootfs"), DnfWithMounts(repoMounts), DnfImportKeys(keyPaths)}
+		importRepos := []DnfInstallOpt{
+			DnfAtRoot("/tmp/rootfs"),
+			DnfWithMounts(repoMounts),
+			DnfImportKeys(keyPaths),
+			DnfInstallWithConstraints(opts),
+		}
 
-		opts = append(opts, dalec.ProgressGroup("Install test dependencies"))
 		worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 		return worker.Run(
 			dalec.WithConstraints(opts...),
