@@ -2,6 +2,7 @@ package testrunner
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
@@ -26,19 +27,26 @@ func countOps(t *testing.T, def *llb.Definition) (passthrough, exec int) {
 	return passthrough, exec
 }
 
-func countMergeDiffOps(t *testing.T, def *llb.Definition) (merge, diff int) {
+// countReadonlyMountsWithPrefix counts read-only exec mounts whose destination
+// is under prefix. The forcing exec mounts every required state read-only under
+// requiresMountPrefix, so this reports how many states it is forcing via mounts.
+func countReadonlyMountsWithPrefix(t *testing.T, def *llb.Definition, prefix string) int {
 	t.Helper()
+	var n int
 	for _, dt := range def.ToPB().Def {
 		var op pb.Op
 		assert.NilError(t, proto.Unmarshal(dt, &op))
-		if op.GetMerge() != nil {
-			merge++
+		exec := op.GetExec()
+		if exec == nil {
+			continue
 		}
-		if op.GetDiff() != nil {
-			diff++
+		for _, m := range exec.Mounts {
+			if m.Readonly && strings.HasPrefix(m.Dest, prefix) {
+				n++
+			}
 		}
 	}
-	return merge, diff
+	return n
 }
 
 func TestWithFinalState(t *testing.T) {
@@ -99,7 +107,7 @@ func TestRequireStates(t *testing.T) {
 		dalec.SetPassthroughOpSupported(true)
 
 		// A single passthrough op returns out while requiring every dep, so no
-		// merge or exec op is emitted.
+		// exec op is emitted.
 		st := requireStates("test.id", out, deps)
 		def, err := st.Marshal(context.Background())
 		assert.NilError(t, err)
@@ -109,7 +117,7 @@ func TestRequireStates(t *testing.T) {
 		assert.Equal(t, exec, 0, "expected no exec ops in the passthrough path")
 	})
 
-	t.Run("passthrough unsupported forces deps via no-op exec", func(t *testing.T) {
+	t.Run("passthrough unsupported forces deps via read-only mounts", func(t *testing.T) {
 		dalec.SetPassthroughOpSupported(false)
 
 		st := requireStates("test.id", out, deps, withTestFrontend())
@@ -119,9 +127,13 @@ func TestRequireStates(t *testing.T) {
 		passthrough, exec := countOps(t, def)
 		assert.Equal(t, passthrough, 0, "expected no passthrough op in the fallback path")
 		assert.Assert(t, exec >= 1, "expected at least one exec op in the fallback path")
+
+		// deps[0] is the exec rootfs; the remaining deps are mounted read-only.
+		mounts := countReadonlyMountsWithPrefix(t, def, requiresMountPrefix)
+		assert.Equal(t, mounts, len(deps)-1, "expected every dep after the first to be mounted read-only")
 	})
 
-	t.Run("passthrough unsupported single dep skips merge", func(t *testing.T) {
+	t.Run("passthrough unsupported single dep needs no extra mounts", func(t *testing.T) {
 		dalec.SetPassthroughOpSupported(false)
 
 		st := requireStates("test.id", out, deps[:1], withTestFrontend())
@@ -131,6 +143,9 @@ func TestRequireStates(t *testing.T) {
 		passthrough, exec := countOps(t, def)
 		assert.Equal(t, passthrough, 0, "expected no passthrough op in the fallback path")
 		assert.Assert(t, exec >= 1, "expected at least one exec op in the fallback path")
+
+		mounts := countReadonlyMountsWithPrefix(t, def, requiresMountPrefix)
+		assert.Equal(t, mounts, 0, "a single dep is the rootfs and needs no extra mounts")
 	})
 }
 
@@ -145,38 +160,35 @@ func TestRequireValidations(t *testing.T) {
 		func(s llb.State) llb.State { return s.File(llb.Mkfile("/v3", 0o644, []byte("3"))) },
 	}
 
-	t.Run("passthrough supported requires validations without merging", func(t *testing.T) {
+	t.Run("passthrough supported requires validations in one passthrough op", func(t *testing.T) {
 		t.Cleanup(func() { dalec.SetPassthroughOpSupported(false) })
 		dalec.SetPassthroughOpSupported(true)
 
 		// On the passthrough path the validations become required inputs of a
-		// single passthrough op, so no diff/merge ops are emitted at all.
+		// single passthrough op, so no exec is emitted.
 		st := in.With(requireValidations(stateOpts))
 		def, err := st.Marshal(context.Background())
 		assert.NilError(t, err)
 
 		passthrough, exec := countOps(t, def)
-		merge, diff := countMergeDiffOps(t, def)
 		assert.Equal(t, passthrough, 1, "expected exactly one passthrough op")
 		assert.Equal(t, exec, 0, "expected no exec ops on the passthrough path")
-		assert.Equal(t, merge, 0, "expected no merge ops on the passthrough path")
-		assert.Equal(t, diff, 0, "expected no diff ops on the passthrough path")
 	})
 
-	t.Run("passthrough unsupported merges validations", func(t *testing.T) {
+	t.Run("passthrough unsupported forces validations via read-only mounts", func(t *testing.T) {
 		dalec.SetPassthroughOpSupported(false)
-		dalec.DisableDiffMerge(false)
-		t.Cleanup(func() { dalec.DisableDiffMerge(false) })
 
 		st := in.With(requireValidations(stateOpts, withTestFrontend()))
 		def, err := st.Marshal(context.Background())
 		assert.NilError(t, err)
 
-		passthrough, _ := countOps(t, def)
-		merge, diff := countMergeDiffOps(t, def)
+		passthrough, exec := countOps(t, def)
 		assert.Equal(t, passthrough, 0, "expected no passthrough op on the fallback path")
-		assert.Assert(t, merge >= 1, "expected at least one merge op on the fallback path")
-		assert.Assert(t, diff >= 1, "expected at least one diff op on the fallback path")
+		assert.Assert(t, exec >= 1, "expected at least one exec op on the fallback path")
+
+		// The first validation state is the exec rootfs; the rest are mounted.
+		mounts := countReadonlyMountsWithPrefix(t, def, requiresMountPrefix)
+		assert.Equal(t, mounts, len(stateOpts)-1, "expected every validation after the first to be mounted read-only")
 	})
 
 	t.Run("no validations returns input unchanged", func(t *testing.T) {
@@ -188,27 +200,21 @@ func TestRequireValidations(t *testing.T) {
 		assert.NilError(t, err)
 
 		passthrough, exec := countOps(t, def)
-		merge, diff := countMergeDiffOps(t, def)
 		assert.Equal(t, passthrough, 0, "expected no passthrough op with no validations")
 		assert.Equal(t, exec, 0, "expected no exec op with no validations")
-		assert.Equal(t, merge, 0, "expected no merge op with no validations")
-		assert.Equal(t, diff, 0, "expected no diff op with no validations")
 	})
 
-	t.Run("single validation skips merge and passthrough", func(t *testing.T) {
+	t.Run("single validation needs no passthrough op", func(t *testing.T) {
 		dalec.SetPassthroughOpSupported(true)
 		t.Cleanup(func() { dalec.SetPassthroughOpSupported(false) })
 
-		// A single validation already depends on the input, so neither a merge
-		// nor a passthrough op is needed.
+		// A single validation already depends on the input, so no passthrough
+		// op is needed.
 		st := in.With(requireValidations(stateOpts[:1]))
 		def, err := st.Marshal(context.Background())
 		assert.NilError(t, err)
 
 		passthrough, _ := countOps(t, def)
-		merge, diff := countMergeDiffOps(t, def)
 		assert.Equal(t, passthrough, 0, "single validation needs no passthrough op")
-		assert.Equal(t, merge, 0, "single validation needs no merge op")
-		assert.Equal(t, diff, 0, "single validation needs no diff op")
 	})
 }
