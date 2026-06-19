@@ -14,7 +14,7 @@ func withFileChecks(test *dalec.TestSpec, opts ...ValidationOpt) llb.StateOption
 	for file, check := range test.Files {
 		outs = append(outs, withFileCheck(file, &check, opts...)...)
 	}
-	return mergeStateOptions(outs, opts...)
+	return requireValidations(outs, opts...)
 }
 
 func withFileCheck(file string, check *dalec.FileCheckOutput, opts ...ValidationOpt) []llb.StateOption {

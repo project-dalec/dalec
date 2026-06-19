@@ -13,13 +13,16 @@ func WithTests(target string, sOpt dalec.SourceOpts, deps llb.StateOption, tests
 			return in
 		}
 
-		outs := make([]llb.StateOption, 0, len(tests))
+		base := in.With(deps)
+
+		testStates := make([]llb.State, 0, len(tests))
 		for _, test := range tests {
-			outs = append(outs, withTest(target, sOpt, test, opts...))
+			testStates = append(testStates, base.With(withTest(target, sOpt, test, opts...)))
 		}
 
-		out := in.With(deps).With(mergeStateOptions(outs, opts...))
-		return out.With(WithFinalState(in, opts...))
+		// Return the original (untested) state while requiring every test to be
+		// evaluated; see [requireStates] for how that dependency is forced.
+		return requireStates(testsRequiresID, in, testStates, opts...)
 	}
 }
 
