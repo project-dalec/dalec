@@ -534,6 +534,34 @@ The edits are applied to all modules specified in the `paths` field (or the root
 The generated patches are created during preprocessing and are treated as internal sources. You don't need to manually create or maintain these patch files - Dalec handles this automatically based on your replace directives.
 :::
 
+#### Drop require directives
+
+The `gomod` generator also supports removing module requirements from `go.mod` using `drop` directives. This is useful when:
+- A sub-module has been absorbed into its parent module in a newer version
+- An upstream `go.mod` still requires a module that no longer exists as a separate package
+- A replace directive upgrades a module to a version where a previously-separate sub-module was merged back
+
+When drop directives are specified, Dalec runs `go mod edit -droprequire=<module>` before downloading dependencies.
+
+**Example using drop directive:**
+
+```yaml
+sources:
+  myapp:
+    git:
+      url: https://github.com/example/myapp.git
+      commit: v1.0.0
+    generate:
+      - gomod:
+          edits:
+            replace:
+              - "google.golang.org/grpc => google.golang.org/grpc@v1.79.3"
+            drop:
+              - google.golang.org/grpc/stats/opentelemetry
+```
+
+In this example, `grpc/stats/opentelemetry` was merged into the main `grpc` module at v1.79.0. The replace directive upgrades grpc, and the drop directive removes the now-orphaned sub-module requirement that would otherwise cause `go mod tidy` to fail.
+
 ### Cargohome
 
 Similar to that of the `gomod` generator, we can generate `cargohome` dependencies. The syntax is as follows:
