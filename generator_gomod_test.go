@@ -272,7 +272,7 @@ func TestGomodEditArgs_DropRequire(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "nil edits returns empty",
+			name:         "nil edits returns empty",
 			gen:          &GeneratorGomod{},
 			expectedArgs: "",
 		},
