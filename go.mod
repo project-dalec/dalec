@@ -11,6 +11,7 @@ require (
 	github.com/containerd/platforms v1.0.0-rc.4
 	github.com/containerd/plugin v1.0.0
 	github.com/cpuguy83/dockercfg v0.3.2
+	github.com/cpuguy83/ocijoin v0.2.0
 	github.com/distribution/reference v0.6.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/gogo/protobuf v1.3.2

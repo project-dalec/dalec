@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec/targets/linux/rpm/rockylinux"
 )
 
@@ -39,6 +38,7 @@ func TestRockylinux9(t *testing.T) {
 		Libdir: "/usr/lib64",
 		Worker: workerConfig{
 			ContextName:    rockylinux.ConfigV9.ContextRef,
+			BaseImageRef:   rockylinux.ConfigV9.ImageRef,
 			CreateRepo:     createYumRepo(rockylinux.ConfigV9),
 			SignRepo:       signRepoDnf,
 			TestRepoConfig: azlinuxTestRepoConfig,
@@ -48,11 +48,6 @@ func TestRockylinux9(t *testing.T) {
 			VersionID: "9",
 		},
 		SupportsGomodVersionUpdate: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("el9"),
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testRockylinuxExtra(ctx, t, cfg, rockylinux.ConfigV9.ImageRef)
@@ -88,6 +83,7 @@ func TestRockylinux8(t *testing.T) {
 		Libdir: "/usr/lib64",
 		Worker: workerConfig{
 			ContextName:    rockylinux.ConfigV8.ContextRef,
+			BaseImageRef:   rockylinux.ConfigV8.ImageRef,
 			CreateRepo:     createYumRepo(rockylinux.ConfigV8),
 			SignRepo:       signRepoDnf,
 			TestRepoConfig: azlinuxTestRepoConfig,
@@ -97,11 +93,6 @@ func TestRockylinux8(t *testing.T) {
 			VersionID: "8",
 		},
 		SupportsGomodVersionUpdate: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-			{OS: "linux", Architecture: "arm64"},
-		},
-		PackageOutputPath: rpmTargetOutputPath("el8"),
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testRockylinuxExtra(ctx, t, cfg, rockylinux.ConfigV8.ImageRef)
