@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/google/shlex"
@@ -26,22 +28,34 @@ type noopCommand string
 
 func (c noopCommand) Cmd(args []string) {}
 
-// WithOutput runs a no-op command that produces the provided output state.
-// This is useful for creating a dependency between the StateOption's input
-// state and the provided output state.
-func (c noopCommand) WithOutput(out llb.State, opts ...ValidationOpt) llb.StateOption {
+// requiresMountPrefix is the directory under which [noopCommand.WithOutput]
+// mounts the states it is forcing to be evaluated.
+const requiresMountPrefix = "/tmp/internal/dalec/testrunner/__internal_requires__"
+
+// WithOutput runs a no-op command that produces the provided output state while
+// forcing every state in requires to be evaluated.
+//
+// The command's input state is its (read-only) rootfs and each state in
+// requires is mounted read-only, so buildkit must build all of them to run the
+// exec. This creates a dependency on those states without copying their
+// contents into the output, which remains out.
+func (c noopCommand) WithOutput(out llb.State, requires []llb.State, opts ...ValidationOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
 		const outputPath = "/tmp/internal/dalec/testrunner/__internal_output__"
 		args := []string{string(c)}
 
-		// Ideally we would use llb.Readonly here.
-		// However, buildkit optmizes out the case since the returned state
-		// cannot be modified by the run.
-		// The run ends up not executing.
-		return in.Run(
+		runOpts := []llb.RunOption{
 			testRunner(args, opts...),
 			llb.ReadonlyRootFS(),
-		).AddMount(outputPath, out)
+		}
+		for i, st := range requires {
+			runOpts = append(runOpts, llb.AddMount(path.Join(requiresMountPrefix, strconv.Itoa(i)), st, llb.Readonly))
+		}
+
+		// The output mount is intentionally left writable: buildkit elides a
+		// run whose returned state cannot be modified, which would drop the
+		// dependency we are trying to create.
+		return in.Run(runOpts...).AddMount(outputPath, out)
 	}
 }
 

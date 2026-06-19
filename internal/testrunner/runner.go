@@ -161,30 +161,12 @@ func asConstraints(opts ...ValidationOpt) llb.ConstraintsOpt {
 //
 // Each validation is applied independently to the same input state (no
 // validation sees another's effects). Validations are side-effect only: they
-// assert things about the input and their resulting filesystems are required
-// purely so buildkit executes them.
+// assert things about the input and are required purely so buildkit executes
+// them. The actual forcing is delegated to [requireStates], which uses the
+// PassthroughOp when available and otherwise a no-op exec.
 //
-// Like [requireStates], it requires the validations via the PassthroughOp when
-// the daemon supports it. Because the validations are side-effect-only states
-// derived from the same input, the backwards-compatible fallback can simply
-// diff each one against the input and merge the (effectively empty) diffs back
-// together, which forces their evaluation while yielding a filesystem
-// equivalent to the input:
-//
-//	         input
-//	           |
-//	   +-------+-------+
-//	   |       |       |
-//	apply    apply   apply
-//	 opt1     opt2    opt3
-//	   |       |       |
-//	 diff1  diff2  diff3
-//	   |       |       |
-//	   +-------+-------+
-//	           |
-//	merge(input, diff1, diff2, diff3)
-//	           |
-//	         output
+// A single validation is returned directly: the resulting state already
+// depends on the input, so no separate forcing op is needed.
 func requireValidations(stateOpts []llb.StateOption, opts ...ValidationOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
 		if len(stateOpts) == 0 {
@@ -192,25 +174,15 @@ func requireValidations(stateOpts []llb.StateOption, opts ...ValidationOpt) llb.
 		}
 
 		if len(stateOpts) == 1 {
-			// Avoid diff/merge overhead for single state option
 			return in.With(stateOpts[0])
 		}
 
-		if dalec.PassthroughOpSupported() {
-			deps := make([]llb.State, 0, len(stateOpts))
-			for _, o := range stateOpts {
-				deps = append(deps, in.With(o))
-			}
-			return in.Requires(validationRequiresID, deps...)
-		}
-
-		states := make([]llb.State, 0, len(opts))
-		states = append(states, in)
+		deps := make([]llb.State, 0, len(stateOpts))
 		for _, o := range stateOpts {
-			states = append(states, in.With(o))
+			deps = append(deps, in.With(o))
 		}
 
-		return dalec.MergeAtPath(in, states, "/", asConstraints(opts...))
+		return requireStates(validationRequiresID, in, deps, opts...)
 	}
 }
 
@@ -229,11 +201,11 @@ func filterPath(p string) string {
 // unchanged while declaring deps as required inputs. This needs no extra exec
 // and lets independent validations build in parallel.
 //
-// Otherwise it falls back to the older behavior: the deps are combined into a
-// single state (so one op depends on all of them) and a no-op command is run to
-// force their evaluation while yielding out. This is a hack to work around the
-// fact that older buildkit does not have a proper way to express "run this for
-// validation only".
+// Otherwise it falls back to a single no-op exec that mounts every dep
+// read-only so buildkit must build them, then returns out. This forces their
+// evaluation without emitting any diff/merge ops, and is a hack to work around
+// the fact that older buildkit does not have a proper way to express "run this
+// for validation only".
 func requireStates(id string, out llb.State, deps []llb.State, opts ...ValidationOpt) llb.State {
 	if len(deps) == 0 {
 		return out
@@ -243,11 +215,9 @@ func requireStates(id string, out llb.State, deps []llb.State, opts ...Validatio
 		return out.Requires(id, deps...)
 	}
 
-	forced := deps[0]
-	if len(deps) > 1 {
-		forced = dalec.MergeAtPath(deps[0], deps[1:], "/", asConstraints(opts...))
-	}
-	return forced.With(trueCmd.WithOutput(out, opts...))
+	// deps[0] becomes the exec rootfs (forcing it) and the rest are mounted
+	// read-only; the no-op command yields out.
+	return deps[0].With(trueCmd.WithOutput(out, deps[1:], opts...))
 }
 
 // WithFinalState returns a state option which takes as input a potentially modified
