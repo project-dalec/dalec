@@ -96,7 +96,7 @@ func (c stepRunnerCommand) withTestStep(step dalec.TestStep, opts ...ValidationO
 		stateOpts = append(stateOpts, withCheckOutput(filepath.Join(c.outputPath(), "stdout"), &step.Stdout, opts...)...)
 		stateOpts = append(stateOpts, withCheckOutput(filepath.Join(c.outputPath(), "stderr"), &step.Stderr, opts...)...)
 
-		return out.With(mergeStateOptions(stateOpts, opts...))
+		return out.With(requireValidations(stateOpts, opts...))
 	}
 }
 
