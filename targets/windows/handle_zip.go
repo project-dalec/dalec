@@ -199,7 +199,7 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 			}
 		}),
 		dalec.RunOptFunc(func(ei *llb.ExecInfo) {
-			for k, v := range spec.Build.Env {
+			for k, v := range dalec.SortedMapIter(spec.Build.Env) {
 				ei.State = ei.State.With(llb.AddEnv(k, v))
 			}
 		}),
@@ -273,7 +273,7 @@ func createBuildScript(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
 	for i, step := range spec.Build.Steps {
 		fmt.Fprintln(buf, "(")
 
-		for k, v := range step.Env {
+		for k, v := range dalec.SortedMapIter(step.Env) {
 			fmt.Fprintf(buf, "export %s=\"%s\"", k, v)
 		}
 

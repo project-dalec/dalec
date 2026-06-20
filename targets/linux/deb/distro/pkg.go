@@ -120,7 +120,7 @@ func searchForAltGolang(ctx context.Context, client gwclient.Client, spec *dalec
 func buildCandidatePaths(deps map[string]dalec.PackageConstraints, prefix, basePath, suffix string) []string {
 	var candidates []string
 
-	for dep := range deps {
+	for _, dep := range dalec.SortMapKeys(deps) {
 		if strings.HasPrefix(dep, prefix+"-") {
 			// Get the base version component
 			_, ver, _ := strings.Cut(dep, "-")

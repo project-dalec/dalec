@@ -340,7 +340,7 @@ func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetK
 	// dnf5 requires the destination path be specified as an argument to the `download` verb
 	// and only supports the `--destdir` option name. These args work for both versions.
 	args := []string{"download", "--destdir", "/output"}
-	for name, constraint := range constraints {
+	for name, constraint := range dalec.SortedMapIter(constraints) {
 		if len(constraint.Version) == 0 {
 			args = append(args, name)
 			continue

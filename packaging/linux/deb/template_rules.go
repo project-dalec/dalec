@@ -50,7 +50,7 @@ type rulesWrapper struct {
 func (w *rulesWrapper) Envs() fmt.Stringer {
 	b := &strings.Builder{}
 
-	for k, v := range w.Spec.Build.Env {
+	for k, v := range dalec.SortedMapIter(w.Spec.Build.Env) {
 		fmt.Fprintf(b, "export %s := %s\n", k, v)
 	}
 

@@ -170,7 +170,7 @@ func (g *SourceGenerator) withGomodSecretsAndSockets() llb.RunOption {
 
 		const basePath = "/run/secrets"
 
-		for host, auth := range g.Gomod.Auth {
+		for host, auth := range SortedMapIter(g.Gomod.Auth) {
 			if auth.Token != "" {
 				p := filepath.Join(basePath, host, "token")
 				llb.AddSecret(p, llb.SecretID(auth.Token)).SetRunOption(ei)
