@@ -261,7 +261,7 @@ func (cmd *Command) baseState(opts fetchOptions) llb.StateOption {
 			subPath = "/"
 		}
 
-		for k, v := range cmd.Env {
+		for k, v := range SortedMapIter(cmd.Env) {
 			img = img.AddEnv(k, v)
 		}
 		if cmd.Dir != "" {
@@ -282,7 +282,7 @@ func (cmd *Command) baseState(opts fetchOptions) llb.StateOption {
 
 			rOpts = append(rOpts, baseRunOpts...)
 
-			for k, v := range step.Env {
+			for k, v := range SortedMapIter(step.Env) {
 				rOpts = append(rOpts, llb.AddEnv(k, v))
 			}
 

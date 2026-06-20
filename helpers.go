@@ -536,7 +536,7 @@ func GetRepoKeys(configs []PackageRepositoryConfig, cfg *RepoPlatformConfig, sOp
 	mounts := make([]llb.RunOption, 0, len(configs))
 	names := make([]string, 0, len(configs))
 	for _, config := range configs {
-		for name, repoKey := range config.Keys {
+		for name, repoKey := range SortedMapIter(config.Keys) {
 			mountPath := filepath.Join(cfg.GPGKeyRoot, name)
 			st, mountOpts := repoKey.ToMount(sOpt, append(opts, ProgressGroup("Fetching repo key: "+name))...)
 			mounts = append(mounts, llb.AddMount(mountPath, st, mountOpts...))

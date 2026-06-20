@@ -24,7 +24,7 @@ const (
 
 func mountSources(sources map[string]llb.State, dir string, mod func(string) string) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
-		for key, src := range sources {
+		for key, src := range dalec.SortedMapIter(sources) {
 			if mod != nil {
 				key = mod(key)
 			}
@@ -193,7 +193,7 @@ func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersio
 func TarDebSources(work llb.State, spec *dalec.Spec, srcStates map[string]llb.State, dest string, sOpts dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Prepare debian sources"))
 	states := make([]llb.State, 0, len(srcStates))
-	for key, state := range srcStates {
+	for key, state := range dalec.SortedMapIter(srcStates) {
 		src, ok := spec.Sources[key]
 
 		// If the source is not explicitly listed in the spec sources, assume it is a directory (e.g., for gomod dependencies)

@@ -280,7 +280,7 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 	}
 
 	// Add environment variables from the script
-	for key, value := range envVars {
+	for key, value := range SortedMapIter(envVars) {
 		runOpts = append(runOpts, llb.AddEnv(key, value))
 	}
 
