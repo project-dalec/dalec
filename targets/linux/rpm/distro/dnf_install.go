@@ -243,7 +243,7 @@ func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch 
 				llb.AddMount(
 					joinUnderRoot(rootfsPath, d),
 					llb.Scratch(),
-					llb.AsPersistentCacheDir(k, llb.CacheMountLocked),
+					llb.AsPersistentCacheDir(k, dalec.PackageCacheSharingMode()),
 				),
 			)
 		}

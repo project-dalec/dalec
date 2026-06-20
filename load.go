@@ -49,6 +49,8 @@ func knownArg(key string) bool {
 		return true
 	case "DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME":
 		return true
+	case BuildArgDalecPackageCacheSharing:
+		return true
 	case KeyDalecTarget:
 		return true
 	}

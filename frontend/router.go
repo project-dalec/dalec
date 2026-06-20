@@ -100,6 +100,14 @@ func (r *Router) Handler(opts ...func(context.Context, gwclient.Client, *Router)
 			dalec.DisableDiffMerge(true)
 		}
 
+		if v, ok := GetBuildArg(client, dalec.BuildArgDalecPackageCacheSharing); ok {
+			mode, err := dalec.ParseCacheSharingMode(v)
+			if err != nil {
+				return nil, err
+			}
+			dalec.SetPackageCacheSharing(mode)
+		}
+
 		for _, opt := range opts {
 			if err := opt(ctx, client, r); err != nil {
 				return nil, err

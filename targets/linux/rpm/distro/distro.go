@@ -75,7 +75,7 @@ func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
 			llb.AddMount(
 				joinUnderRoot(root, d),
 				llb.Scratch(),
-				llb.AsPersistentCacheDir(k, llb.CacheMountLocked),
+				llb.AsPersistentCacheDir(k, dalec.PackageCacheSharingMode()),
 			).SetRunOption(ei)
 		}
 

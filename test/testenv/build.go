@@ -20,6 +20,7 @@ import (
 	"github.com/moby/buildkit/identity"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 	"github.com/tonistiigi/fsutil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -143,6 +144,14 @@ func withDalecInput(ctx context.Context, gwc gwclient.Client, opts *gwclient.Sol
 
 	opts.FrontendOpt["source"] = id
 	opts.Frontend = "gateway.v0"
+
+	// Default the package-manager cache sharing mode to "private" for test builds
+	// so the parallel test matrix does not serialize on locked caches. Tests that
+	// set this build-arg explicitly keep their value.
+	cacheSharingKey := "build-arg:" + dalec.BuildArgDalecPackageCacheSharing
+	if _, ok := opts.FrontendOpt[cacheSharingKey]; !ok {
+		opts.FrontendOpt[cacheSharingKey] = "private"
+	}
 	return nil
 }
 

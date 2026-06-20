@@ -82,13 +82,13 @@ func WithMountedAptCache(namePrefix string, opts ...llb.ConstraintsOpt) llb.RunO
 		llb.AddMount(
 			"/var/cache/apt",
 			llb.Scratch(),
-			llb.AsPersistentCacheDir(namePrefix+"dalec-var-cache-apt", llb.CacheMountLocked),
+			llb.AsPersistentCacheDir(namePrefix+"dalec-var-cache-apt", PackageCacheSharingMode()),
 		).SetRunOption(ei)
 
 		llb.AddMount(
 			"/var/lib/apt",
 			llb.Scratch(),
-			llb.AsPersistentCacheDir(namePrefix+"dalec-var-lib-apt", llb.CacheMountLocked),
+			llb.AsPersistentCacheDir(namePrefix+"dalec-var-lib-apt", PackageCacheSharingMode()),
 		).SetRunOption(ei)
 	})
 }

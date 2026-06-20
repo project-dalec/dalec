@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -19,7 +20,49 @@ const (
 
 	BazelDefaultSocketID = "bazel-default" // Default ID for bazel socket
 
+	// BuildArgDalecPackageCacheSharing is the build-arg used to select the
+	// BuildKit cache mount sharing mode for package-manager caches (apt/dnf/tdnf).
+	// Valid values are "shared", "locked", and "private". When unset the default
+	// is "locked".
+	BuildArgDalecPackageCacheSharing = "DALEC_PACKAGE_CACHE_SHARING"
 )
+
+// packageCacheSharing holds the sharing mode used for package-manager cache
+// mounts. It defaults to llb.CacheMountLocked, which is the best choice for a
+// single warm build. Tests set it to "private" to avoid serializing concurrent
+// builds that share a cache key.
+var packageCacheSharing atomic.Int32
+
+func init() {
+	packageCacheSharing.Store(int32(llb.CacheMountLocked))
+}
+
+// SetPackageCacheSharing sets the sharing mode used for package-manager cache
+// mounts (apt/dnf/tdnf). The default is llb.CacheMountLocked.
+func SetPackageCacheSharing(mode llb.CacheMountSharingMode) {
+	packageCacheSharing.Store(int32(mode))
+}
+
+// PackageCacheSharingMode returns the configured sharing mode for
+// package-manager cache mounts.
+func PackageCacheSharingMode() llb.CacheMountSharingMode {
+	return llb.CacheMountSharingMode(packageCacheSharing.Load())
+}
+
+// ParseCacheSharingMode maps a string ("shared", "locked", or "private") to the
+// corresponding llb.CacheMountSharingMode.
+func ParseCacheSharingMode(s string) (llb.CacheMountSharingMode, error) {
+	switch s {
+	case cacheMountShared:
+		return llb.CacheMountShared, nil
+	case cacheMountLocked:
+		return llb.CacheMountLocked, nil
+	case cacheMountPrivate:
+		return llb.CacheMountPrivate, nil
+	default:
+		return 0, fmt.Errorf("invalid cache sharing mode %q: must be one of %q, %q, %q", s, cacheMountShared, cacheMountLocked, cacheMountPrivate)
+	}
+}
 
 // getSccacheSource returns a Source for downloading and verifying sccache using SourceHTTP
 func getSccacheSource(p *ocispecs.Platform) Source {
