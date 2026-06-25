@@ -174,6 +174,28 @@ func checkDiffMerge(client gwclient.Client) bool {
 	return true
 }
 
+var (
+	supportsSymlinkOnce sync.Once
+	supportsSymlink     atomic.Bool
+)
+
+// SupportsSymlink checks if the given client supports the native LLB symlink file action.
+func SupportsSymlink(client gwclient.Client) bool {
+	supportsSymlinkOnce.Do(func() {
+		if client.BuildOpts().Opts["build-arg:DALEC_DISABLE_SYMLINK"] == "1" {
+			supportsSymlink.Store(false)
+			return
+		}
+		supportsSymlink.Store(checkSymlink(client))
+	})
+	return supportsSymlink.Load()
+}
+
+func checkSymlink(client gwclient.Client) bool {
+	caps := client.BuildOpts().LLBCaps
+	return caps.Supports(pb.CapFileSymlinkCreate) == nil
+}
+
 // copyForForward copies all the inputs and build opts from the initial request in order to forward to another frontend.
 func copyForForward(ctx context.Context, client gwclient.Client) solveRequestOpt {
 	return func(req *gwclient.SolveRequest) error {
