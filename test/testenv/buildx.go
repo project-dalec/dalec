@@ -436,6 +436,7 @@ func (b *BuildxEnv) runTestWithStatus(ctx context.Context, t *testing.T, f TestF
 				gwc = wrapWithInput(gwc, id, f)
 			}
 			b.mu.Unlock()
+			gwc = withDeterminismCheck(gwc, t)
 			f(ctx, gwc)
 			return gwclient.NewResult(), nil
 		}, ch)
