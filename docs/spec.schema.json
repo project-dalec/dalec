@@ -1115,6 +1115,17 @@
 		},
 		"GomodEdits": {
 			"properties": {
+				"drop": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Drop removes module requirements from go.mod via go mod edit -droprequire.\nEach entry is a module path to remove. This handles cases where a sub-module\nhas been absorbed into its parent module in a newer version\n(e.g. google.golang.org/grpc/stats/opentelemetry merged into grpc at v1.79.0)."
+				},
 				"replace": {
 					"items": {
 						"$ref": "#/$defs/GomodReplace"
