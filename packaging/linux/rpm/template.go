@@ -51,6 +51,7 @@ BuildArch: noarch
 {{ .PreUn -}}
 {{ .PostUn -}}
 {{ .Files -}}
+{{ .SubPackages -}}
 {{ .Changelog -}}
 `)))
 
@@ -553,15 +554,15 @@ func systemdPreUnScript(unitName string, cfg dalec.SystemdUnitConfig) string {
 	return fmt.Sprintf("%%systemd_preun %s\n", unitName)
 }
 
-func (w *specWrapper) PreUn() fmt.Stringer {
-	b := &strings.Builder{}
-
-	artifacts := w.GetArtifacts(w.Target)
+// preUnScriptBody returns the body (without the "%preun" header) of the %preun
+// scriptlet for the given artifacts. It is shared by the primary package and
+// supplemental packages. Returns "" when no preun actions are needed.
+func preUnScriptBody(artifacts dalec.Artifacts) string {
 	if artifacts.Systemd.IsEmpty() || (len(artifacts.Systemd.EnabledUnits()) == 0) {
-		return b
+		return ""
 	}
 
-	b.WriteString("%preun\n")
+	b := &strings.Builder{}
 	keys := dalec.SortMapKeys(artifacts.Systemd.Units)
 	for _, servicePath := range keys {
 		serviceName := filepath.Base(servicePath)
@@ -570,6 +571,19 @@ func (w *specWrapper) PreUn() fmt.Stringer {
 			systemdPreUnScript(serviceName, unitConf),
 		)
 	}
+	return b.String()
+}
+
+func (w *specWrapper) PreUn() fmt.Stringer {
+	b := &strings.Builder{}
+
+	body := preUnScriptBody(w.GetArtifacts(w.Target))
+	if body == "" {
+		return b
+	}
+
+	b.WriteString("%preun\n")
+	b.WriteString(body)
 	return b
 }
 
@@ -607,50 +621,36 @@ fi
 	return s
 }
 
+// postScriptBody returns the body (without the "%post" header) of the %post
+// scriptlet for the given artifacts. It is shared by the primary package and
+// supplemental packages. Returns "" when no post actions are needed.
+func postScriptBody(artifacts dalec.Artifacts) string {
+	b := &strings.Builder{}
+	b.WriteString(systemdPostSection(artifacts))
+	b.WriteString(postUsersScript(artifacts))
+	b.WriteString(postGroupsScript(artifacts))
+	b.WriteString(symlinkOwnershipScript(artifacts))
+	b.WriteString(artifactOwnershipScript(artifacts))
+	b.WriteString(directoryOwnershipScript(artifacts))
+	b.WriteString(artifactCapabilitiesScript(artifacts))
+	return b.String()
+}
+
 func (w *specWrapper) Post() fmt.Stringer {
 	b := &strings.Builder{}
 
-	systemd := w.postSystemd()
-	users := w.postUsers()
-	groups := w.postGroups()
-	symlinkOwnership := w.getSymlinkOwnership()
-	artifactOwnership := w.getArtifactOwnership()
-	directoryOwnership := w.getDirectoryOwnership()
-	artifactCapabilities := w.getArtifactCapabilities()
-
-	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" && artifactOwnership == "" && directoryOwnership == "" && artifactCapabilities == "" {
+	body := postScriptBody(w.Spec.GetArtifacts(w.Target))
+	if body == "" {
 		return b
 	}
 
 	b.WriteString("%post\n")
-	if systemd != "" {
-		b.WriteString(systemd)
-	}
-	if users != "" {
-		b.WriteString(users)
-	}
-	if groups != "" {
-		b.WriteString(groups)
-	}
-	if symlinkOwnership != "" {
-		b.WriteString(symlinkOwnership)
-	}
-	if artifactOwnership != "" {
-		b.WriteString(artifactOwnership)
-	}
-	if directoryOwnership != "" {
-		b.WriteString(directoryOwnership)
-	}
-	if artifactCapabilities != "" {
-		b.WriteString(artifactCapabilities)
-	}
-
+	b.WriteString(body)
 	b.WriteString("\n")
 	return b
 }
 
-func (w *specWrapper) postUsers() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func postUsersScript(artifacts dalec.Artifacts) string {
 	if len(artifacts.Users) == 0 {
 		return ""
 	}
@@ -662,8 +662,7 @@ func (w *specWrapper) postUsers() string {
 	return b.String()
 }
 
-func (w *specWrapper) postGroups() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func postGroupsScript(artifacts dalec.Artifacts) string {
 	if len(artifacts.Groups) == 0 {
 		return ""
 	}
@@ -675,8 +674,7 @@ func (w *specWrapper) postGroups() string {
 	return b.String()
 }
 
-func (w *specWrapper) getDirectoryOwnership() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func directoryOwnershipScript(artifacts dalec.Artifacts) string {
 	if artifacts.Directories == nil {
 		return ""
 	}
@@ -708,8 +706,7 @@ func (w *specWrapper) getDirectoryOwnership() string {
 	return b.String()
 }
 
-func (w *specWrapper) getArtifactOwnership() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func artifactOwnershipScript(artifacts dalec.Artifacts) string {
 	b := &strings.Builder{}
 
 	setArtifactOwnership := func(root, p string, cfg *dalec.ArtifactConfig) {
@@ -767,8 +764,7 @@ func (w *specWrapper) getArtifactOwnership() string {
 	return b.String()
 }
 
-func (w *specWrapper) getArtifactCapabilities() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func artifactCapabilitiesScript(artifacts dalec.Artifacts) string {
 	b := &strings.Builder{}
 
 	// Only use setcap in postinstall if there's also a chown/chgrp
@@ -816,8 +812,7 @@ func (w *specWrapper) getArtifactCapabilities() string {
 	return b.String()
 }
 
-func (w *specWrapper) getSymlinkOwnership() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func symlinkOwnershipScript(artifacts dalec.Artifacts) string {
 	if len(artifacts.Links) == 0 {
 		return ""
 	}
@@ -843,8 +838,7 @@ func (w *specWrapper) getSymlinkOwnership() string {
 	return b.String()
 }
 
-func (w *specWrapper) postSystemd() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func systemdPostSection(artifacts dalec.Artifacts) string {
 	if artifacts.Systemd.IsEmpty() {
 		return ""
 	}
@@ -869,15 +863,16 @@ func (w *specWrapper) postSystemd() string {
 	return b.String()
 }
 
-func (w *specWrapper) PostUn() fmt.Stringer {
-	b := &strings.Builder{}
-
-	artifacts := w.GetArtifacts(w.Target)
+// postUnScriptBody returns the body (without the "%postun" header) of the
+// %postun scriptlet for the given artifacts. It is shared by the primary
+// package and supplemental packages. Returns "" when no postun actions are
+// needed.
+func postUnScriptBody(artifacts dalec.Artifacts) string {
 	if artifacts.Systemd.IsEmpty() {
-		return b
+		return ""
 	}
 
-	b.WriteString("%postun\n")
+	b := &strings.Builder{}
 	keys := dalec.SortMapKeys(artifacts.Systemd.Units)
 	for _, servicePath := range keys {
 		cfg := artifacts.Systemd.Units[servicePath]
@@ -885,7 +880,19 @@ func (w *specWrapper) PostUn() fmt.Stringer {
 		serviceName := a.ResolveName(servicePath)
 		fmt.Fprintf(b, "%%systemd_postun %s\n", serviceName)
 	}
+	return b.String()
+}
 
+func (w *specWrapper) PostUn() fmt.Stringer {
+	b := &strings.Builder{}
+
+	body := postUnScriptBody(w.GetArtifacts(w.Target))
+	if body == "" {
+		return b
+	}
+
+	b.WriteString("%postun\n")
+	b.WriteString(body)
 	return b
 }
 
@@ -894,7 +901,28 @@ func (w *specWrapper) Install() fmt.Stringer {
 	fmt.Fprintln(b, "%install")
 
 	artifacts := w.Spec.GetArtifacts(w.Target)
+	installArtifacts(b, artifacts, w.Name)
 
+	// Install artifacts for supplemental packages (shared %install section)
+	packages := w.Spec.GetSubPackages(w.Target)
+	if len(packages) > 0 {
+		keys := dalec.SortMapKeys(packages)
+		for _, key := range keys {
+			pkg := packages[key]
+			if pkg.Artifacts != nil {
+				resolvedName := pkg.ResolvedName(w.Spec.Name, key)
+				installArtifacts(b, *pkg.Artifacts, resolvedName)
+			}
+		}
+	}
+
+	b.WriteString("\n")
+	return b
+}
+
+// installArtifacts writes the %install commands for a set of artifacts.
+// pkgName is used for doc/license subdirectories.
+func installArtifacts(b *strings.Builder, artifacts dalec.Artifacts, pkgName string) {
 	copyArtifact := func(root, p string, cfg *dalec.ArtifactConfig) {
 		if cfg == nil {
 			return
@@ -995,14 +1023,14 @@ func (w *specWrapper) Install() fmt.Stringer {
 	docKeys := dalec.SortMapKeys(artifacts.Docs)
 	for _, d := range docKeys {
 		cfg := artifacts.Docs[d]
-		root := filepath.Join(`%{buildroot}/%{_docdir}`, w.Name)
+		root := filepath.Join(`%{buildroot}/%{_docdir}`, pkgName)
 		copyArtifact(root, d, &cfg)
 	}
 
 	licenseKeys := dalec.SortMapKeys(artifacts.Licenses)
 	for _, l := range licenseKeys {
 		cfg := artifacts.Licenses[l]
-		root := filepath.Join(`%{buildroot}/%{_licensedir}`, w.Name)
+		root := filepath.Join(`%{buildroot}/%{_licensedir}`, pkgName)
 		copyArtifact(root, l, &cfg)
 	}
 
@@ -1023,16 +1051,20 @@ func (w *specWrapper) Install() fmt.Stringer {
 		cfg := artifacts.Headers[h]
 		copyArtifact(`%{buildroot}/%{_includedir}`, h, &cfg)
 	}
-	b.WriteString("\n")
-	return b
 }
 
 func (w *specWrapper) Files() fmt.Stringer {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "%%files\n")
+	writeFilesBody(b, w.GetArtifacts(w.Target), w.Name)
+	b.WriteString("\n")
+	return b
+}
 
-	artifacts := w.GetArtifacts(w.Target)
-
+// writeFilesBody writes the %files entries (without the "%files" header) for
+// the given artifacts. pkgName is used for doc/license subdirectories. It is
+// shared by the primary package and supplemental packages.
+func writeFilesBody(b *strings.Builder, artifacts dalec.Artifacts, pkgName string) {
 	if len(artifacts.Binaries) > 0 {
 		binKeys := dalec.SortMapKeys(artifacts.Binaries)
 		for _, p := range binKeys {
@@ -1147,7 +1179,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 	docKeys := dalec.SortMapKeys(artifacts.Docs)
 	for _, d := range docKeys {
 		cfg := artifacts.Docs[d]
-		path := filepath.Join(`%{_docdir}`, w.Name, cfg.SubPath, cfg.ResolveName(d))
+		path := filepath.Join(`%{_docdir}`, pkgName, cfg.SubPath, cfg.ResolveName(d))
 		fullDirective := strings.Join([]string{`%doc`, path}, " ")
 		fmt.Fprintln(b, fullDirective)
 	}
@@ -1155,7 +1187,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 	licenseKeys := dalec.SortMapKeys(artifacts.Licenses)
 	for _, l := range licenseKeys {
 		cfg := artifacts.Licenses[l]
-		path := filepath.Join(`%{_licensedir}`, w.Name, cfg.SubPath, cfg.ResolveName(l))
+		path := filepath.Join(`%{_licensedir}`, pkgName, cfg.SubPath, cfg.ResolveName(l))
 		fullDirective := strings.Join([]string{`%license`, path}, " ")
 		fmt.Fprintln(b, fullDirective)
 	}
@@ -1197,8 +1229,6 @@ func (w *specWrapper) Files() fmt.Stringer {
 			fmt.Fprintln(b, path)
 		}
 	}
-	b.WriteString("\n")
-	return b
 }
 
 func (w *specWrapper) DisableStrip() string {
@@ -1215,6 +1245,172 @@ func (w *specWrapper) DisableAutoReq() string {
 		return "AutoReq: no"
 	}
 	return ""
+}
+
+// subPkgWrapper holds the resolved metadata for a single supplemental package,
+// used when generating RPM subpackage sections.
+type subPkgWrapper struct {
+	// ResolvedName is the full package name (e.g. "foo-debug" or a custom name).
+	ResolvedName string
+	// Pkg is the supplemental package definition.
+	Pkg dalec.SubPackage
+	// ParentName is the primary package name from the spec.
+	ParentName string
+}
+
+// subPkgDirective returns the RPM directive suffix for this subpackage.
+// We always use "-n <resolved_name>" so that both default-named and
+// custom-named subpackages work uniformly.
+func (s *subPkgWrapper) directive() string {
+	return "-n " + s.ResolvedName
+}
+
+// SubPackages generates all RPM subpackage sections: %package, %description,
+// dependency declarations, %files, and scriptlets (%post, %preun, %postun)
+// for each supplemental package defined in the target.
+func (w *specWrapper) SubPackages() (fmt.Stringer, error) {
+	b := &strings.Builder{}
+
+	packages := w.Spec.GetSubPackages(w.Target)
+	if len(packages) == 0 {
+		return b, nil
+	}
+
+	keys := dalec.SortMapKeys(packages)
+	for _, key := range keys {
+		pkg := packages[key]
+		sw := &subPkgWrapper{
+			ResolvedName: pkg.ResolvedName(w.Spec.Name, key),
+			Pkg:          pkg,
+			ParentName:   w.Spec.Name,
+		}
+
+		sw.writePackageHeader(b)
+		sw.writeDescription(b)
+		sw.writePost(b)
+		sw.writePreUn(b)
+		sw.writePostUn(b)
+		sw.writeFiles(b)
+	}
+
+	return b, nil
+}
+
+// writePackageHeader writes the %package section with Summary and dependency fields.
+func (s *subPkgWrapper) writePackageHeader(b *strings.Builder) {
+	fmt.Fprintf(b, "%%package %s\n", s.directive())
+	fmt.Fprintf(b, "Summary: %s\n", s.Pkg.Description)
+
+	// Install-time requirements for the subpackage's own scriptlets. These do
+	// not come from the spec's declared dependencies; they are derived from the
+	// artifacts the subpackage ships (systemd units, users/groups, ownership).
+	if s.Pkg.Artifacts != nil {
+		b.WriteString(getSystemdRequires(s.Pkg.Artifacts.Systemd))
+		b.WriteString(getUserPostRequires(s.Pkg.Artifacts.Users, s.Pkg.Artifacts.Groups))
+		b.WriteString(getOwnershipPostRequires(*s.Pkg.Artifacts))
+	}
+
+	// Runtime dependencies
+	if deps := s.Pkg.Dependencies.GetRuntime(); len(deps) > 0 {
+		keys := dalec.SortMapKeys(deps)
+		for _, name := range keys {
+			writeDep(b, "Requires", name, deps[name])
+		}
+	}
+
+	// Recommends
+	if deps := s.Pkg.Dependencies.GetRecommends(); len(deps) > 0 {
+		keys := dalec.SortMapKeys(deps)
+		for _, name := range keys {
+			writeDep(b, "Recommends", name, deps[name])
+		}
+	}
+
+	// Provides
+	if len(s.Pkg.Provides) > 0 {
+		keys := dalec.SortMapKeys(s.Pkg.Provides)
+		for _, name := range keys {
+			writeDep(b, "Provides", name, s.Pkg.Provides[name])
+		}
+	}
+
+	// Conflicts
+	if len(s.Pkg.Conflicts) > 0 {
+		keys := dalec.SortMapKeys(s.Pkg.Conflicts)
+		for _, name := range keys {
+			writeDep(b, "Conflicts", name, s.Pkg.Conflicts[name])
+		}
+	}
+
+	// Replaces -> Obsoletes
+	if len(s.Pkg.Replaces) > 0 {
+		keys := dalec.SortMapKeys(s.Pkg.Replaces)
+		for _, name := range keys {
+			writeDep(b, "Obsoletes", name, s.Pkg.Replaces[name])
+		}
+	}
+
+	b.WriteString("\n")
+}
+
+// writeDescription writes the %description section for the subpackage.
+func (s *subPkgWrapper) writeDescription(b *strings.Builder) {
+	fmt.Fprintf(b, "%%description %s\n", s.directive())
+	fmt.Fprintf(b, "%s\n\n", s.Pkg.Description)
+}
+
+// writePost writes the %post scriptlet for the subpackage if needed. It reuses
+// the same body generation as the primary package.
+func (s *subPkgWrapper) writePost(b *strings.Builder) {
+	if s.Pkg.Artifacts == nil {
+		return
+	}
+	body := postScriptBody(*s.Pkg.Artifacts)
+	if body == "" {
+		return
+	}
+	fmt.Fprintf(b, "%%post %s\n", s.directive())
+	b.WriteString(body)
+	b.WriteString("\n")
+}
+
+// writePreUn writes the %preun scriptlet for the subpackage if needed. It
+// reuses the same body generation as the primary package.
+func (s *subPkgWrapper) writePreUn(b *strings.Builder) {
+	if s.Pkg.Artifacts == nil {
+		return
+	}
+	body := preUnScriptBody(*s.Pkg.Artifacts)
+	if body == "" {
+		return
+	}
+	fmt.Fprintf(b, "%%preun %s\n", s.directive())
+	b.WriteString(body)
+	b.WriteString("\n")
+}
+
+// writePostUn writes the %postun scriptlet for the subpackage if needed. It
+// reuses the same body generation as the primary package.
+func (s *subPkgWrapper) writePostUn(b *strings.Builder) {
+	if s.Pkg.Artifacts == nil {
+		return
+	}
+	body := postUnScriptBody(*s.Pkg.Artifacts)
+	if body == "" {
+		return
+	}
+	fmt.Fprintf(b, "%%postun %s\n", s.directive())
+	b.WriteString(body)
+	b.WriteString("\n")
+}
+
+func (s *subPkgWrapper) writeFiles(b *strings.Builder) {
+	fmt.Fprintf(b, "%%files %s\n", s.directive())
+
+	if s.Pkg.Artifacts != nil {
+		writeFilesBody(b, *s.Pkg.Artifacts, s.ResolvedName)
+	}
+	b.WriteString("\n")
 }
 
 // WriteSpec generates an rpm spec from the provided [dalec.Spec] and distro target and writes it to the passed in writer
