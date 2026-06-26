@@ -31,6 +31,9 @@
 - source: "ubuntu:noble"
   dest: mirror/dockerhub/library/ubuntu:noble
 
+- source: "ubuntu:resolute"
+  dest: mirror/dockerhub/library/ubuntu:resolute
+
 - source: "almalinux:9"
   dest: mirror/dockerhub/library/almalinux:9
 

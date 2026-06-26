@@ -29,6 +29,7 @@ func init() {
 	registerDebRoutes(ubuntu.FocalDefaultTargetKey, ubuntu.FocalConfig)
 	registerDebRoutes(ubuntu.JammyDefaultTargetKey, ubuntu.JammyConfig)
 	registerDebRoutes(ubuntu.NobleDefaultTargetKey, ubuntu.NobleConfig)
+	registerDebRoutes(ubuntu.ResoluteDefaultTargetKey, ubuntu.ResoluteConfig)
 
 	registerRoutes(almalinux.V8TargetKey, almalinux.ConfigV8.Routes)
 	registerRoutes(almalinux.V9TargetKey, almalinux.ConfigV9.Routes)
