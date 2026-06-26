@@ -68,6 +68,12 @@ noble/dsc                        Builds a Debian source package.
 noble/testing/container          Builds a container image for testing purposes only.
 noble/testing/sysext             Builds a systemd system extension image.
 noble/worker                     Builds the worker image.
+resolute/container               Builds a container image.
+resolute/deb (default)           Builds a deb package.
+resolute/dsc                     Builds a Debian source package.
+resolute/testing/container       Builds a container image for testing purposes only.
+resolute/testing/sysext          Builds a systemd system extension image.
+resolute/worker                  Builds the worker image.
 rockylinux8/container (default)  Builds a container image for RockyLinux 8
 rockylinux8/container/depsonly   Builds a container image with only the runtime dependencies installed.
 rockylinux8/rpm                  Builds an rpm and src.rpm.

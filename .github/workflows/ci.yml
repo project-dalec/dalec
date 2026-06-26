@@ -107,6 +107,7 @@ jobs:
           - Focal
           - Jammy
           - Noble
+          - Resolute
           - Windows
           - Almalinux8
           - Almalinux9
@@ -116,7 +117,7 @@ jobs:
           - other
         include:
           - suite: other
-            skip: Azlinux3|Azlinux4|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
+            skip: Azlinux3|Azlinux4|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Resolute|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
 
     steps:
       - name: Harden Runner

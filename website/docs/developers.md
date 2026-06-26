@@ -239,7 +239,7 @@ make test-integration SUITE=Jammy
 make test-integration SUITE=Bookworm
 ```
 
-**Available test suites**: Azlinux3, Azlinux4, Bookworm, Bullseye, Bionic, Focal, Jammy, Noble, Windows, Almalinux8, Almalinux9, Rockylinux8, Rockylinux9
+**Available test suites**: Azlinux3, Azlinux4, Bookworm, Bullseye, Bionic, Focal, Jammy, Noble, Resolute, Windows, Almalinux8, Almalinux9, Rockylinux8, Rockylinux9
 
 ### Testing Specific Components
 
