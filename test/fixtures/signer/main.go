@@ -99,7 +99,7 @@ func main() {
 
 		// For any build-arg seen, write a file to /env/<KEY> with the contents
 		// being the value of the arg.
-		for k, v := range c.BuildOpts().Opts {
+		for k, v := range dalec.SortedMapIter(c.BuildOpts().Opts) {
 			_, key, ok := strings.Cut(k, "build-arg:")
 			if !ok {
 				// not a build arg
