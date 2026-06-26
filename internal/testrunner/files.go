@@ -11,7 +11,7 @@ func withFileChecks(test *dalec.TestSpec, opts ...ValidationOpt) llb.StateOption
 	}
 
 	outs := make([]llb.StateOption, 0, len(test.Files))
-	for file, check := range test.Files {
+	for file, check := range dalec.SortedMapIter(test.Files) {
 		outs = append(outs, withFileCheck(file, &check, opts...)...)
 	}
 	return requireValidations(outs, opts...)

@@ -97,7 +97,7 @@ type ValidationInfo struct {
 
 func validationOptsFromTest(t *dalec.TestSpec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) ValidationOpt {
 	return func(i *ValidationInfo) {
-		for k, v := range t.Env {
+		for k, v := range dalec.SortedMapIter(t.Env) {
 			i.ExtraOpts = append(i.ExtraOpts, llb.AddEnv(k, v))
 		}
 
