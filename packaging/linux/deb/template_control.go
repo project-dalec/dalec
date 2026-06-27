@@ -29,6 +29,26 @@ func (w *controlWrapper) Architecture() string {
 	return "linux-any"
 }
 
+// placeholderMaintainerEmail is appended to the deb Maintainer/changelog
+// author when the spec's Packager does not already include an email address.
+// Newer dpkg tooling (Ubuntu 26.04+) rejects a Maintainer field that is not in
+// "Name <email>" format.
+const placeholderMaintainerEmail = "dalec@users.noreply.github.com"
+
+// Maintainer returns the deb Maintainer field value, ensuring it is in the
+// "Name <email>" form that dpkg requires. If the spec's Packager has no email
+// address a placeholder is appended.
+func (w *controlWrapper) Maintainer() string {
+	p := strings.TrimSpace(w.Packager)
+	if p == "" {
+		return ""
+	}
+	if strings.Contains(p, "<") {
+		return p
+	}
+	return p + " <" + placeholderMaintainerEmail + ">"
+}
+
 // NOTE: This is very basic and does not handle things like grouped constraints
 // Given this is just trying to shim things to allow either the rpm format or the deb format
 // in its basic form, this is sufficient for now.
