@@ -183,6 +183,19 @@ func TestNoble(t *testing.T) {
 	testUbuntuBaseDependencies(t, testConf.Target)
 }
 
+func TestResolute(t *testing.T) {
+	t.Parallel()
+
+	ctx := startTestSpan(baseCtx, t)
+	testConf := debLinuxTestConfigFor(ubuntu.ResoluteDefaultTargetKey, ubuntu.ResoluteConfig,
+		withSupportGomodVersionUpdate(),
+		withPackageOverride("rust", "rust-all"),
+		withPackageOverride("bazel", "bazel-bootstrap"),
+	)
+	testLinuxDistro(ctx, t, testConf)
+	testUbuntuBaseDependencies(t, testConf.Target)
+}
+
 func TestFocal(t *testing.T) {
 	t.Parallel()
 

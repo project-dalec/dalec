@@ -5801,6 +5801,7 @@ echo "This is a third test binary"
 			"focal":       debTarget,
 			"jammy":       debTarget,
 			"noble":       debTarget,
+			"resolute":    debTarget,
 			"trixie":      debTarget,
 		},
 		Tests: []*dalec.TestSpec{

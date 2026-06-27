@@ -10,6 +10,23 @@ import (
 	"gotest.tools/v3/assert/cmp"
 )
 
+func TestControlWrapperMaintainer(t *testing.T) {
+	t.Run("A packager that already includes an email is used unchanged", func(t *testing.T) {
+		w := &controlWrapper{Spec: &dalec.Spec{Packager: "Dalec <maint@example.com>"}}
+		assert.Equal(t, w.Maintainer(), "Dalec <maint@example.com>")
+	})
+
+	t.Run("A packager without an email gets a placeholder email appended", func(t *testing.T) {
+		w := &controlWrapper{Spec: &dalec.Spec{Packager: "Dalec"}}
+		assert.Equal(t, w.Maintainer(), "Dalec <"+placeholderMaintainerEmail+">")
+	})
+
+	t.Run("An empty packager produces an empty maintainer", func(t *testing.T) {
+		w := &controlWrapper{Spec: &dalec.Spec{}}
+		assert.Equal(t, w.Maintainer(), "")
+	})
+}
+
 func TestAppendConstraints(t *testing.T) {
 	tests := []struct {
 		name string
