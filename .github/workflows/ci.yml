@@ -104,6 +104,7 @@ jobs:
           - Bookworm
           - Bullseye
           - Bionic
+          - Flatcar
           - Focal
           - Jammy
           - Noble
@@ -116,7 +117,7 @@ jobs:
           - other
         include:
           - suite: other
-            skip: Azlinux3|Azlinux4|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
+            skip: Azlinux3|Azlinux4|Bookworm|Bullseye|Bionic|Flatcar|Focal|Jammy|Noble|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
 
     steps:
       - name: Harden Runner
@@ -193,6 +194,20 @@ jobs:
         run: go mod download
       - name: Setup QEMU
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
+      - name: Install Flatcar runtime dependencies
+        if: matrix.suite == 'Flatcar'
+        run: |
+          sudo apt update
+          sudo apt install -y openssh-client qemu-system-x86
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+      - name: Cache Flatcar QEMU image
+        if: matrix.suite == 'Flatcar'
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/dalec/flatcar
+          key: flatcar-qemu-amd64-4593.2.1
       - name: Setup source policy
         if: inputs.source_policy
         uses: ./.github/actions/setup-source-policy
