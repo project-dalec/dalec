@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/targets/linux/deb/distro"
+	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 )
 
 func TestSysextEnvDefaults(t *testing.T) {
@@ -17,5 +19,20 @@ func TestSysextEnvDefaults(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected env\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestDefaultConfigUsesNobleWorker(t *testing.T) {
+	base, ok := DefaultConfig.Base.(*distro.Config)
+	if !ok {
+		t.Fatalf("expected default Flatcar base to use a deb distro config, got %T", DefaultConfig.Base)
+	}
+
+	if base.ContextRef != ubuntu.NobleWorkerContextName || base.AptCachePrefix != ubuntu.NobleAptCachePrefix {
+		t.Fatalf("expected default Flatcar base to be Noble")
+	}
+
+	if _, ok := DefaultConfig.Base.(workerHandler); !ok {
+		t.Fatalf("expected default Flatcar base to provide a worker target")
 	}
 }

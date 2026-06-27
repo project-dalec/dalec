@@ -1,0 +1,35 @@
+# syntax=ghcr.io/project-dalec/dalec/frontend@sha256:60be1bad349ae49aeea971c0e46edee0c9f7926e4d62066e4e981c45289f6e10
+
+name: flatcar-hello
+version: 0.1.0
+revision: 1
+packager: Dalec Example
+vendor: Dalec Example
+license: MIT
+description: A small Flatcar-compatible system extension example.
+
+sources:
+  hello:
+    inline:
+      file:
+        permissions: 0o755
+        contents: |
+          #!/bin/sh
+          echo "hello from a Flatcar system extension"
+
+build:
+  steps:
+    - command: |
+        install -D -m 0755 hello out/flatcar-hello
+
+artifacts:
+  binaries:
+    out/flatcar-hello:
+      subpath: ""
+      permissions: 0o755
+
+tests:
+  - name: Check binary
+    files:
+      /usr/bin/flatcar-hello:
+        permissions: 0o755

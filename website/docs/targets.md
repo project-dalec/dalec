@@ -14,6 +14,7 @@ DALEC includes a number of built-in targets that you can either use in your spec
 
 - `azlinux3` - Azure Linux 3
 - `azlinux4` - Azure Linux 4 (beta status)
+- `flatcar` - Flatcar system extension target
 - `bullseye` - Debian 11 (Bullseye) (v0.11)
 - `bookworm` - Debian 12 (Bookworm) (v0.11)
 - `trixie` - Debian 13 (Trixie) (v0.next)

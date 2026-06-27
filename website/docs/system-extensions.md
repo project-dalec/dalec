@@ -48,6 +48,44 @@ This creates `my-sysext-v0.1.0-1-azlinux3-x86-64.raw` in the current directory. 
 
 The `--target=azlinux3` flag tells Dalec to source the packages from Azure Linux 3 repositories, but you can merge the extension against other distributions.
 
+## Flatcar system extensions
+
+Dalec also includes a Flatcar target for system extensions. The Flatcar target
+uses Flatcar-compatible metadata and emits an image named after the spec, so a
+spec named `flatcar-hello` produces `flatcar-hello.raw`.
+
+```shell
+docker buildx build -f docs/examples/flatcar-sysext.yml --target=flatcar/testing/sysext --output=type=local,dest=_out .
+```
+
+Copy the generated image to a Flatcar host under `/etc/extensions`:
+
+```shell
+sudo mkdir -p /etc/extensions
+sudo cp _out/flatcar-hello.raw /etc/extensions/flatcar-hello.raw
+sudo systemd-sysext status
+sudo systemd-sysext merge
+```
+
+Example output:
+
+```text
+flatcar-hello
+```
+
+By default, Dalec writes `ID=flatcar` and `SYSEXT_LEVEL=1.0` into the
+`extension-release` metadata. To pin a sysext to a specific Flatcar release,
+pass `DALEC_SYSEXT_OS_VERSION_ID`:
+
+```shell
+docker buildx build \
+  -f docs/examples/flatcar-sysext.yml \
+  --target=flatcar/testing/sysext \
+  --build-arg DALEC_SYSEXT_OS_VERSION_ID=4593.0.0 \
+  --output=type=local,dest=_out \
+  .
+```
+
 ## Tips
 
 ### glibc compatibility
