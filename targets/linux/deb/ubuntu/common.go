@@ -12,6 +12,7 @@ var (
 		"dh-apparmor",
 		"dh-make",
 		"dh-exec",
+		"git",
 	}
 
 	// We want to install ca-certificates in the base image
