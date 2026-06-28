@@ -133,82 +133,22 @@ jobs:
       - name: checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Update Docker
-        run: |
-          set -e
-          docker version
-          docker info
-
-          sudo apt update
-          sudo apt install -y moby-engine=29.4.* moby-buildx=0.33.* moby-cli=29.4.* moby-containerd=2.3.*
-
-          docker version
-          docker info
-
-      - uses: ./.github/actions/enable-containerd
-
-      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
-        name: Login to GHCR
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup otel-collector
-        run: |
-          set -e
-          mkdir -p /tmp/otel-traces
-          chmod 777 /tmp/otel-traces
-
-          if ! docker run -d --net=host --restart=always --name otel-collector \
-            -v ${{ github.workspace }}/.github/otel-collector-ci.yaml:/etc/otelcol-contrib/config.yaml:ro \
-            -v /tmp/otel-traces:/data:rw \
-            otel/opentelemetry-collector-contrib:0.144.0; then
-            echo "::warning::Failed to start otel-collector for tracing, skipping trace configuration"
-            exit 0
-          fi
-
-          echo "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" >> "${GITHUB_ENV}"
-          echo "OTEL_SERVICE_NAME=dalec-integration-test" >> "${GITHUB_ENV}"
-
-          tmp="$(mktemp)"
-          echo "[Service]" > "${tmp}"
-          echo "Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318\"" >> "${tmp}"
-
-          sudo mkdir -p /etc/systemd/system/docker.service.d
-          sudo mkdir -p /etc/systemd/system/containerd.service.d
-          sudo cp "${tmp}" /etc/systemd/system/docker.service.d/otlp.conf
-          sudo cp "${tmp}" /etc/systemd/system/containerd.service.d/otlp.conf
-
-          if ! sudo systemctl daemon-reload; then
-            echo "::warning::Failed to reload systemd daemon for tracing configuration"
-          fi
-          if ! sudo systemctl restart containerd; then
-            echo "::warning::Failed to restart containerd with tracing configuration"
-          fi
-          if ! sudo systemctl restart docker; then
-            echo "::warning::Failed to restart docker with tracing configuration"
-          fi
-
+      # Download Go modules in the background so it overlaps the docker setup
+      # chain below instead of adding to it. It touches nothing docker-related;
+      # gated by the "wait" step before the build/test steps.
       - name: download deps
+        id: go-mod-download
         run: go mod download
-      - name: Setup QEMU
-        run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
-      - name: Setup source policy
-        if: inputs.source_policy
-        uses: ./.github/actions/setup-source-policy
-      - name: Aggressive cleanup
+        background: true
+
+      # Free host disk we don't use (unused language toolchains) in the
+      # background. This is pure filesystem work with no docker interaction, so
+      # it overlaps the docker setup chain. Docker pruning stays synchronous
+      # (see "Docker cleanup") because it must not race the image builds.
+      # Gated by the "wait" step before the build/test steps.
+      - name: Free host disk space
+        id: free-host-disk
         run: |
-          echo "================ INITIAL DISK USAGE ================"
-          df -h
-          echo
-
-          echo "================ DOCKER: SYSTEM PRUNE (IMAGES + VOLUMES) ================"
-          echo "Removing stopped containers, unused images, networks, and volumes..."
-          docker system prune -f --all --volumes || true
-          df -h
-          echo
-
           echo "================ REMOVE JAVA (JDKs) ================"
           echo "Removing all JDKs from /usr/lib/jvm"
           sudo rm -rf /usr/lib/jvm || true
@@ -271,6 +211,81 @@ jobs:
           # echo
 
           du -d1 -h /opt/hostedtoolcache | sort -h -k1
+        background: true
+
+      - name: Update Docker
+        run: |
+          set -e
+          docker version
+          docker info
+
+          sudo apt update
+          sudo apt install -y moby-engine=29.4.* moby-buildx=0.33.* moby-cli=29.4.* moby-containerd=2.3.*
+
+          docker version
+          docker info
+
+      - uses: ./.github/actions/enable-containerd
+
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        name: Login to GHCR
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup otel-collector
+        run: |
+          set -e
+          mkdir -p /tmp/otel-traces
+          chmod 777 /tmp/otel-traces
+
+          if ! docker run -d --net=host --restart=always --name otel-collector \
+            -v ${{ github.workspace }}/.github/otel-collector-ci.yaml:/etc/otelcol-contrib/config.yaml:ro \
+            -v /tmp/otel-traces:/data:rw \
+            otel/opentelemetry-collector-contrib:0.144.0; then
+            echo "::warning::Failed to start otel-collector for tracing, skipping trace configuration"
+            exit 0
+          fi
+
+          echo "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" >> "${GITHUB_ENV}"
+          echo "OTEL_SERVICE_NAME=dalec-integration-test" >> "${GITHUB_ENV}"
+
+          tmp="$(mktemp)"
+          echo "[Service]" > "${tmp}"
+          echo "Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318\"" >> "${tmp}"
+
+          sudo mkdir -p /etc/systemd/system/docker.service.d
+          sudo mkdir -p /etc/systemd/system/containerd.service.d
+          sudo cp "${tmp}" /etc/systemd/system/docker.service.d/otlp.conf
+          sudo cp "${tmp}" /etc/systemd/system/containerd.service.d/otlp.conf
+
+          if ! sudo systemctl daemon-reload; then
+            echo "::warning::Failed to reload systemd daemon for tracing configuration"
+          fi
+          if ! sudo systemctl restart containerd; then
+            echo "::warning::Failed to restart containerd with tracing configuration"
+          fi
+          if ! sudo systemctl restart docker; then
+            echo "::warning::Failed to restart docker with tracing configuration"
+          fi
+
+      - name: Setup QEMU
+        run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
+      - name: Setup source policy
+        if: inputs.source_policy
+        uses: ./.github/actions/setup-source-policy
+      - name: Docker cleanup
+        run: |
+          echo "================ INITIAL DISK USAGE ================"
+          df -h
+          echo
+
+          echo "================ DOCKER: SYSTEM PRUNE (IMAGES + VOLUMES) ================"
+          echo "Removing stopped containers, unused images, networks, and volumes..."
+          docker system prune -f --all --volumes || true
+          df -h
+          echo
 
           echo "================ DOCKER: FINAL CLEANUP ================"
           echo "Removing dangling build cache and leftover images..."
@@ -282,6 +297,11 @@ jobs:
           echo "================ CLEANUP COMPLETE ================"
       - name: Use azure ubuntu archive
         uses: ./.github/actions/dns-spoof-ubuntu-archive
+      # Join the background steps started after checkout. The build/test steps
+      # below depend on freed disk and downloaded modules, so block here. If
+      # either background step failed, this step fails the job.
+      - name: Wait for background setup (deps + disk cleanup)
+        wait: [go-mod-download, free-host-disk]
       - name: Setup builder
         run: |
           # Use a buildx container builder pinned to the buildkit version under
