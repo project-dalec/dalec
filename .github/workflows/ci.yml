@@ -134,20 +134,20 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Download Go modules in the background so it overlaps the docker setup
-      # chain below instead of adding to it. It touches nothing docker-related;
-      # gated by the "wait" step before the build/test steps.
+      # chain and builds below instead of adding to it. Nothing docker-related,
+      # and the host `go test` that consumes it fetches modules itself if they
+      # aren't ready, so no explicit wait is needed; the implicit wait-all joins
+      # it at job end.
       - name: download deps
-        id: go-mod-download
         run: go mod download
         background: true
 
       # Free host disk we don't use (unused language toolchains) in the
-      # background. This is pure filesystem work with no docker interaction, so
-      # it overlaps the docker setup chain. Docker pruning stays synchronous
-      # (see "Docker cleanup") because it must not race the image builds.
-      # Gated by the "wait" step before the build/test steps.
+      # background. Pure filesystem work with no docker interaction, so it
+      # overlaps the docker setup chain. The removals finish well before the
+      # builds create disk pressure, so no explicit wait is needed; the
+      # implicit wait-all joins it at job end.
       - name: Free host disk space
-        id: free-host-disk
         run: .github/scripts/free-host-disk.sh
         background: true
 
@@ -235,11 +235,6 @@ jobs:
           echo "================ CLEANUP COMPLETE ================"
       - name: Use azure ubuntu archive
         uses: ./.github/actions/dns-spoof-ubuntu-archive
-      # Join the background steps started after checkout. The build/test steps
-      # below depend on freed disk and downloaded modules, so block here. If
-      # either background step failed, this step fails the job.
-      - name: Wait for background setup (deps + disk cleanup)
-        wait: [go-mod-download, free-host-disk]
       - name: Setup builder
         run: |
           # Use a buildx container builder pinned to the buildkit version under
