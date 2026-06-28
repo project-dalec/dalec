@@ -58,10 +58,12 @@ df -h
 echo
 
 # Optional – huge space saver on GitHub runners
-# echo "================ REMOVE HOSTED TOOLCACHE ================"
-# echo "Removing GitHub hosted toolcache"
-# sudo rm -rf /opt/hostedtoolcache || true
-# df -h
-# echo
-
-du -d1 -h /opt/hostedtoolcache | sort -h -k1
+echo "================ REMOVE HOSTED TOOLCACHE ================"
+echo "Removing GitHub hosted toolcache"
+: "${RUNNER_TOOL_CACHE:=/opt/hostedtoolcache}"
+sudo rm -rf "${RUNNER_TOOL_CACHE}/Python" || true
+sudo rm -rf "${RUNNER_TOOL_CACHE}/PyPy" || true
+sudo rm -rf "${RUNNER_TOOL_CACHE}/node" || true
+sudo rm -rf "${RUNNER_TOOL_CACHE}/Ruby" || true
+df -h
+echo
