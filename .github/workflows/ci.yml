@@ -297,7 +297,13 @@ jobs:
         run: |
           set -eu
 
-          docker buildx bake frontend
+          # gha cache: buildx auto-detects the runtime token/url from the
+          # environment exposed by ghaction-github-runtime above. The frontend
+          # is built per-run so it uses a gha scope; the worker reuses ghcr
+          # caches below.
+          docker buildx bake frontend \
+            --set "*.cache-from=type=gha,scope=ci-frontend" \
+            --set "*.cache-to=type=gha,mode=max,scope=ci-frontend"
 
           if [ "${TEST_SUITE}" = "other" ]; then
             exit 0
@@ -309,7 +315,13 @@ jobs:
             worker="windowscross"
           fi
           export WORKER_TARGET=${worker}/worker
-          docker buildx bake worker
+          REPO="${GITHUB_REPOSITORY,,}"
+          # Workers are cached in ghcr (uncapped): :main-cache is the mode=max
+          # cache published on merge, :latest the released image. No gha here, so
+          # the 10GB cap is left to the per-test cache. Cold sources skip silently.
+          docker buildx bake worker \
+            --set "*.cache-from=type=registry,ref=ghcr.io/${REPO}/${WORKER_TARGET}:main-cache" \
+            --set "*.cache-from=type=registry,ref=ghcr.io/${REPO}/${WORKER_TARGET}:latest"
         env:
           TEST_SUITE: ${{ matrix.suite }}
       - name: Run integration tests (with coverage tracking)
