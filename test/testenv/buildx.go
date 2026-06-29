@@ -379,12 +379,13 @@ func WithSocketProxies(proxies ...socketprovider.ProxyConfig) TestRunnerOpt {
 	}
 }
 
-func setSolveOpts(cfg TestRunnerConfig, so *client.SolveOpt) error {
+func setSolveOpts(t *testing.T, cfg TestRunnerConfig, so *client.SolveOpt) error {
 	if err := withProjectRoot(so); err != nil {
 		return err
 	}
 
 	withResolveLocal(so)
+	withGHCache(t, so)
 	err := withSocketProxies(cfg.SocketProxies)(so)
 	if err != nil {
 		return err
@@ -417,7 +418,7 @@ func (b *BuildxEnv) runTestWithStatus(ctx context.Context, t *testing.T, f TestF
 	assert.NilError(t, err)
 
 	var so client.SolveOpt
-	err = setSolveOpts(cfg, &so)
+	err = setSolveOpts(t, cfg, &so)
 	assert.NilError(t, err)
 
 	ctx, cancel := context.WithCancel(ctx)
