@@ -13,11 +13,12 @@ func TestAlmalinux9(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
-			Key:       "almalinux9",
-			Package:   "almalinux9/rpm",
-			Container: "almalinux9/container",
-			DepsOnly:  "almalinux9/container/depsonly",
-			Worker:    "almalinux9/worker",
+			Key:              "almalinux9",
+			Package:          "almalinux9/rpm",
+			Container:        "almalinux9/container",
+			DepsOnly:         "almalinux9/container/depsonly",
+			MinimalContainer: "almalinux9/container",
+			Worker:           "almalinux9/worker",
 			FormatDepEqual: func(v, _ string) string {
 				return v
 			},
@@ -59,10 +60,11 @@ func TestAlmalinux8(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
-			Package:   "almalinux8/rpm",
-			Container: "almalinux8/container",
-			DepsOnly:  "almalinux8/container/depsonly",
-			Worker:    "almalinux8/worker",
+			Package:          "almalinux8/rpm",
+			Container:        "almalinux8/container",
+			DepsOnly:         "almalinux8/container/depsonly",
+			MinimalContainer: "almalinux8/container",
+			Worker:           "almalinux8/worker",
 			FormatDepEqual: func(v, _ string) string {
 				return v
 			},

@@ -73,8 +73,16 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 	).AddMount(workPath, rootfs)
 
+	if !skipBase {
+		rootfs = minimizeContainer(rootfs, worker, rpmDir, basePkgs, opts...)
+	}
+
 	if post := spec.GetImagePost(targetKey); post != nil && len(post.Symlinks) > 0 {
 		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, frontend.NativeSymlinkSupport(client), opts...))
+	}
+
+	if !skipBase {
+		rootfs = squashContainer(rootfs, opts...)
 	}
 
 	return rootfs

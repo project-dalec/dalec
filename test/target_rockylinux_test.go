@@ -13,11 +13,12 @@ func TestRockylinux9(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
-			Key:       "rockylinux9",
-			Package:   "rockylinux9/rpm",
-			Container: "rockylinux9/container",
-			DepsOnly:  "rockylinux9/container/depsonly",
-			Worker:    "rockylinux9/worker",
+			Key:              "rockylinux9",
+			Package:          "rockylinux9/rpm",
+			Container:        "rockylinux9/container",
+			DepsOnly:         "rockylinux9/container/depsonly",
+			MinimalContainer: "rockylinux9/container",
+			Worker:           "rockylinux9/worker",
 			FormatDepEqual: func(v, _ string) string {
 				return v
 			},
@@ -59,10 +60,11 @@ func TestRockylinux8(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
-			Package:   "rockylinux8/rpm",
-			Container: "rockylinux8/container",
-			DepsOnly:  "rockylinux8/container/depsonly",
-			Worker:    "rockylinux8/worker",
+			Package:          "rockylinux8/rpm",
+			Container:        "rockylinux8/container",
+			DepsOnly:         "rockylinux8/container/depsonly",
+			MinimalContainer: "rockylinux8/container",
+			Worker:           "rockylinux8/worker",
 			FormatDepEqual: func(v, _ string) string {
 				return v
 			},
