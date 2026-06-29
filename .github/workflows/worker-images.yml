@@ -137,7 +137,13 @@ jobs:
         name: Setup (merged)
         run: |
           set -ex -o pipefail
-          EXTRA_FLAGS="--set worker.cache-to=type=gha,scope=main.${{matrix.target}},mode=max --set worker.cache-from=type=gha,scope=${MAIN_CACHE_SCOPE}"
+          # Publish the worker plus a registry cache (mode=max). Registry caches
+          # live in ghcr (uncapped) so PR CI can cache-from intermediates without
+          # touching the 10GB gha cap.
+          ref="ghcr.io/${BASE_REPO}:main"
+          cache="ghcr.io/${BASE_REPO}:main-cache"
+          EXTRA_FLAGS="--set worker.tags=${ref} --push"
+          EXTRA_FLAGS+=" --set worker.cache-to=type=registry,ref=${cache},mode=max --set worker.cache-from=type=registry,ref=${cache}"
           echo "EXTRA_FLAGS=${EXTRA_FLAGS}" >> $GITHUB_ENV
       - name: Setup QEMU
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
