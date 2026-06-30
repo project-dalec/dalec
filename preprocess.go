@@ -139,7 +139,7 @@ func buildGomodPatchEnv(editArgs string, paths []string, gen *SourceGenerator, s
 
 	// Build git config section
 	gitConfig := &strings.Builder{}
-	var goPrivate, goInsecure string
+	var goPrivate string
 
 	sortedHosts := SortMapKeys(gen.Gomod.Auth)
 	if len(sortedHosts) > 0 {
@@ -173,9 +173,7 @@ func buildGomodPatchEnv(editArgs string, paths []string, gen *SourceGenerator, s
 			}
 		}
 
-		joined := strings.Join(goPrivateHosts, ",")
-		goPrivate = joined
-		goInsecure = joined
+		goPrivate = strings.Join(goPrivateHosts, ",")
 	}
 
 	// Build module info for each path
@@ -214,9 +212,6 @@ func buildGomodPatchEnv(editArgs string, paths []string, gen *SourceGenerator, s
 	}
 	if goPrivate != "" {
 		env["GOPRIVATE"] = goPrivate
-	}
-	if goInsecure != "" {
-		env["GOINSECURE"] = goInsecure
 	}
 
 	return env, nil

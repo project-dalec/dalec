@@ -17,7 +17,6 @@ fi
 # - EDIT_ARGS: Newline-separated list of -replace= arguments for go mod edit
 # - GIT_CONFIG_SCRIPT: Optional git configuration script
 # - GOPRIVATE: Optional GOPRIVATE setting
-# - GOINSECURE: Optional GOINSECURE setting
 # - GOMOD_FILENAME: Filename for go.mod (default: go.mod)
 # - GOSUM_FILENAME: Filename for go.sum (default: go.sum)
 # - MODULE_PATHS: Colon-separated list of module paths to process
@@ -40,12 +39,9 @@ if [ -n "$GIT_CONFIG_SCRIPT" ]; then
   eval "$GIT_CONFIG_SCRIPT"
 fi
 
-# Setup Go private/insecure settings if provided
+# Setup Go private settings if provided
 if [ -n "$GOPRIVATE" ]; then
   export GOPRIVATE
-fi
-if [ -n "$GOINSECURE" ]; then
-  export GOINSECURE
 fi
 
 # Process each module path
