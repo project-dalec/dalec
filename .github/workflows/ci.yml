@@ -231,9 +231,15 @@ jobs:
           # test so the integration suite runs against it instead of the
           # engine's embedded buildkit. dial-stdio (used by the test harness)
           # and the bake pre-builds all target the current builder.
+          #
+          # Disable buildkit GC. It has been evicting persistent caches
+          # mid-build and causing flakes; freeing up runner disk earlier in the
+          # job makes keeping the cache around for the whole run feasible.
+          printf '[worker.oci]\n  gc = false\n' > /tmp/buildkitd.toml
           docker buildx create --use \
             --driver-opt network=host \
-            --driver-opt image=${BUILDKIT_TEST_IMAGE}
+            --driver-opt image=${BUILDKIT_TEST_IMAGE} \
+            --buildkitd-config /tmp/buildkitd.toml
       - name: Pre-build base images
         run: |
           set -eu
