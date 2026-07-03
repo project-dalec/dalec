@@ -528,7 +528,7 @@ jobs:
       - name: Merge coverage + generate report
         run: |
           set -eux
-          go install github.com/wadey/gocovmerge@latest
+          go install github.com/wadey/gocovmerge@b5bfa59ec0adc420475f97f89b58045c721d761c
 
           integration_profiles="$(find coverage/_integration -type f -name 'integration-*.out' | sort | tr '\n' ' ')"
           frontend_profiles="$(find coverage/_integration -type f -name 'frontend-*.out' | sort | tr '\n' ' ')"
