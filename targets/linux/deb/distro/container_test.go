@@ -58,10 +58,7 @@ func Test_Building_container(t *testing.T) {
 
 		state := c.BuildContainer(ctx, client, sopt, spec, "target", llb.State{})
 
-		ops, err := test.LLBOpsFromState(ctx, state)
-		if err != nil {
-			t.Fatalf("failed to get llb ops from state: %v", err)
-		}
+		ops := test.LLBOpsFromState(ctx, t, state)
 
 		specPackageImageSourceFound := false
 
@@ -112,10 +109,7 @@ func Test_Building_container(t *testing.T) {
 
 		state := c.BuildContainer(ctx, client, sopt, spec, "target", llb.State{})
 
-		ops, err := test.LLBOpsFromState(ctx, state)
-		if err != nil {
-			t.Fatalf("failed to get llb ops from state: %v", err)
-		}
+		ops := test.LLBOpsFromState(ctx, t, state)
 
 		if len(ops) == 0 {
 			t.Fatalf("expected at least one llb op, got none")
@@ -152,10 +146,7 @@ func Test_Building_container(t *testing.T) {
 				},
 			}
 
-			ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
-			if err != nil {
-				t.Fatalf("failed to get llb ops from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
 
 			for _, op := range ops {
 				if op.OpMetadata.ProgressGroup != nil && op.OpMetadata.ProgressGroup.Name == "Bootstrap Base Image" {
@@ -212,10 +203,7 @@ func Test_Building_container(t *testing.T) {
 					},
 				}
 
-				ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
-				if err != nil {
-					t.Fatalf("failed to get llb ops from state: %v", err)
-				}
+				ops := test.LLBOpsFromState(ctx, t, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
 
 				expectedMountPath := "/etc/apt/sources.list.d/" + extraInstallRepo + ".list"
 
@@ -268,10 +256,7 @@ func Test_Building_container(t *testing.T) {
 					},
 				}
 
-				ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
-				if err != nil {
-					t.Fatalf("failed to get llb ops from state: %v", err)
-				}
+				ops := test.LLBOpsFromState(ctx, t, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch()))
 
 				for _, op := range ops {
 					e := op.Op.GetExec()
@@ -360,10 +345,7 @@ func Test_Building_container(t *testing.T) {
 					return nil, nil
 				},
 			}
-			ops, err := test.LLBOpsFromState(ctx, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.State{}))
-			if err != nil {
-				t.Fatalf("failed to get llb ops from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.State{}))
 
 			found := false
 			for _, op := range ops {
@@ -417,10 +399,7 @@ func Test_Building_container(t *testing.T) {
 
 			state := c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch(), dalec.ProgressGroup("foo"))
 
-			ops, err := test.LLBOpsFromState(ctx, state)
-			if err != nil {
-				t.Fatalf("failed to get llb ops from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, state)
 
 			aptCacheFound := false
 
@@ -482,10 +461,7 @@ func Test_Building_container(t *testing.T) {
 
 			state := c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch(), dalec.ProgressGroup("foo"))
 
-			ops, err := test.LLBOpsFromState(ctx, state)
-			if err != nil {
-				t.Fatalf("failed to get llb ops from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, state)
 
 			for _, op := range ops {
 				e := op.Op.GetExec()
@@ -544,10 +520,7 @@ func Test_Building_container(t *testing.T) {
 
 			state := c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", pkg, dalec.ProgressGroup("foo"))
 
-			ops, err := test.LLBOpsFromState(ctx, state)
-			if err != nil {
-				t.Fatalf("failed to get llb ops from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, state)
 
 			basePkgFound := false
 			pkgFound := false
@@ -612,10 +585,7 @@ func Test_Building_container(t *testing.T) {
 
 			state := c.BuildContainer(ctx, &testClient{}, sopt, &dalec.Spec{}, "target", llb.Scratch(), dalec.ProgressGroup("foo"))
 
-			ops, err := test.LLBOpsFromState(ctx, state)
-			if err != nil {
-				t.Fatalf("failed to get llb ops from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, state)
 
 			aptCacheFound := false
 
