@@ -312,10 +312,7 @@ func verifyConstraintsPropagation(ctx context.Context, t *testing.T, req gwclien
 			Ref: ref,
 		}
 
-		ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
-		if err != nil {
-			t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
-		}
+		ops := test.LLBOpsFromState(ctx, t, resultToState(t, res))
 
 		allOps = append(allOps, ops...)
 

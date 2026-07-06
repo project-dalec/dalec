@@ -6153,10 +6153,7 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 
 			res := solveT(ctx, t, gwc, sr)
 
-			ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
-			if err != nil {
-				t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, resultToState(t, res))
 
 			cacheIgnored := 0
 			execFound := false
@@ -6224,10 +6221,7 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 
 			res := solveT(ctx, t, gwc, sr)
 
-			ops, err := test.LLBOpsFromState(ctx, resultToState(t, res))
-			if err != nil {
-				t.Fatalf("Unexpected error extracting LLB OPs from state: %v", err)
-			}
+			ops := test.LLBOpsFromState(ctx, t, resultToState(t, res))
 
 			badOps := []test.LLBOp{}
 
