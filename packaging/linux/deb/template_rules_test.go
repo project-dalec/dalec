@@ -193,15 +193,29 @@ Depends: ${misc:Depends},
 }
 
 func TestRules_OverrideStrip(t *testing.T) {
-	w := &rulesWrapper{
-		Spec: &dalec.Spec{},
-	}
+	t.Run("strip enabled by default emits no overrides", func(t *testing.T) {
+		w := newRulesWrapper(dalec.Artifacts{})
+		assert.Equal(t, w.OverrideStrip().String(), "")
+	})
 
-	got := w.OverrideStrip()
-	assert.Equal(t, got.String(), "")
+	t.Run("disable_strip disables dh_strip and dh_strip_nondeterminism", func(t *testing.T) {
+		w := newRulesWrapper(dalec.Artifacts{DisableStrip: true})
+		assert.Equal(t, w.OverrideStrip().String(), "override_dh_strip:\noverride_dh_strip_nondeterminism:\n")
+	})
+}
 
-	w.Spec.Artifacts.DisableStrip = true
-	got = w.OverrideStrip()
-	expect := "override_dh_strip:\n"
-	assert.Equal(t, got.String(), expect)
+func TestRules_OverrideAutoRequires(t *testing.T) {
+	t.Run("auto-requires enabled by default lets dh_shlibdeps run", func(t *testing.T) {
+		w := newRulesWrapper(dalec.Artifacts{})
+		assert.Equal(t, w.OverrideAutoRequires().String(), "")
+	})
+
+	t.Run("disable_auto_requires disables dh_shlibdeps", func(t *testing.T) {
+		w := newRulesWrapper(dalec.Artifacts{DisableAutoRequires: true})
+		assert.Equal(t, w.OverrideAutoRequires().String(), "override_dh_shlibdeps:\n")
+	})
+}
+
+func newRulesWrapper(artifacts dalec.Artifacts) *rulesWrapper {
+	return &rulesWrapper{Spec: &dalec.Spec{Artifacts: artifacts}}
 }

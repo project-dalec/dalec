@@ -30,5 +30,7 @@ override_dh_dwz:
 
 {{ .OverrideStrip }}
 
+{{ .OverrideAutoRequires }}
+
 %:
 	dh $@ -v

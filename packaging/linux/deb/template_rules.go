@@ -200,6 +200,25 @@ func (w *rulesWrapper) OverrideStrip() fmt.Stringer {
 
 	if artifacts.DisableStrip {
 		buf.WriteString("override_dh_strip:\n")
+		// dh_strip_nondeterminism is a separate helper that debhelper runs even
+		// when dh_strip is overridden. It fails on some inputs (e.g. Go's corrupt
+		// archive test fixtures), so disable it alongside dh_strip.
+		buf.WriteString("override_dh_strip_nondeterminism:\n")
+	}
+	return buf
+}
+
+func (w *rulesWrapper) OverrideAutoRequires() fmt.Stringer {
+	artifacts := w.Spec.GetArtifacts(w.target)
+
+	buf := &strings.Builder{}
+
+	if artifacts.DisableAutoRequires {
+		// DisableAutoRequires drops the auto-discovered ${shlibs:Depends} from the
+		// control file, but dh_shlibdeps still runs and can fail on unrelated ELF
+		// fixtures. With auto-requires disabled its output is discarded anyway, so
+		// skip it entirely.
+		buf.WriteString("override_dh_shlibdeps:\n")
 	}
 	return buf
 }
