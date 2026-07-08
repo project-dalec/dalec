@@ -10,6 +10,46 @@ import (
 	"gotest.tools/v3/assert/cmp"
 )
 
+func TestBuildStepListAliasResolution(t *testing.T) {
+	t.Parallel()
+
+	const header = `name: t
+version: "1.0"
+revision: "1"
+packager: t
+vendor: t
+license: MIT
+description: t
+`
+	t.Run("an aliased build step resolves to the anchor's step", func(t *testing.T) {
+		t.Parallel()
+		spec, err := LoadSpec([]byte(header + `
+x-step: &s
+  command: echo hi
+build:
+  steps:
+    - *s
+`))
+		assert.NilError(t, err)
+		assert.Assert(t, cmp.Len(spec.Build.Steps, 1))
+		assert.Equal(t, spec.Build.Steps[0].Command, "echo hi")
+	})
+
+	t.Run("a merge key in a build step resolves to the anchor's step", func(t *testing.T) {
+		t.Parallel()
+		spec, err := LoadSpec([]byte(header + `
+x-step: &s
+  command: echo hi
+build:
+  steps:
+    - <<: *s
+`))
+		assert.NilError(t, err)
+		assert.Assert(t, cmp.Len(spec.Build.Steps, 1))
+		assert.Equal(t, spec.Build.Steps[0].Command, "echo hi")
+	})
+}
+
 func TestDate(t *testing.T) {
 	expect := "2023-10-01"
 	expectTime, err := time.Parse(time.DateOnly, expect)

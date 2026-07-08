@@ -439,20 +439,18 @@ type ArtifactBuild struct {
 type BuildStepList []BuildStep
 
 func (ls *BuildStepList) UnmarshalYAML(ctx context.Context, node ast.Node) error {
-	seq, ok := node.(*ast.SequenceNode)
-	if !ok {
+	if _, ok := node.(*ast.SequenceNode); !ok {
 		return errors.New("expected sequence node for build steps")
 	}
 
-	result := make([]BuildStep, 0, len(seq.Values))
-	for _, n := range seq.Values {
-		var step BuildStep
-
-		if err := yaml.NodeToValue(n, &step, decodeOpts(ctx)...); err != nil {
-			return err
-		}
-		step._sourceMap = newSourceMap(ctx, n)
-		result = append(result, step)
+	// Decode the whole sequence through getDecoder so the document's anchor
+	// definitions are available; this lets an alias or `<<:` merge referencing a
+	// top-level anchor be used as a build step. Each element is decoded by
+	// BuildStep.UnmarshalYAML, which attaches its own source map.
+	var result []BuildStep
+	dec := getDecoder(ctx)
+	if err := dec.DecodeFromNodeContext(ctx, node, &result); err != nil {
+		return err
 	}
 
 	*ls = result
