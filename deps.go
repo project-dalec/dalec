@@ -44,7 +44,11 @@ func (pc *PackageConstraints) UnmarshalYAML(ctx context.Context, node ast.Node) 
 	var i internal
 
 	if node.Type() != ast.NullType {
-		if err := yaml.NodeToValue(node, &i, decodeOpts(ctx)...); err != nil {
+		// Decode via getDecoder so the document's anchor definitions (carried as
+		// reference readers) are available; this lets an alias used as a
+		// package's value resolve against a top-level anchor.
+		dec := getDecoder(ctx)
+		if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
 			return errors.Wrap(err, "unmarshal package constraints")
 		}
 	}
@@ -86,32 +90,55 @@ func (l *PackageDependencyList) UnmarshalYAML(ctx context.Context, node ast.Node
 			}
 		}
 
+		*l = result
+
 		return nil
 	}
 
-	result := make(PackageDependencyList)
+	// Decode the whole mapping through getDecoder so the document's anchor
+	// definitions are available. This lets the yaml library resolve aliases used
+	// as package values and expand `<<:` merge keys that reference top-level
+	// anchors. Decode into the unnamed map type so this method is not re-entered.
+	result := make(map[string]PackageConstraints)
 	dec := getDecoder(ctx)
-	for _, v := range mapNode.Values {
-		var pc PackageConstraints
-		if err := dec.DecodeFromNodeContext(ctx, v.Value, &pc); err != nil {
-			return errors.Wrap(err, "unmarshal package constraints")
-		}
+	if err := dec.DecodeFromNodeContext(ctx, mapNode, &result); err != nil {
+		return errors.Wrap(err, "unmarshal package constraints")
+	}
 
+	// Merged/aliased entries keep the source map of their anchor definition.
+	// Directly-specified entries need an adjustment: when a package constraint is
+	// specified, e.g.
+	//   pkg-name:
+	//   	version: [">=1.0.0"]
+	// the value node's source map points at the line below `pkg-name`. However,
+	// we want to include the package name itself in the source map, so pull the
+	// start line up to the package key.
+	for _, v := range mapNode.Values {
+		// A merge key (`<<:`) is not a package: its key is the literal `<<` and
+		// the packages it contributes are declared in the referenced anchor, not
+		// in this mapping. Those merged packages already have a source map
+		// pointing at their anchor definition (set when the decoder resolved the
+		// alias), and their key nodes don't exist here to adjust, so skip them.
+		if v.Key.IsMergeKey() {
+			continue
+		}
 		key, ok := v.Key.(*ast.StringNode)
 		if !ok {
 			return goerrors.New("expected string key for package dependency")
 		}
-
-		// Handle case where a package constraint is specified:
-		// e.g.
-		//   pkg-name:
-		//	 	version: [">=1.0.0"]
-		// In this case, the the line number would be pointing at the line below `pkg-name`
-		// However, we want to include the package name itself in the source map.
+		pc := result[key.Value]
+		if pc._sourceMap == nil {
+			continue
+		}
+		// The value can be an alias whose anchor is declared above this key (e.g.
+		// `somepkg: *c`), so the entry may already start above the key line. Only
+		// pull the start line up to the key when the value node sits below it, so
+		// the name itself is included without discarding an earlier anchor
+		// position. _sourceMap is shared with the map entry by pointer, so
+		// mutating it in place needs no write-back.
 		if pc._sourceMap.pos.Start.Line > int32(key.GetToken().Position.Line) {
 			pc._sourceMap.pos.Start.Line = int32(key.GetToken().Position.Line)
 		}
-		result[key.Value] = pc
 	}
 
 	*l = result
