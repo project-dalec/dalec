@@ -153,8 +153,13 @@ type SourceOpts struct {
 	Forward          ForwarderFunc
 	GetContext       func(string, ...llb.LocalOption) (*llb.State, error)
 	TargetPlatform   *ocispecs.Platform
+	BuildArgs        map[string]string
 	GitCredHelperOpt func() (llb.RunOption, error)
 	SourceFilter     func() (SourceFilterConfig, error)
+}
+
+func (s SourceOpts) DisableProxyConfig() bool {
+	return s.BuildArgs[BuildArgDalecDisableProxyConfig] == "1"
 }
 
 var errInvalidMountConfig = errors.New("invalid mount config")

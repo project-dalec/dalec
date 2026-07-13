@@ -9,6 +9,60 @@ import (
 	"github.com/pkg/errors"
 )
 
+const npmProxyConfigScript = `
+configure_npm_proxy() {
+	restore_xtrace=0
+	case "$-" in
+		*x*) set +x; restore_xtrace=1 ;;
+	esac
+	restore_npm_xtrace() {
+		if [ "${restore_xtrace}" = "1" ]; then
+			set -x
+		fi
+	}
+
+	if [ "${DALEC_DISABLE_PROXY_CONFIG:-}" = "1" ]; then
+		restore_npm_xtrace
+		return 0
+	fi
+
+	http_proxy_value="${HTTP_PROXY:-${http_proxy:-}}"
+	https_proxy_value="${HTTPS_PROXY:-${https_proxy:-}}"
+	no_proxy_value="${NO_PROXY:-${no_proxy:-}}"
+	if [ -z "${http_proxy_value}" ] && [ -z "${https_proxy_value}" ]; then
+		restore_npm_xtrace
+		return 0
+	fi
+
+	if [ -n "${http_proxy_value}" ]; then
+		export npm_config_proxy="${http_proxy_value}"
+	fi
+	if [ -n "${https_proxy_value}" ]; then
+		export npm_config_https_proxy="${https_proxy_value}"
+	fi
+	if [ -n "${no_proxy_value}" ]; then
+		export npm_config_noproxy="${no_proxy_value}"
+	fi
+
+	for ca_bundle in \
+		/etc/ssl/certs/ca-certificates.crt \
+		/etc/pki/tls/certs/ca-bundle.crt \
+		/etc/ssl/ca-bundle.pem \
+		/etc/pki/tls/cacert.pem \
+		/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+		/etc/ssl/cert.pem
+	do
+		if [ -f "${ca_bundle}" ]; then
+			export NODE_EXTRA_CA_CERTS="${ca_bundle}"
+			export npm_config_cafile="${ca_bundle}"
+			break
+		fi
+	done
+
+	restore_npm_xtrace
+}
+`
+
 func (s *Source) isNodeMod() bool {
 	for _, gen := range s.Generate {
 		if gen.NodeMod != nil {
@@ -28,11 +82,18 @@ func (s *Spec) HasNodeMods() bool {
 	return false
 }
 
-func withNodeMod(g *SourceGenerator, worker llb.State, name string, opts ...llb.ConstraintsOpt) llb.StateOption {
+func nodeProxyConfig(sOpt SourceOpts) llb.RunOption {
+	return RunOptFunc(func(ei *llb.ExecInfo) {
+		if sOpt.DisableProxyConfig() {
+			llb.AddEnv(BuildArgDalecDisableProxyConfig, "1").SetRunOption(ei)
+		}
+	})
+}
+
+func withNodeMod(g *SourceGenerator, sOpt SourceOpts, worker llb.State, name string, opts ...llb.ConstraintsOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
 		workDir := "/work/src"
 		joinedWorkDir := filepath.Join(workDir, name, g.Subpath)
-		const installCmd = "npm install"
 		const installBasePath = "/work/download"
 
 		paths := g.NodeMod.Paths
@@ -49,10 +110,11 @@ func withNodeMod(g *SourceGenerator, worker llb.State, name string, opts ...llb.
 			// without having to do an additional copy to move the files around.
 
 			installPath := filepath.Join(installBasePath, name, g.Subpath, path)
-			installCmd := installCmd + " --prefix " + installPath
+			installCmd := npmProxyConfigScript + "\nconfigure_npm_proxy\nnpm install --prefix " + installPath
 
 			st := worker.Run(
 				ShArgs(installCmd),
+				nodeProxyConfig(sOpt),
 				llb.Dir(filepath.Join(joinedWorkDir, path)),
 				WithConstraints(opts...),
 				llb.AddMount(workDir, in, llb.Readonly),
@@ -102,7 +164,7 @@ func (s *Spec) NodeModDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constr
 			if gen.NodeMod == nil {
 				continue
 			}
-			merged = merged.With(withNodeMod(gen, worker, key, opts...))
+			merged = merged.With(withNodeMod(gen, sOpt, worker, key, opts...))
 		}
 		result[key] = merged.With(sourceFilterAtPath(sOpt, key, opts...))
 	}

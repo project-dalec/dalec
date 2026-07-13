@@ -38,6 +38,8 @@ type dnfInstallConfig struct {
 	includeDocs bool
 
 	forceArch string
+
+	disableProxyConfig bool
 }
 
 type DnfInstallOpt func(*dnfInstallConfig)
@@ -79,6 +81,12 @@ func DnfForceArch(arch string) DnfInstallOpt {
 func IncludeDocs(v bool) DnfInstallOpt {
 	return func(cfg *dnfInstallConfig) {
 		cfg.includeDocs = v
+	}
+}
+
+func DnfWithSourceOpts(sOpt dalec.SourceOpts) DnfInstallOpt {
+	return func(cfg *dnfInstallConfig) {
+		cfg.disableProxyConfig = sOpt.DisableProxyConfig()
 	}
 }
 
@@ -133,6 +141,97 @@ rpm --import "${key_path}"
 	return importScript
 }
 
+const dnfProxyConfigScript = `
+cleanup_dnf_proxy() {
+	if [ -n "${DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE:-}" ]; then
+		if [ -n "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP:-}" ] && [ -f "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP}" ]; then
+			cp -p "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP}" "${DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE}" 2>/dev/null || true
+			rm -f "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP}" 2>/dev/null || true
+		fi
+		unset DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE
+		unset DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP
+	fi
+}
+
+sync_dnf_proxy_trust_bundle() {
+	source_bundle="${1}"
+	trust_bundle="${DALEC_RPM_PROXY_TRUST_BUNDLE:-/etc/pki/tls/certs/ca-bundle.trust.crt}"
+	if [ ! -f "${source_bundle}" ] || [ ! -f "${trust_bundle}" ]; then
+		return 0
+	fi
+	if [ "${source_bundle}" = "${trust_bundle}" ]; then
+		return 0
+	fi
+	if ! grep -q '# buildkit proxy CA begin' "${source_bundle}" 2>/dev/null; then
+		return 0
+	fi
+	if grep -q '# buildkit proxy CA begin' "${trust_bundle}" 2>/dev/null; then
+		return 0
+	fi
+
+	mkdir -p /tmp/dalec
+	backup="${DALEC_RPM_PROXY_TRUST_BUNDLE_BACKUP:-/tmp/dalec/dnf-proxy-ca-bundle.trust.crt.bak}"
+	cp -p "${trust_bundle}" "${backup}"
+	sed -n '/# buildkit proxy CA begin/,/# buildkit proxy CA end/p' "${source_bundle}" >> "${trust_bundle}"
+	DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE="${trust_bundle}"
+	DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP="${backup}"
+}
+
+configure_dnf_proxy() {
+	restore_xtrace=0
+	case "$-" in
+		*x*) set +x; restore_xtrace=1 ;;
+	esac
+
+	if [ "${DALEC_DISABLE_PROXY_CONFIG:-}" = "1" ]; then
+		if [ "${restore_xtrace}" = "1" ]; then
+			set -x
+		fi
+		return 0
+	fi
+
+	http_proxy_value="${HTTP_PROXY:-${http_proxy:-}}"
+	https_proxy_value="${HTTPS_PROXY:-${https_proxy:-}}"
+	if [ -z "${http_proxy_value}" ] && [ -z "${https_proxy_value}" ]; then
+		if [ "${restore_xtrace}" = "1" ]; then
+			set -x
+		fi
+		return 0
+	fi
+
+	dnf_proxy_ca_bundle="${DALEC_RPM_PROXY_CA_BUNDLE:-}"
+	if [ -n "${dnf_proxy_ca_bundle}" ] && [ ! -f "${dnf_proxy_ca_bundle}" ]; then
+		dnf_proxy_ca_bundle=""
+	fi
+	if [ -z "${dnf_proxy_ca_bundle}" ]; then
+		for ca_bundle in \
+			/etc/ssl/certs/ca-certificates.crt \
+			/etc/pki/tls/certs/ca-bundle.crt \
+			/etc/ssl/ca-bundle.pem \
+			/etc/pki/tls/cacert.pem \
+			/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+			/etc/ssl/cert.pem
+		do
+			if [ -f "${ca_bundle}" ]; then
+				dnf_proxy_ca_bundle="${ca_bundle}"
+				break
+			fi
+		done
+	fi
+
+	if [ -n "${dnf_proxy_ca_bundle}" ]; then
+		sync_dnf_proxy_trust_bundle "${dnf_proxy_ca_bundle}"
+		install_flags="${install_flags} --setopt=sslverify=1 --setopt=sslcacert=${dnf_proxy_ca_bundle}"
+		export SSL_CERT_FILE="${dnf_proxy_ca_bundle}"
+		export CURL_CA_BUNDLE="${dnf_proxy_ca_bundle}"
+	fi
+
+	if [ "${restore_xtrace}" = "1" ]; then
+		set -x
+	fi
+}
+`
+
 func dnfCommand(cfg *dnfInstallConfig, releaseVer string, exe string, dnfSubCmd []string, dnfArgs []string) llb.RunOption {
 	const importKeysPath = "/tmp/dalec/internal/dnf/import-keys.sh"
 
@@ -145,6 +244,8 @@ func dnfCommand(cfg *dnfInstallConfig, releaseVer string, exe string, dnfSubCmd 
 	forceArch := cfg.forceArch
 	installScriptDt := `#!/usr/bin/env bash
 set -eux -o pipefail
+
+` + dnfProxyConfigScript + `
 
 import_keys_path="` + importKeysPath + `"
 cmd="` + exe + `"
@@ -170,6 +271,9 @@ if [ -n "$force_arch" ]; then
 	fi
 	install_flags="$install_flags --forcearch=$force_arch"
 fi
+
+configure_dnf_proxy
+trap cleanup_dnf_proxy EXIT
 
 $cmd $dnf_sub_cmd $install_flags "${@}"
 `
@@ -201,11 +305,14 @@ $cmd $dnf_sub_cmd $install_flags "${@}"
 
 	runOpts = append(runOpts, llb.Args(cmd))
 	runOpts = append(runOpts, cfg.mounts...)
+	if cfg.disableProxyConfig {
+		runOpts = append(runOpts, llb.AddEnv(dalec.BuildArgDalecDisableProxyConfig, "1"))
+	}
 
 	return dalec.WithRunOptions(runOpts...)
 }
 
-func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch string, buildPlat ocispecs.Platform) llb.RunOption {
+func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch string, buildPlat ocispecs.Platform, sOpt dalec.SourceOpts) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 		// Ensure the package manager runs on the build/executor platform (native),
 		// while installing into the mounted target rootfs via --installroot.
@@ -215,6 +322,7 @@ func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch 
 		installOpts := []DnfInstallOpt{
 			DnfAtRoot(rootfsPath),
 			DnfForceArch(targetArch),
+			DnfWithSourceOpts(sOpt),
 			DnfInstallWithConstraints([]llb.ConstraintsOpt{dalec.WithConstraint(&ei.Constraints)}),
 		}
 
@@ -305,6 +413,7 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 			DnfWithMounts(llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS"), llb.Readonly)),
 			DnfWithMounts(repoMounts),
 			DnfImportKeys(keyPaths),
+			DnfWithSourceOpts(sOpt),
 			DnfInstallWithConstraints(opts),
 		}
 
@@ -327,6 +436,7 @@ func (cfg *Config) DownloadDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetK
 	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
 	installOpts := []DnfInstallOpt{
+		DnfWithSourceOpts(sOpt),
 		DnfInstallWithConstraints(opts),
 	}
 

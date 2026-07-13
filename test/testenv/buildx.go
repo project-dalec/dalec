@@ -374,6 +374,12 @@ func WithHostNetworking(trc *TestRunnerConfig) {
 	})
 }
 
+func WithProxyNetwork(trc *TestRunnerConfig) {
+	trc.SolveOptFns = append(trc.SolveOptFns, func(so *client.SolveOpt) {
+		so.ProxyNetwork = true
+	})
+}
+
 func WithSocketProxies(proxies ...socketprovider.ProxyConfig) TestRunnerOpt {
 	return func(cfg *TestRunnerConfig) {
 		cfg.SocketProxies = append(cfg.SocketProxies, proxies...)

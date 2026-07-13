@@ -107,6 +107,7 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 		TargetPlatform: platform,
 		Resolver:       c,
 		Forward:        ForwarderFromClient(ctx, c),
+		BuildArgs:      dalec.DuplicateMap(dc.BuildArgs),
 		GetContext: func(ref string, opts ...llb.LocalOption) (*llb.State, error) {
 			if ref == dockerui.DefaultLocalNameContext {
 				return dc.MainContext(ctx, opts...)

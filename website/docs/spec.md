@@ -53,6 +53,8 @@ These arguments are set based on the default docker platform for the machine, *u
 No default value should be included for these build args. These args are opt-in. If you haven't listed them in the args section as shown above, Dalec will **not** substitute values for them.
 :::
 
+`DALEC_DISABLE_PROXY_CONFIG=1` can be passed as a frontend build arg to disable DALEC-managed proxy configuration for tools that need explicit proxy or CA setup. It does not need to be listed under `args`, and it does not disable BuildKit proxy networking itself.
+
 ## Metadata section
 
 Metadata section is used to define the metadata of the spec. This metadata includes the name, packager, vendor, license, website, and description of the spec.
@@ -273,6 +275,10 @@ TARGETOS is a built-in argument that Dalec will substitute with the target OS va
 
 :::tip
 Set `network_mode` to `sandbox` to allow internet access during build
+:::
+
+:::tip
+When BuildKit proxy networking is enabled for the solve, DALEC exec steps that have network access use that proxy path. APT-based targets configure apt/aptitude from BuildKit's injected proxy environment and CA bundle, DNF/TDNF-based targets configure the package manager CA bundle while using the injected proxy environment, and npm dependency generation configures npm/Node with the injected proxy and CA bundle. Go, pip, and Cargo dependency generation use their standard proxy environment and system trust behavior. `network_mode: none` remains offline.
 :::
 
 The input of a build is a directory with all [sources](#sources-section) laid out based on their source name.

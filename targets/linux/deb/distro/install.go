@@ -11,6 +11,108 @@ import (
 	"github.com/project-dalec/dalec/packaging/linux/deb"
 )
 
+const aptProxyConfigScript = `
+cleanup_apt_proxy() {
+	if [ -n "${DALEC_APT_PROXY_CONFIG_ACTIVE:-}" ]; then
+		rm -f "${DALEC_APT_PROXY_CONFIG_ACTIVE}" 2>/dev/null || true
+		if [ "${APT_CONFIG:-}" = "${DALEC_APT_PROXY_CONFIG_ACTIVE}" ]; then
+			if [ "${DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG_WAS_SET:-0}" = "1" ]; then
+				export APT_CONFIG="${DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG}"
+			else
+				unset APT_CONFIG
+			fi
+		fi
+		unset DALEC_APT_PROXY_CONFIG_ACTIVE
+		unset DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG
+		unset DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG_WAS_SET
+	fi
+}
+
+configure_apt_proxy() {
+	restore_xtrace=0
+	case "$-" in
+		*x*) set +x; restore_xtrace=1 ;;
+	esac
+
+	if [ "${DALEC_DISABLE_PROXY_CONFIG:-}" = "1" ]; then
+		if [ "${restore_xtrace}" = "1" ]; then
+			set -x
+		fi
+		return 0
+	fi
+
+	http_proxy_value="${HTTP_PROXY:-${http_proxy:-}}"
+	https_proxy_value="${HTTPS_PROXY:-${https_proxy:-}}"
+	if [ -z "${http_proxy_value}" ] && [ -z "${https_proxy_value}" ]; then
+		if [ "${restore_xtrace}" = "1" ]; then
+			set -x
+		fi
+		return 0
+	fi
+
+	apt_proxy_conf="${DALEC_APT_PROXY_CONFIG:-/tmp/dalec/apt-proxy.conf}"
+	apt_proxy_conf_dir="${apt_proxy_conf%/*}"
+	if [ -n "${apt_proxy_conf_dir}" ] && [ "${apt_proxy_conf_dir}" != "${apt_proxy_conf}" ]; then
+		mkdir -p "${apt_proxy_conf_dir}"
+	fi
+
+	write_apt_conf_string() {
+		key="${1}"
+		value="${2}"
+		if [ -z "${value}" ]; then
+			return 0
+		fi
+		escaped_value="$(printf '%s' "${value}" | sed 's/[\\"]/\\&/g')"
+		printf '%s "%s";\n' "${key}" "${escaped_value}"
+	}
+
+	if [ -n "${APT_CONFIG+x}" ]; then
+		DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG="${APT_CONFIG}"
+		DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG_WAS_SET=1
+	else
+		unset DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG
+		DALEC_APT_PROXY_CONFIG_OLD_APT_CONFIG_WAS_SET=0
+	fi
+
+	rm -f "${apt_proxy_conf}"
+	(
+		umask 077
+		{
+		write_apt_conf_string 'Acquire::http::Proxy' "${http_proxy_value}"
+		write_apt_conf_string 'Acquire::https::Proxy' "${https_proxy_value}"
+		for ca_bundle in \
+			/etc/ssl/certs/ca-certificates.crt \
+			/etc/pki/tls/certs/ca-bundle.crt \
+			/etc/ssl/ca-bundle.pem \
+			/etc/pki/tls/cacert.pem \
+			/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+			/etc/ssl/cert.pem
+		do
+			if [ -f "${ca_bundle}" ]; then
+				write_apt_conf_string 'Acquire::https::CaInfo' "${ca_bundle}"
+				break
+			fi
+		done
+		} > "${apt_proxy_conf}"
+	)
+
+	export APT_CONFIG="${apt_proxy_conf}"
+	DALEC_APT_PROXY_CONFIG_ACTIVE="${apt_proxy_conf}"
+
+	if [ "${restore_xtrace}" = "1" ]; then
+		set -x
+	fi
+}
+`
+
+func aptProxyConfig(sOpt dalec.SourceOpts) llb.RunOption {
+	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
+		if sOpt.DisableProxyConfig() {
+			llb.AddEnv(dalec.BuildArgDalecDisableProxyConfig, "1").SetRunOption(ei)
+		}
+	})
+}
+
 // AptInstall returns an [llb.RunOption] that uses apt to install the provided
 // packages.
 //
@@ -20,11 +122,15 @@ import (
 func AptInstall(packages []string, opts ...llb.ConstraintsOpt) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 		const installScript = `#!/usr/bin/env sh
-set -ex
+	set -ex
 
+	` + aptProxyConfigScript + `
 
-# Make sure any cached data from local repos is purged since this should not
-# be shared between builds.
+	configure_apt_proxy
+	trap cleanup_apt_proxy EXIT
+
+	# Make sure any cached data from local repos is purged since this should not
+	# be shared between builds.
 rm -f /var/lib/apt/lists/_*
 apt autoclean -y 
 
@@ -63,9 +169,11 @@ func AptInstallIntoRoot(rootfsPath string, packages []string, targetArch string,
 		ei.Constraints.Platform = &bp
 
 		const installScript = `#!/bin/sh
-set -eu
+	set -eu
 
-# Exit codes:
+	` + aptProxyConfigScript + `
+
+	# Exit codes:
 #   2 - Required environment variables missing
 #   3 - Target rootfs invalid / missing apt sources
 #   4 - Target rootfs dpkg arch mismatch
@@ -75,12 +183,14 @@ log() { echo "dalec(deb): $*" >&2; }
 
 ROOTFS="${DALEC_ROOTFS:-}"
 ARCH="${DALEC_TARGET_ARCH:-}"
-if [ -z "${ROOTFS}" ] || [ -z "${ARCH}" ]; then
-  log "DALEC_ROOTFS and DALEC_TARGET_ARCH must be set"
-  exit 2
-fi
+	if [ -z "${ROOTFS}" ] || [ -z "${ARCH}" ]; then
+	  log "DALEC_ROOTFS and DALEC_TARGET_ARCH must be set"
+	  exit 2
+	fi
+	configure_apt_proxy
+	trap cleanup_apt_proxy EXIT
 
-if [ -f "${ROOTFS}/var/lib/dpkg/arch" ]; then
+	if [ -f "${ROOTFS}/var/lib/dpkg/arch" ]; then
   native_arch="$(head -n1 "${ROOTFS}/var/lib/dpkg/arch" 2>/dev/null | tr -d '\n' || true)"
   if [ -n "${native_arch}" ] && [ "${native_arch}" != "${ARCH}" ]; then
     log "target rootfs dpkg arch (${native_arch}) != requested (${ARCH})"
@@ -192,7 +302,7 @@ cat > "${POLICY}" <<'EOF'
 exit 101
 EOF
 chmod +x "${POLICY}"
-trap 'rm -f "${POLICY}" 2>/dev/null || true' EXIT
+trap 'rm -f "${POLICY}" 2>/dev/null || true; cleanup_apt_proxy' EXIT
 
 chroot_configure() { chroot "${ROOTFS}" /usr/bin/dpkg --configure -a; }
 
@@ -252,9 +362,14 @@ func InstallLocalPkg(pkg llb.State, upgrade bool, opts ...llb.ConstraintsOpt) ll
 		// solution that will respect the constraints even if the solution involves
 		// pinning dependency packages to older versions.
 		const installScript = `#!/usr/bin/env sh
-set -ex
-# Make sure any cached data from local repos is purged since this should not
-# be shared between builds.
+	set -ex
+	` + aptProxyConfigScript + `
+
+	configure_apt_proxy
+	trap cleanup_apt_proxy EXIT
+
+	# Make sure any cached data from local repos is purged since this should not
+	# be shared between builds.
 rm -f /var/lib/apt/lists/_*
 apt autoclean -y
 
@@ -277,6 +392,7 @@ fi
 
 cleanup() {
 	exit_code=$?
+	cleanup_apt_proxy
 	if [ "${needs_cleanup}" = "1" ]; then
 		apt remove -y aptitude
 	fi
@@ -342,6 +458,7 @@ func (d *Config) InstallBuildDeps(ctx context.Context, sOpt dalec.SourceOpts, sp
 			dalec.WithConstraints(opts...),
 			customRepos,
 			InstallLocalPkg(pkg, false, opts...),
+			aptProxyConfig(sOpt),
 			dalec.WithMountedAptCache(d.AptCachePrefix, opts...),
 			deps.GetSourceLocation(in),
 		).Root()
@@ -364,6 +481,7 @@ func (d *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec *
 		return in.Run(
 			dalec.WithConstraints(opts...),
 			AptInstall(dalec.SortMapKeys(deps), opts...),
+			aptProxyConfig(sOpt),
 			withRepos,
 			dalec.WithMountedAptCache(d.AptCachePrefix, opts...),
 			deps.GetSourceLocation(in),
@@ -380,10 +498,15 @@ func (d *Config) DownloadDeps(worker llb.State, sOpt dalec.SourceOpts, spec *dal
 
 	scriptPath := "/tmp/dalec/internal/deb/download.sh"
 	const scriptSrc = `#!/usr/bin/env bash
-set -euxo pipefail
-cd /output
+	set -euxo pipefail
+	cd /output
 
-# Make sure any cached data from local repos is purged since this should not
+	` + aptProxyConfigScript + `
+
+	configure_apt_proxy
+	trap cleanup_apt_proxy EXIT
+
+	# Make sure any cached data from local repos is purged since this should not
 # be shared between builds.
 rm -f /var/lib/apt/lists/_*
 apt autoclean -y
@@ -413,6 +536,7 @@ done
 		llb.AddMount(scriptPath, scriptFile, llb.SourcePath("download.sh"), llb.Readonly),
 		llb.AddMount("/var/lib/dpkg", llb.Scratch(), llb.Tmpfs()),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
+		aptProxyConfig(sOpt),
 		dalec.WithMountedAptCache(d.AptCachePrefix, opts...),
 		dalec.WithConstraints(opts...),
 	).AddMount("/output", llb.Scratch())

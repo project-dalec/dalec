@@ -187,6 +187,7 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 		return targetBase.Run(
 			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
 			AptInstall(cfg.BuilderPackages, opts...),
+			aptProxyConfig(sOpt),
 			dalec.WithMountedAptCache(cfg.AptCachePrefix, opts...),
 		).Root()
 	}
@@ -205,6 +206,7 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 		dalec.WithConstraints(append(opts, llb.Platform(buildPlat))...),
 		llb.AddMount(rootfsMount, targetBase),
 		AptInstallIntoRoot(rootfsMount, cfg.BuilderPackages, targetArch, buildPlat),
+		aptProxyConfig(sOpt),
 		dalec.WithMountedAptCache(cacheKey),
 	)
 
@@ -228,6 +230,7 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 		return worker.Run(
 			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
 			AptInstall([]string{"erofs-utils"}, opts...),
+			aptProxyConfig(sOpts),
 			dalec.WithMountedAptCache(cfg.AptCachePrefix),
 		).Root()
 	}
@@ -251,6 +254,7 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 		dalec.WithConstraints(append(opts, llb.Platform(buildPlat))...),
 		llb.AddMount(rootfsMount, worker),
 		AptInstallIntoRoot(rootfsMount, []string{"erofs-utils"}, targetArch, buildPlat),
+		aptProxyConfig(sOpts),
 		dalec.WithMountedAptCache(cacheKey),
 	)
 
