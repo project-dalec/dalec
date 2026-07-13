@@ -202,4 +202,5 @@ func testSandboxBuildProxyNetwork(ctx context.Context, t *testing.T, cfg targetC
 	if !strings.Contains(logOutput, "proxy network requests:") {
 		t.Skip("BuildKit proxy network did not activate or did not record requests in this test builder")
 	}
+	assert.Assert(t, strings.Contains(logOutput, externalTestHost), logOutput)
 }

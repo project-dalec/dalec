@@ -144,12 +144,12 @@ rpm --import "${key_path}"
 const dnfProxyConfigScript = `
 cleanup_dnf_proxy() {
 	if [ -n "${DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE:-}" ]; then
-		if [ -n "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP:-}" ] && [ -f "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP}" ]; then
-			cp -p "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP}" "${DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE}" 2>/dev/null || true
-			rm -f "${DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP}" 2>/dev/null || true
+		tmp="$(mktemp)"
+		if sed '/# buildkit proxy CA begin/,/# buildkit proxy CA end/d' "${DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE}" > "${tmp}" 2>/dev/null; then
+			cat "${tmp}" > "${DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE}" 2>/dev/null || true
 		fi
+		rm -f "${tmp}" 2>/dev/null || true
 		unset DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE
-		unset DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP
 	fi
 }
 
@@ -169,12 +169,8 @@ sync_dnf_proxy_trust_bundle() {
 		return 0
 	fi
 
-	mkdir -p /tmp/dalec
-	backup="${DALEC_RPM_PROXY_TRUST_BUNDLE_BACKUP:-/tmp/dalec/dnf-proxy-ca-bundle.trust.crt.bak}"
-	cp -p "${trust_bundle}" "${backup}"
 	sed -n '/# buildkit proxy CA begin/,/# buildkit proxy CA end/p' "${source_bundle}" >> "${trust_bundle}"
 	DALEC_DNF_PROXY_TRUST_BUNDLE_ACTIVE="${trust_bundle}"
-	DALEC_DNF_PROXY_TRUST_BUNDLE_BACKUP="${backup}"
 }
 
 configure_dnf_proxy() {

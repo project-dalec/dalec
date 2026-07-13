@@ -122,17 +122,17 @@ func aptProxyConfig(sOpt dalec.SourceOpts) llb.RunOption {
 func AptInstall(packages []string, opts ...llb.ConstraintsOpt) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 		const installScript = `#!/usr/bin/env sh
-	set -ex
+set -ex
 
-	` + aptProxyConfigScript + `
+` + aptProxyConfigScript + `
 
-	configure_apt_proxy
-	trap cleanup_apt_proxy EXIT
+configure_apt_proxy
+trap cleanup_apt_proxy EXIT
 
-	# Make sure any cached data from local repos is purged since this should not
-	# be shared between builds.
+# Make sure any cached data from local repos is purged since this should not
+# be shared between builds.
 rm -f /var/lib/apt/lists/_*
-apt autoclean -y 
+apt autoclean -y
 
 # Remove any previously failed attempts to get repo data
 rm -rf /var/lib/apt/lists/partial/*

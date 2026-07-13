@@ -528,9 +528,15 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	defer cancelOutput()
 
 	ch := make(chan *client.SolveStatus)
-	go fowardToSolveStatusFn(ctx, ch, statusFn, cfg.SolveStatusFn)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		fowardToSolveStatusFn(ctx, ch, statusFn, cfg.SolveStatusFn)
+	})
 
-	defer close(ch)
+	defer func() {
+		close(ch)
+		wg.Wait()
+	}()
 
 	for status, err := range b.runTestWithStatus(ctx, t, f, opts...) {
 		if err != nil {

@@ -66,7 +66,7 @@ configure_dnf_proxy
 	assert.Assert(t, !strings.Contains(string(out), "secret"), string(out))
 }
 
-func TestCleanupDnfProxyRestoresTrustBundle(t *testing.T) {
+func TestCleanupDnfProxyRemovesOnlyProxyCABlock(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires a POSIX shell")
 	}
@@ -87,15 +87,16 @@ proxy ca
 install_flags="-y"
 configure_dnf_proxy
 grep -q 'buildkit proxy CA begin' "${DALEC_RPM_PROXY_TRUST_BUNDLE}"
+printf 'new ca\n' >> "${DALEC_RPM_PROXY_TRUST_BUNDLE}"
 cleanup_dnf_proxy
 if grep -q 'buildkit proxy CA begin' "${DALEC_RPM_PROXY_TRUST_BUNDLE}"; then exit 1; fi
+grep -q 'new ca' "${DALEC_RPM_PROXY_TRUST_BUNDLE}"
 `)
 	cmd.Env = []string{
 		"PATH=/bin:/usr/bin",
 		"HTTP_PROXY=http://proxy.example:3128",
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + caBundle,
 		"DALEC_RPM_PROXY_TRUST_BUNDLE=" + trustBundle,
-		"DALEC_RPM_PROXY_TRUST_BUNDLE_BACKUP=" + filepath.Join(dir, "backup"),
 	}
 
 	out, err := cmd.CombinedOutput()
