@@ -1,10 +1,14 @@
 package dalec
 
 import (
+	"context"
 	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
+	"github.com/moby/buildkit/client/llb"
 )
 
 func TestGomodReplaceUnmarshal(t *testing.T) {
@@ -295,4 +299,159 @@ func TestGomodEditArgs_DropRequire(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGomodDepsUsesGomodProxy(t *testing.T) {
+	t.Parallel()
+
+	const proxy = "http://proxy.example:5000,direct"
+	spec := testGomodProxySpec()
+	st := spec.GomodDeps(testGomodProxySourceOpts(proxy), llb.Scratch())
+	if st == nil {
+		t.Fatal("gomod generator succeeded but returned nil state")
+	}
+
+	env := gomodDownloadExecEnv(context.Background(), t, *st)
+	if !slices.Contains(env, "GOPROXY="+proxy) {
+		t.Fatalf("expected gomod exec env to include GOPROXY=%q, got %v", proxy, env)
+	}
+}
+
+func TestGomodDepsSkipsEmptyGomodProxy(t *testing.T) {
+	t.Parallel()
+
+	spec := testGomodProxySpec()
+	st := spec.GomodDeps(testGomodProxySourceOpts(""), llb.Scratch())
+	if st == nil {
+		t.Fatal("gomod generator succeeded but returned nil state")
+	}
+
+	env := gomodDownloadExecEnv(context.Background(), t, *st)
+	for _, item := range env {
+		if strings.HasPrefix(item, "GOPROXY=") {
+			t.Fatalf("expected empty gomod proxy to omit GOPROXY, got %v", env)
+		}
+	}
+}
+
+func TestGomodProxyBuildArgIsKnown(t *testing.T) {
+	t.Parallel()
+
+	spec := &Spec{}
+	err := spec.SubstituteArgs(map[string]string{
+		BuildArgDalecGomodProxy: "http://proxy.example:5000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGomodPatchUsesGomodProxy(t *testing.T) {
+	t.Parallel()
+
+	const proxy = "http://proxy.example:5000,direct"
+	gen := &SourceGenerator{
+		Gomod: &GeneratorGomod{
+			Edits: &GomodEdits{
+				Replace: []GomodReplace{
+					{Original: "example.com/old", Update: "example.com/new v1.2.3"},
+				},
+			},
+		},
+	}
+
+	st, err := (&Spec{}).generateGomodPatchStateForSource(gomodGeneratorOpts{
+		sourceName:  "src",
+		gen:         gen,
+		sourceState: llb.Scratch(),
+		worker:      llb.Scratch(),
+		extraEnvs: map[string]string{
+			"GOPROXY": proxy,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st == nil {
+		t.Fatal("gomod patch generation succeeded but returned nil state")
+	}
+
+	env := gomodPatchExecEnv(context.Background(), t, *st)
+	if !slices.Contains(env, "GOPROXY="+proxy) {
+		t.Fatalf("expected gomod patch exec env to include GOPROXY=%q, got %v", proxy, env)
+	}
+}
+
+func testGomodProxySpec() *Spec {
+	return &Spec{
+		Sources: map[string]Source{
+			"src": {
+				Git: &SourceGit{
+					URL:    "https://example.com/repo.git",
+					Commit: "0123456789abcdef",
+				},
+				Generate: []*SourceGenerator{
+					{Gomod: &GeneratorGomod{}},
+				},
+			},
+		},
+	}
+}
+
+func testGomodProxySourceOpts(proxy string) SourceOpts {
+	sOpt := SourceOpts{
+		GetContext: func(name string, opts ...llb.LocalOption) (*llb.State, error) {
+			st := llb.Local(name, opts...)
+			return &st, nil
+		},
+		GitCredHelperOpt: func() (llb.RunOption, error) {
+			st := llb.Scratch().File(llb.Mkfile("/frontend", 0o755, []byte("#!/usr/bin/env bash\nexit 0\n")))
+			return RunOptFunc(func(ei *llb.ExecInfo) {
+				llb.AddMount("/usr/local/bin/frontend", st, llb.SourcePath("/frontend")).SetRunOption(ei)
+			}), nil
+		},
+	}
+	if proxy != "" {
+		sOpt.ExtraEnvs = map[string]string{
+			"GOPROXY": proxy,
+		}
+	}
+	return sOpt
+}
+
+func gomodDownloadExecEnv(ctx context.Context, t *testing.T, st llb.State) []string {
+	t.Helper()
+
+	for _, op := range sourceOpsFromState(ctx, t, st) {
+		exec := op.GetExec()
+		if exec == nil {
+			continue
+		}
+
+		env := exec.Meta.Env
+		if slices.Contains(env, "GOPATH=/go") && slices.Contains(env, "TMP_GOMODCACHE=/tmp/dalec/gomod-proxy-cache") {
+			return env
+		}
+	}
+
+	t.Fatal("expected gomod download exec")
+	return nil
+}
+
+func gomodPatchExecEnv(ctx context.Context, t *testing.T, st llb.State) []string {
+	t.Helper()
+
+	for _, op := range sourceOpsFromState(ctx, t, st) {
+		exec := op.GetExec()
+		if exec == nil {
+			continue
+		}
+
+		if slices.Contains(exec.Meta.Args, "/gomod-patch.sh") {
+			return exec.Meta.Env
+		}
+	}
+
+	t.Fatal("expected gomod patch exec")
+	return nil
 }

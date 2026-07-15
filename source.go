@@ -155,6 +155,9 @@ type SourceOpts struct {
 	TargetPlatform   *ocispecs.Platform
 	GitCredHelperOpt func() (llb.RunOption, error)
 	SourceFilter     func() (SourceFilterConfig, error)
+	// ExtraEnvs contains environment variables that source generators may use
+	// while preparing generated dependency sources.
+	ExtraEnvs map[string]string
 }
 
 var errInvalidMountConfig = errors.New("invalid mount config")

@@ -70,7 +70,15 @@ func (s *Spec) preprocessGomodEdits(sOpt SourceOpts, worker llb.State, opts ...l
 			}
 
 			// Generate patch state (LLB state, not solved bytes)
-			patchSt, err := s.generateGomodPatchStateForSource(sourceName, gen, baseState, worker, credHelper, opts...)
+			patchSt, err := s.generateGomodPatchStateForSource(gomodGeneratorOpts{
+				sourceName:  sourceName,
+				gen:         gen,
+				sourceState: baseState,
+				worker:      worker,
+				credHelper:  credHelper,
+				extraEnvs:   sOpt.ExtraEnvs,
+				constraints: opts,
+			})
 			if err != nil {
 				return errors.Wrapf(err, "failed to generate gomod patch state for source %s", sourceName)
 			}
@@ -234,7 +242,11 @@ func buildGomodPatchEnv(editArgs string, paths []string, gen *SourceGenerator, s
 // generateGomodPatchStateForSource generates a single merged patch LLB state for all paths
 // in a gomod generator by running go mod edit + tidy and capturing the diff.
 // Returns the LLB state containing the patch file, or nil if no changes are needed.
-func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGenerator, baseState llb.State, worker llb.State, credHelper llb.RunOption, opts ...llb.ConstraintsOpt) (*llb.State, error) {
+func (s *Spec) generateGomodPatchStateForSource(gomodOpts gomodGeneratorOpts) (*llb.State, error) {
+	sourceName := gomodOpts.sourceName
+	gen := gomodOpts.gen
+	opts := gomodOpts.constraints
+
 	editArgs, err := gomodEditArgs(gen.Gomod)
 	if err != nil {
 		return nil, err
@@ -278,8 +290,8 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 	runOpts := []llb.RunOption{
 		llb.Args([]string{"/gomod-patch.sh"}),
 		llb.AddMount("/gomod-patch.sh", scriptState, llb.SourcePath("/gomod-patch.sh")),
-		llb.AddMount(workDir, baseState),
-		llb.AddMount(origWorkDir, baseState, llb.Readonly), // Read-only mount for diffing
+		llb.AddMount(workDir, gomodOpts.sourceState),
+		llb.AddMount(origWorkDir, gomodOpts.sourceState, llb.Readonly), // Read-only mount for diffing
 		llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
 		llb.AddMount(patchOutputDir, patchOutput), // Mount scratch state to capture patch file
 		llb.AddEnv("GOPATH", "/go"),
@@ -288,13 +300,17 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 		WithConstraints(opts...),
 	}
 
+	if gomodProxy := gomodOpts.gomodProxy(); gomodProxy != "" {
+		runOpts = append(runOpts, llb.AddEnv("GOPROXY", gomodProxy))
+	}
+
 	// Add environment variables from the script
 	for key, value := range SortedMapIter(envVars) {
 		runOpts = append(runOpts, llb.AddEnv(key, value))
 	}
 
-	if credHelper != nil {
-		runOpts = append(runOpts, credHelper)
+	if gomodOpts.credHelper != nil {
+		runOpts = append(runOpts, gomodOpts.credHelper)
 	}
 	if secretOpt := gen.withGomodSecretsAndSockets(); secretOpt != nil {
 		runOpts = append(runOpts, secretOpt)
@@ -304,7 +320,7 @@ func (s *Spec) generateGomodPatchStateForSource(sourceName string, gen *SourceGe
 	// The AddMount call returns the state of the patchOutput scratch.
 	// Since we mounted at patchOutputDir and wrote to patchPath,
 	// the file in the mount will be at gomodPatchFilename (path relative to mount point)
-	patchMount := worker.Run(runOpts...).AddMount(patchOutputDir, patchOutput)
+	patchMount := gomodOpts.worker.Run(runOpts...).AddMount(patchOutputDir, patchOutput)
 
 	// Create a scratch state with the patch file at a generic location
 	// The sourceFilters will handle renaming it to the final source name

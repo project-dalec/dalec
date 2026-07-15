@@ -134,6 +134,13 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 		return loadSourceFilterConfig(ctx, c, sOpt.GetContext)
 	})
 
+	if gomodProxy, ok := GetBuildArg(c, dalec.BuildArgDalecGomodProxy); ok {
+		if sOpt.ExtraEnvs == nil {
+			sOpt.ExtraEnvs = map[string]string{}
+		}
+		sOpt.ExtraEnvs["GOPROXY"] = gomodProxy
+	}
+
 	return sOpt
 }
 
