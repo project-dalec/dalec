@@ -319,6 +319,30 @@ func TestTemplateSources(t *testing.T) {
 }
 
 func TestTemplate_Artifacts(t *testing.T) {
+	t.Run("test opt ownership and capabilities", func(t *testing.T) {
+		t.Parallel()
+		w := &specWrapper{Spec: &dalec.Spec{
+			Artifacts: dalec.Artifacts{
+				Opt: map[string]dalec.ArtifactConfig{
+					"src/helper": {
+						SubPath: "my-package/bin",
+						User:    "myuser",
+						Group:   "mygroup",
+						LinuxCapabilities: []dalec.ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true, Permitted: true},
+						},
+					},
+				},
+			},
+		}}
+
+		assert.Equal(t, w.Post().String(), `%post
+chown -R myuser /opt/my-package/bin/helper
+chgrp -R mygroup /opt/my-package/bin/helper
+setcap 'cap_net_bind_service=ep' /opt/my-package/bin/helper
+
+`)
+	})
 
 	t.Run("test systemd post", func(t *testing.T) {
 		w := &specWrapper{Spec: &dalec.Spec{

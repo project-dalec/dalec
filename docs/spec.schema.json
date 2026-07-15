@@ -393,6 +393,16 @@
 					],
 					"description": "Manpages is the list of manpages to include in the package."
 				},
+				"opt": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ArtifactConfig"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Opt is the list of files to install under /opt."
+				},
 				"systemd": {
 					"$ref": "#/$defs/SystemdConfiguration",
 					"description": "Systemd is the list of systemd units and dropin files for the package"

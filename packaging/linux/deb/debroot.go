@@ -31,6 +31,7 @@ const (
 	DocsPath                  = "/usr/share/doc"
 	LibsPath                  = "/usr/lib"
 	LibexecPath               = "/usr/libexec"
+	OptPath                   = "/opt"
 	DataDirsPath              = "/usr/share"
 )
 
@@ -272,6 +273,7 @@ func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) [
 	checkAndWritePerms(artifacts.Docs, filepath.Join(DocsPath, spec.Name))
 	checkAndWritePerms(artifacts.Libs, LibsPath)
 	checkAndWritePerms(artifacts.Libexec, LibexecPath)
+	checkAndWritePerms(artifacts.Opt, OptPath)
 	checkAndWritePerms(artifacts.DataDirs, DataDirsPath)
 
 	if artifacts.Directories != nil {
@@ -580,6 +582,16 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 		}
 	}
 
+	if len(artifacts.Opt) > 0 {
+		sorted := dalec.SortMapKeys(artifacts.Opt)
+		for _, key := range sorted {
+			cfg := artifacts.Opt[key]
+			resolved := cfg.ResolveName(key)
+			targetDir := filepath.Join(OptPath, cfg.SubPath)
+			writeInstall(key, targetDir, resolved)
+		}
+	}
+
 	if len(artifacts.Libs) > 0 {
 		sorted := dalec.SortMapKeys(artifacts.Libs)
 		for _, key := range sorted {
@@ -713,6 +725,7 @@ func setArtifactOwnershipPostInst(w *bytes.Buffer, spec *dalec.Spec, target stri
 	apply(artifacts.Docs, filepath.Join(DocsPath, spec.Name))
 	apply(artifacts.Libs, LibsPath)
 	apply(artifacts.Libexec, LibexecPath)
+	apply(artifacts.Opt, OptPath)
 	apply(artifacts.DataDirs, DataDirsPath)
 
 	applyDir := func(dirs map[string]dalec.ArtifactDirConfig, root string) {
@@ -769,4 +782,5 @@ func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target s
 	apply(artifacts.Binaries, BinariesPath)
 	apply(artifacts.Libs, LibsPath)
 	apply(artifacts.Libexec, LibexecPath)
+	apply(artifacts.Opt, OptPath)
 }

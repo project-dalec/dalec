@@ -103,6 +103,7 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 		checkPerms(artifacts.Docs) ||
 		checkPerms(artifacts.Libs) ||
 		checkPerms(artifacts.Libexec) ||
+		checkPerms(artifacts.Opt) ||
 		checkPerms(artifacts.DataDirs) ||
 		checkDirPerms(artifacts.Directories.GetConfig()) ||
 		checkDirPerms(artifacts.Directories.GetState())

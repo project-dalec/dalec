@@ -87,6 +87,30 @@ artifacts:
 You may use a trailing wildcard to specify multiple binaries in a directory,
 though behavior may differ between different OS's/distros.
 
+### Opt
+
+Opt files are installed under `/opt`. Dalec does not add a package-specific
+directory, so use `subpath` to select the desired layout. This supports both
+package-specific paths such as `/opt/<package>/bin` and shared paths such as
+`/opt/bin`.
+
+Opt files are a mapping of file path to [artifact configuration](#artifact-configuration).
+For example:
+
+```yaml
+name: my_package
+
+artifacts:
+  opt:
+    src/my_bin:
+      subpath: my_package/bin
+    src/helper:
+      subpath: bin
+```
+
+This installs `my_bin` as `/opt/my_package/bin/my_bin` and `helper` as
+`/opt/bin/helper`.
+
 ### Manpages
 
 Manpages is short for manual pages.

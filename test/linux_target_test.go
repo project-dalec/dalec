@@ -3420,7 +3420,7 @@ func Value() string {
 		})
 	})
 
-	t.Run("test libexec file installation", func(t *testing.T) {
+	t.Run("test libexec and opt file installation", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 
@@ -3496,6 +3496,22 @@ func Value() string {
 						SubPath: "libexec-test/abcdefg",
 					},
 				},
+				Opt: map[string]dalec.ArtifactConfig{
+					"no_name_no_subpath": {},
+					"name_only": {
+						Name: "this_is_the_name_only",
+					},
+					"name_and_subpath": {
+						SubPath: "subpath",
+						Name:    "custom_name",
+					},
+					"subpath_only": {
+						SubPath: "custom",
+					},
+					"nested_subpath": {
+						SubPath: "opt-test/abcdefg",
+					},
+				},
 			},
 		}
 
@@ -3521,6 +3537,21 @@ func Value() string {
 				t.Fatal(err)
 			}
 			if err := validatePathAndPermissions(ctx, ref, "/usr/libexec/libexec-test/abcdefg/nested_subpath", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := validatePathAndPermissions(ctx, ref, "/opt/no_name_no_subpath", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := validatePathAndPermissions(ctx, ref, "/opt/this_is_the_name_only", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := validatePathAndPermissions(ctx, ref, "/opt/subpath/custom_name", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := validatePathAndPermissions(ctx, ref, "/opt/custom/subpath_only", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := validatePathAndPermissions(ctx, ref, "/opt/opt-test/abcdefg/nested_subpath", 0o755); err != nil {
 				t.Fatal(err)
 			}
 		})

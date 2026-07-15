@@ -244,6 +244,11 @@ func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
 			return out
 		}
 	}
+	for _, cfg := range artifacts.Opt {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
 
 	return ""
 }
@@ -763,6 +768,13 @@ func (w *specWrapper) getArtifactOwnership() string {
 			setArtifactOwnership(`/%{_bindir}`, p, &cfg)
 		}
 	}
+	if artifacts.Opt != nil {
+		optKeys := dalec.SortMapKeys(artifacts.Opt)
+		for _, p := range optKeys {
+			cfg := artifacts.Opt[p]
+			setArtifactOwnership(`/opt`, p, &cfg)
+		}
+	}
 
 	return b.String()
 }
@@ -810,6 +822,13 @@ func (w *specWrapper) getArtifactCapabilities() string {
 		for _, k := range libexecKeys {
 			cfg := artifacts.Libexec[k]
 			setArtifactCapabilities(`/%{_libexecdir}`, k, &cfg)
+		}
+	}
+	if artifacts.Opt != nil {
+		optKeys := dalec.SortMapKeys(artifacts.Opt)
+		for _, k := range optKeys {
+			cfg := artifacts.Opt[k]
+			setArtifactCapabilities(`/opt`, k, &cfg)
 		}
 	}
 
@@ -971,6 +990,14 @@ func (w *specWrapper) Install() fmt.Stringer {
 		}
 	}
 
+	if artifacts.Opt != nil {
+		optFileKeys := dalec.SortMapKeys(artifacts.Opt)
+		for _, k := range optFileKeys {
+			opt := artifacts.Opt[k]
+			copyArtifact(`%{buildroot}/opt`, k, &opt)
+		}
+	}
+
 	configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
 	for _, c := range configKeys {
 		cfg := artifacts.ConfigFiles[c]
@@ -1084,6 +1111,21 @@ func (w *specWrapper) Files() fmt.Stringer {
 			// Use %caps macro if capabilities are set and there's no chown
 			capString := dalec.CapabilitiesString(le.LinuxCapabilities)
 			if capString != "" && le.User == "" && le.Group == "" {
+				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
+			} else {
+				fmt.Fprintln(b, fullPath)
+			}
+		}
+	}
+
+	if artifacts.Opt != nil {
+		optKeys := dalec.SortMapKeys(artifacts.Opt)
+		for _, k := range optKeys {
+			opt := artifacts.Opt[k]
+			targetDir := filepath.Join(`/opt`, opt.SubPath)
+			fullPath := filepath.Join(targetDir, opt.ResolveName(k))
+			capString := dalec.CapabilitiesString(opt.LinuxCapabilities)
+			if capString != "" && opt.User == "" && opt.Group == "" {
 				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
 			} else {
 				fmt.Fprintln(b, fullPath)
