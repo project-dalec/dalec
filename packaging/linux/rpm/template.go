@@ -769,9 +769,7 @@ func (w *specWrapper) getArtifactOwnership() string {
 		}
 	}
 	if artifacts.Opt != nil {
-		optKeys := dalec.SortMapKeys(artifacts.Opt)
-		for _, p := range optKeys {
-			cfg := artifacts.Opt[p]
+		for p, cfg := range dalec.SortedMapIter(artifacts.Opt) {
 			setArtifactOwnership(`/opt`, p, &cfg)
 		}
 	}
@@ -825,9 +823,7 @@ func (w *specWrapper) getArtifactCapabilities() string {
 		}
 	}
 	if artifacts.Opt != nil {
-		optKeys := dalec.SortMapKeys(artifacts.Opt)
-		for _, k := range optKeys {
-			cfg := artifacts.Opt[k]
+		for k, cfg := range dalec.SortedMapIter(artifacts.Opt) {
 			setArtifactCapabilities(`/opt`, k, &cfg)
 		}
 	}
@@ -991,9 +987,7 @@ func (w *specWrapper) Install() fmt.Stringer {
 	}
 
 	if artifacts.Opt != nil {
-		optFileKeys := dalec.SortMapKeys(artifacts.Opt)
-		for _, k := range optFileKeys {
-			opt := artifacts.Opt[k]
+		for k, opt := range dalec.SortedMapIter(artifacts.Opt) {
 			copyArtifact(`%{buildroot}/opt`, k, &opt)
 		}
 	}
@@ -1119,9 +1113,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 	}
 
 	if artifacts.Opt != nil {
-		optKeys := dalec.SortMapKeys(artifacts.Opt)
-		for _, k := range optKeys {
-			opt := artifacts.Opt[k]
+		for k, opt := range dalec.SortedMapIter(artifacts.Opt) {
 			targetDir := filepath.Join(`/opt`, opt.SubPath)
 			fullPath := filepath.Join(targetDir, opt.ResolveName(k))
 			capString := dalec.CapabilitiesString(opt.LinuxCapabilities)

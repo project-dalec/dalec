@@ -5808,6 +5808,20 @@ echo "This is a third test binary"
 					},
 				},
 			},
+			Opt: map[string]dalec.ArtifactConfig{
+				"/tmp/ping2": {
+					Name:    "ping-opt",
+					SubPath: "test-capabilities",
+					User:    "testuser",
+					LinuxCapabilities: []dalec.ArtifactCapability{
+						{
+							Name:      "cap_net_raw",
+							Effective: true,
+							Permitted: true,
+						},
+					},
+				},
+			},
 			Users: []dalec.AddUserConfig{
 				{
 					Name: "testuser",
@@ -5876,6 +5890,20 @@ echo "This is a third test binary"
 						Command: "stat -c '%G' /usr/bin/ping3",
 						Stdout: dalec.CheckOutput{
 							Contains: []string{"testgroup\n"},
+						},
+					},
+					{
+						Command: "getcap /opt/test-capabilities/ping-opt",
+						Stdout: dalec.CheckOutput{
+							Contains: []string{
+								"/opt/test-capabilities/ping-opt", "cap_net_raw", "ep",
+							},
+						},
+					},
+					{
+						Command: "stat -c '%U' /opt/test-capabilities/ping-opt",
+						Stdout: dalec.CheckOutput{
+							Equals: "testuser\n",
 						},
 					},
 				},
