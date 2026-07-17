@@ -14,8 +14,7 @@ func validateRuntimeDeps(s *dalec.Spec, targetKey string) error {
 		errs = append(errs, fmt.Errorf("package %q: targets with windows output images cannot have runtime dependencies", s.Name))
 	}
 
-	subpackages := s.GetSubPackages(targetKey)
-	for key, pkg := range dalec.SortedMapIter(subpackages) {
+	for key, pkg := range dalec.GetSubPackagesForTarget(s, targetKey) {
 		if len(pkg.Dependencies.GetRuntime()) == 0 {
 			continue
 		}
