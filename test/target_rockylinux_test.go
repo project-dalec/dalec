@@ -59,6 +59,7 @@ func TestRockylinux8(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
+			Key:       "rockylinux8",
 			Package:   "rockylinux8/rpm",
 			Container: "rockylinux8/container",
 			DepsOnly:  "rockylinux8/container/depsonly",
