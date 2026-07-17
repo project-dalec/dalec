@@ -143,33 +143,15 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 
 		// Install every package's binaries (primary + supplemental) into the
 		// image, matching the linux container target which installs all packages
-		// produced for the target.
-		//
-		// The primary package's binaries are at the root of bin, alongside the
-		// supplemental package subdirs. Always copy the root contents (excluding
-		// those subdirs) so the build step is realized in the graph even when the
-		// primary package has no binaries. Otherwise buildkit would prune the
-		// build, and specs that rely on a failing build step would wrongly succeed.
+		// produced for the target. Always copy the primary package so the build
+		// step is realized even when it has no binaries.
 		pkgs := windowsPackages(spec, targetKey)
-
-		var subPackageDirs []string
+		out := baseImage
 		for _, pkg := range pkgs {
-			if !pkg.Primary {
-				subPackageDirs = append(subPackageDirs, pkg.Name)
-			}
-		}
-
-		out := baseImage.File(
-			llb.Copy(bin, "/", windowsSystemDir, dalec.WithDirContentsOnly(), llb.WithExcludePatterns(subPackageDirs)),
-			pg,
-		)
-
-		// Flatten each supplemental package's binaries into the system directory.
-		for _, pkg := range pkgs {
-			if pkg.Primary || len(pkg.Binaries) == 0 {
+			if !pkg.Primary && len(pkg.Binaries) == 0 {
 				continue
 			}
-			out = out.File(llb.Copy(bin, "/"+pkg.Name+"/", windowsSystemDir, dalec.WithDirContentsOnly()), pg)
+			out = out.File(llb.Copy(bin, pkg.internalDir(), windowsSystemDir, dalec.WithDirContentsOnly()), pg)
 		}
 		out = out.With(copySymlinks(spec.GetImagePost(targetKey), pg))
 

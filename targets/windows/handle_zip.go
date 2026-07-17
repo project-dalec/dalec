@@ -171,6 +171,8 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 		return dalec.ErrorState(worker, err)
 	}
 
+	packageOpts := append([]llb.ConstraintsOpt(nil), opts...)
+
 	// Apply source map constraints for build steps
 	opts = append(opts, spec.Build.Steps.GetSourceLocation(worker))
 
@@ -182,9 +184,10 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 	patched := dalec.PatchSources(worker, spec, sources, opts...)
 	buildScript := createBuildScript(spec, opts...)
 	script := generateInvocationScript(spec, targetKey)
+	pkgs := windowsPackages(spec, targetKey)
 
 	builder := worker.With(dalec.SetBuildNetworkMode(spec))
-	st := builder.Run(
+	runOpts := []llb.RunOption{
 		dalec.ShArgs(script.String()),
 		llb.Dir("/build"),
 		withSourcesMounted("/build", patched, spec.Sources, opts...),
@@ -206,33 +209,41 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 				ei.State = ei.State.With(llb.AddEnv(k, v))
 			}
 		}),
-	).AddMount(outputDir, llb.Scratch())
+	}
+	for _, pkg := range pkgs {
+		runOpts = append(runOpts, llb.AddMount(pkg.buildOutputDir(), llb.Scratch()))
+	}
 
-	return frontend.MaybeSign(ctx, client, st, spec, targetKey, sOpt)
+	built := builder.Run(runOpts...)
+	packageStates := make([]llb.State, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		original := built.GetMount(pkg.buildOutputDir())
+		signed := frontend.MaybeSign(ctx, client, original, spec, targetKey, sOpt, packageOpts...)
+
+		// Signers may return only changed files. Preserve the original package
+		// and overlay the signer output so replacements win.
+		packageState := original.File(llb.Copy(signed, "/", "/"), packageOpts...)
+		packageStates = append(packageStates, llb.Scratch().File(
+			llb.Copy(packageState, "/", pkg.internalDir(), dalec.WithCreateDestPath()),
+			packageOpts...,
+		))
+	}
+
+	return dalec.MergeAtPath(llb.Scratch(), packageStates, "/", packageOpts...)
 }
 
 func getZipLLB(worker llb.State, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, artifacts llb.State, opts ...llb.ConstraintsOpt) llb.State {
 	const artifactsDir = "/tmp/artifacts"
 
 	// Each package is zipped into a separate
-	// "<name>_<version>-<revision>_<arch>.zip" file. The primary package's
-	// artifacts live at the root of the artifacts dir; supplemental packages
-	// live under their own subdirectory.
+	// "<name>_<version>-<revision>_<arch>.zip" file.
 	script := &strings.Builder{}
 	fmt.Fprintln(script, "set -ex")
 	for _, pkg := range windowsPackages(spec, targetKey) {
 		fileName := fmt.Sprintf("%s_%s-%s_%s.zip", pkg.Name, spec.Version, spec.Revision, platform.Architecture)
 		outName := filepath.Join(outputDir, fileName)
-		if pkg.Primary {
-			// Zip only the top-level files so the supplemental package subdirs
-			// are not pulled into the primary archive. This also handles the
-			// package signer, which replaces the artifacts with a flat set of
-			// files at the root.
-			fmt.Fprintf(script, "(cd %q && find . -maxdepth 1 -type f -exec zip %q {} +)\n", artifactsDir, outName)
-			continue
-		}
-		srcDir := path.Join(artifactsDir, pkg.Name)
-		fmt.Fprintf(script, "(cd %q && zip %q *)\n", srcDir, outName)
+		srcDir := path.Join(artifactsDir, pkg.internalDir())
+		fmt.Fprintf(script, "(cd %q && find . -maxdepth 1 -type f -exec zip %q {} +)\n", srcDir, outName)
 	}
 
 	zipped := worker.Run(
@@ -246,16 +257,24 @@ func getZipLLB(worker llb.State, platform *ocispecs.Platform, spec *dalec.Spec, 
 // windowsPackage pairs a resolved package name with the binary artifacts that
 // go into it for a windows target.
 type windowsPackage struct {
+	// Index is the package's deterministic position: primary first, then
+	// supplemental packages sorted by map key.
+	Index int
 	// Name is the resolved package name (primary package name or the
 	// supplemental package's resolved name).
 	Name string
 	// Binaries are the binary artifacts that belong to this package.
 	Binaries map[string]dalec.ArtifactConfig
-	// Primary is true for the spec's primary package. The primary package's
-	// artifacts are staged at the root of the staging dir (matching the
-	// original single-package layout); supplemental packages are staged under
-	// their own subdirectory.
+	// Primary is true for the spec's primary package.
 	Primary bool
+}
+
+func (p windowsPackage) buildOutputDir() string {
+	return path.Join(outputDir, fmt.Sprintf("%d", p.Index))
+}
+
+func (p windowsPackage) internalDir() string {
+	return path.Join("/", fmt.Sprintf("%d", p.Index))
 }
 
 // windowsPackages returns the ordered set of packages produced for a windows
@@ -263,6 +282,7 @@ type windowsPackage struct {
 // by their map key. Windows packages only ship binaries.
 func windowsPackages(spec *dalec.Spec, targetKey string) []windowsPackage {
 	pkgs := []windowsPackage{{
+		Index:    0,
 		Name:     spec.Name,
 		Binaries: spec.GetArtifacts(targetKey).Binaries,
 		Primary:  true,
@@ -276,6 +296,7 @@ func windowsPackages(spec *dalec.Spec, targetKey string) []windowsPackage {
 			binaries = p.Artifacts.Binaries
 		}
 		pkgs = append(pkgs, windowsPackage{
+			Index:    len(pkgs),
 			Name:     p.ResolvedName(spec.Name, key),
 			Binaries: binaries,
 		})
@@ -290,18 +311,11 @@ func generateInvocationScript(spec *dalec.Spec, targetKey string) *strings.Build
 	fmt.Fprintln(script, "set -ex")
 	fmt.Fprintf(script, "/tmp/scripts/%s\n", buildScriptName)
 
-	// Stage each package's binaries so the zip and container targets can address
-	// them. The primary package is staged at the root of outputDir (the original
-	// single-package layout, which the package signer also flattens to); each
-	// supplemental package is staged under its own "outputDir/<name>" subdir.
-	// Files are copied (not moved) so a build output shared by multiple packages
-	// stays available.
+	// Each output path is a separate scratch mount, so every package state has
+	// the flat root expected by signers. Files are copied (not moved) so a build
+	// output shared by multiple packages stays available.
 	for _, pkg := range windowsPackages(spec, targetKey) {
-		destDir := outputDir
-		if !pkg.Primary {
-			destDir = path.Join(outputDir, pkg.Name)
-		}
-		writePackageArtifacts(script, destDir, pkg)
+		writePackageArtifacts(script, pkg.buildOutputDir(), pkg)
 	}
 
 	return script
