@@ -289,8 +289,7 @@ func windowsPackages(spec *dalec.Spec, targetKey string) []windowsPackage {
 	}}
 
 	sub := spec.GetSubPackages(targetKey)
-	for _, key := range dalec.SortMapKeys(sub) {
-		p := sub[key]
+	for key, p := range dalec.SortedMapIter(sub) {
 		var binaries map[string]dalec.ArtifactConfig
 		if p.Artifacts != nil {
 			binaries = p.Artifacts.Binaries
@@ -326,9 +325,7 @@ func generateInvocationScript(spec *dalec.Spec, targetKey string) *strings.Build
 func writePackageArtifacts(script *strings.Builder, destDir string, pkg windowsPackage) {
 	fmt.Fprintf(script, "mkdir -p '%s'\n", destDir)
 
-	sorted := dalec.SortMapKeys(pkg.Binaries)
-	for _, bin := range sorted {
-		config := pkg.Binaries[bin]
+	for bin, config := range dalec.SortedMapIter(pkg.Binaries) {
 		dest := path.Join(destDir, config.ResolveName(bin))
 		fmt.Fprintf(script, "cp -r '%s' '%s'\n", bin, dest)
 		if config.Permissions.Perm() != 0 {

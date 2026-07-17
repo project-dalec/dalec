@@ -15,8 +15,7 @@ func validateRuntimeDeps(s *dalec.Spec, targetKey string) error {
 	}
 
 	subpackages := s.GetSubPackages(targetKey)
-	for _, key := range dalec.SortMapKeys(subpackages) {
-		pkg := subpackages[key]
+	for key, pkg := range dalec.SortedMapIter(subpackages) {
 		if len(pkg.Dependencies.GetRuntime()) == 0 {
 			continue
 		}
