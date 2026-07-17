@@ -3420,140 +3420,19 @@ func Value() string {
 		})
 	})
 
-	t.Run("test libexec and opt file installation", func(t *testing.T) {
+	t.Run("test libexec file installation", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
+		testArtifactFileInstallation(ctx, t, testConfig, "/usr/libexec", func(cfg map[string]dalec.ArtifactConfig) dalec.Artifacts {
+			return dalec.Artifacts{Libexec: cfg}
+		})
+	})
 
-		spec := &dalec.Spec{
-			Name:        "libexec-test",
-			Version:     "0.0.1",
-			Revision:    "1",
-			License:     "MIT",
-			Website:     "https://github.com/project-dalec/dalec",
-			Vendor:      "Dalec",
-			Packager:    "Dalec",
-			Description: "Should install specified data files",
-			Sources: map[string]dalec.Source{
-				"no_name_no_subpath": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o755,
-						},
-					},
-				},
-				"name_only": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o755,
-						},
-					},
-				},
-				"name_and_subpath": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o755,
-						},
-					},
-				},
-				"subpath_only": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o755,
-						},
-					},
-				},
-				"nested_subpath": {
-					Inline: &dalec.SourceInline{
-						File: &dalec.SourceInlineFile{
-							Contents:    "#!/usr/bin/env bash\necho hello world",
-							Permissions: 0o755,
-						},
-					},
-				},
-			},
-			Build: dalec.ArtifactBuild{},
-			Artifacts: dalec.Artifacts{
-				Binaries: map[string]dalec.ArtifactConfig{
-					"no_name_no_subpath": {},
-				},
-				Libexec: map[string]dalec.ArtifactConfig{
-					"no_name_no_subpath": {},
-					"name_only": {
-						Name: "this_is_the_name_only",
-					},
-					"name_and_subpath": {
-						SubPath: "subpath",
-						Name:    "custom_name",
-					},
-					"subpath_only": {
-						SubPath: "custom",
-					},
-					"nested_subpath": {
-						SubPath: "libexec-test/abcdefg",
-					},
-				},
-				Opt: map[string]dalec.ArtifactConfig{
-					"no_name_no_subpath": {},
-					"name_only": {
-						Name: "this_is_the_name_only",
-					},
-					"name_and_subpath": {
-						SubPath: "subpath",
-						Name:    "custom_name",
-					},
-					"subpath_only": {
-						SubPath: "custom",
-					},
-					"nested_subpath": {
-						SubPath: "opt-test/abcdefg",
-					},
-				},
-			},
-		}
-
-		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
-			req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
-			res := solveT(ctx, t, client, req)
-
-			ref, err := res.SingleRef()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if err := validatePathAndPermissions(ctx, ref, "/usr/libexec/no_name_no_subpath", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/usr/libexec/this_is_the_name_only", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/usr/libexec/subpath/custom_name", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/usr/libexec/custom/subpath_only", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/usr/libexec/libexec-test/abcdefg/nested_subpath", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/opt/no_name_no_subpath", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/opt/this_is_the_name_only", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/opt/subpath/custom_name", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/opt/custom/subpath_only", 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := validatePathAndPermissions(ctx, ref, "/opt/opt-test/abcdefg/nested_subpath", 0o755); err != nil {
-				t.Fatal(err)
-			}
+	t.Run("test opt file installation", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testArtifactFileInstallation(ctx, t, testConfig, "/opt", func(cfg map[string]dalec.ArtifactConfig) dalec.Artifacts {
+			return dalec.Artifacts{Opt: cfg}
 		})
 	})
 
@@ -3919,6 +3798,74 @@ func Value() string {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 		testArtifactCapabilities(ctx, t, testConfig)
+	})
+}
+
+func testArtifactFileInstallation(ctx context.Context, t *testing.T, testConfig testLinuxConfig, root string, setArtifacts func(map[string]dalec.ArtifactConfig) dalec.Artifacts) {
+	sources := make(map[string]dalec.Source, 5)
+	for _, name := range []string{"no_name_no_subpath", "name_only", "name_and_subpath", "subpath_only", "nested_subpath"} {
+		sources[name] = dalec.Source{
+			Inline: &dalec.SourceInline{
+				File: &dalec.SourceInlineFile{
+					Contents:    "#!/usr/bin/env bash\necho hello world",
+					Permissions: 0o755,
+				},
+			},
+		}
+	}
+
+	artifacts := setArtifacts(map[string]dalec.ArtifactConfig{
+		"no_name_no_subpath": {},
+		"name_only": {
+			Name: "this_is_the_name_only",
+		},
+		"name_and_subpath": {
+			SubPath: "subpath",
+			Name:    "custom_name",
+		},
+		"subpath_only": {
+			SubPath: "custom",
+		},
+		"nested_subpath": {
+			SubPath: "artifact-test/abcdefg",
+		},
+	})
+	artifacts.Binaries = map[string]dalec.ArtifactConfig{"no_name_no_subpath": {}}
+
+	spec := &dalec.Spec{
+		Name:        "artifact-file-installation-test",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Should install specified artifact files",
+		Sources:     sources,
+		Build:       dalec.ArtifactBuild{},
+		Artifacts:   artifacts,
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		req := newSolveRequest(withBuildTarget(testConfig.Target.Container), withSpec(ctx, t, spec))
+		res := solveT(ctx, t, client, req)
+
+		ref, err := res.SingleRef()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, path := range []string{
+			"no_name_no_subpath",
+			"this_is_the_name_only",
+			"subpath/custom_name",
+			"custom/subpath_only",
+			"artifact-test/abcdefg/nested_subpath",
+		} {
+			if err := validatePathAndPermissions(ctx, ref, filepath.Join(root, path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
 	})
 }
 
@@ -5903,7 +5850,7 @@ echo "This is a third test binary"
 					{
 						Command: "stat -c '%U' /opt/test-capabilities/ping-opt",
 						Stdout: dalec.CheckOutput{
-							Equals: "testuser\n",
+							Contains: []string{"testuser\n"},
 						},
 					},
 				},

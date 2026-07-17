@@ -582,12 +582,10 @@ func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string
 		}
 	}
 
-	if len(artifacts.Opt) > 0 {
-		for key, cfg := range dalec.SortedMapIter(artifacts.Opt) {
-			resolved := cfg.ResolveName(key)
-			targetDir := filepath.Join(OptPath, cfg.SubPath)
-			writeInstall(key, targetDir, resolved)
-		}
+	for key, cfg := range dalec.SortedMapIter(artifacts.Opt) {
+		resolved := cfg.ResolveName(key)
+		targetDir := filepath.Join(OptPath, cfg.SubPath)
+		writeInstall(key, targetDir, resolved)
 	}
 
 	if len(artifacts.Libs) > 0 {
