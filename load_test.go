@@ -2228,6 +2228,18 @@ func TestArtifactsValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "capabilities on opt is valid",
+			artifacts: Artifacts{
+				Opt: map[string]ArtifactConfig{
+					"/tmp/helper": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true, Permitted: true},
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "capabilities on docs is invalid",
 			artifacts: Artifacts{
 				Docs: map[string]ArtifactConfig{

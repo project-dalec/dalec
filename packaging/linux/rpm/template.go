@@ -244,6 +244,11 @@ func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
 			return out
 		}
 	}
+	for _, cfg := range artifacts.Opt {
+		if cfg.User != "" || cfg.Group != "" {
+			return out
+		}
+	}
 
 	return ""
 }
@@ -734,35 +739,18 @@ func (w *specWrapper) getArtifactOwnership() string {
 		}
 	}
 
-	if artifacts.ConfigFiles != nil {
-		configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
-		for _, c := range configKeys {
-			cfg := artifacts.ConfigFiles[c]
-			setArtifactOwnership(`/%{_sysconfdir}`, c, &cfg)
+	apply := func(root string, artifacts map[string]dalec.ArtifactConfig) {
+		for path, cfg := range dalec.SortedMapIter(artifacts) {
+			setArtifactOwnership(root, path, &cfg)
 		}
 	}
-	if artifacts.DataDirs != nil {
-		dataFileKeys := dalec.SortMapKeys(artifacts.DataDirs)
-		for _, k := range dataFileKeys {
-			df := artifacts.DataDirs[k]
-			setArtifactOwnership(`/%{_datadir}`, k, &df)
-		}
-	}
+
+	apply(`/%{_sysconfdir}`, artifacts.ConfigFiles)
+	apply(`/%{_datadir}`, artifacts.DataDirs)
 	// Directory ownership is handled in getDirectoryOwnership; do not duplicate here.
-	if artifacts.Libs != nil {
-		libs := dalec.SortMapKeys(artifacts.Libs)
-		for _, l := range libs {
-			cfg := artifacts.Libs[l]
-			setArtifactOwnership(`/%{_libdir}`, l, &cfg)
-		}
-	}
-	if artifacts.Binaries != nil {
-		binKeys := dalec.SortMapKeys(artifacts.Binaries)
-		for _, p := range binKeys {
-			cfg := artifacts.Binaries[p]
-			setArtifactOwnership(`/%{_bindir}`, p, &cfg)
-		}
-	}
+	apply(`/%{_libdir}`, artifacts.Libs)
+	apply(`/%{_bindir}`, artifacts.Binaries)
+	apply(`/opt`, artifacts.Opt)
 
 	return b.String()
 }
@@ -791,27 +779,16 @@ func (w *specWrapper) getArtifactCapabilities() string {
 		fmt.Fprintf(b, "setcap '%s' %s\n", capString, targetPath)
 	}
 
-	if artifacts.Libs != nil {
-		libs := dalec.SortMapKeys(artifacts.Libs)
-		for _, l := range libs {
-			cfg := artifacts.Libs[l]
-			setArtifactCapabilities(`/%{_libdir}`, l, &cfg)
+	apply := func(root string, artifacts map[string]dalec.ArtifactConfig) {
+		for path, cfg := range dalec.SortedMapIter(artifacts) {
+			setArtifactCapabilities(root, path, &cfg)
 		}
 	}
-	if artifacts.Binaries != nil {
-		binKeys := dalec.SortMapKeys(artifacts.Binaries)
-		for _, p := range binKeys {
-			cfg := artifacts.Binaries[p]
-			setArtifactCapabilities(`/%{_bindir}`, p, &cfg)
-		}
-	}
-	if artifacts.Libexec != nil {
-		libexecKeys := dalec.SortMapKeys(artifacts.Libexec)
-		for _, k := range libexecKeys {
-			cfg := artifacts.Libexec[k]
-			setArtifactCapabilities(`/%{_libexecdir}`, k, &cfg)
-		}
-	}
+
+	apply(`/%{_libdir}`, artifacts.Libs)
+	apply(`/%{_bindir}`, artifacts.Binaries)
+	apply(`/%{_libexecdir}`, artifacts.Libexec)
+	apply(`/opt`, artifacts.Opt)
 
 	return b.String()
 }
@@ -971,6 +948,10 @@ func (w *specWrapper) Install() fmt.Stringer {
 		}
 	}
 
+	for k, opt := range dalec.SortedMapIter(artifacts.Opt) {
+		copyArtifact(`%{buildroot}/opt`, k, &opt)
+	}
+
 	configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
 	for _, c := range configKeys {
 		cfg := artifacts.ConfigFiles[c]
@@ -1088,6 +1069,17 @@ func (w *specWrapper) Files() fmt.Stringer {
 			} else {
 				fmt.Fprintln(b, fullPath)
 			}
+		}
+	}
+
+	for k, opt := range dalec.SortedMapIter(artifacts.Opt) {
+		targetDir := filepath.Join(`/opt`, opt.SubPath)
+		fullPath := filepath.Join(targetDir, opt.ResolveName(k))
+		capString := dalec.CapabilitiesString(opt.LinuxCapabilities)
+		if capString != "" && opt.User == "" && opt.Group == "" {
+			fmt.Fprintf(b, "%%caps(%s) %s\n", capString, fullPath)
+		} else {
+			fmt.Fprintln(b, fullPath)
 		}
 	}
 

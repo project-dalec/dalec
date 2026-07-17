@@ -17,6 +17,8 @@ type Artifacts struct {
 	Binaries map[string]ArtifactConfig `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 	// Libexec is the list of additional binaries that may be invoked by the main package binary.
 	Libexec map[string]ArtifactConfig `yaml:"libexec,omitempty" json:"libexec,omitempty"`
+	// Opt is the list of files to install under /opt.
+	Opt map[string]ArtifactConfig `yaml:"opt,omitempty" json:"opt,omitempty"`
 	// Manpages is the list of manpages to include in the package.
 	Manpages map[string]ArtifactConfig `yaml:"manpages,omitempty" json:"manpages,omitempty"`
 	// DataDirs is a list of read-only architecture-independent data files, to be placed in /usr/share/
@@ -211,6 +213,9 @@ func (a *Artifacts) IsEmpty() bool {
 	if len(a.Binaries) > 0 {
 		return false
 	}
+	if len(a.Opt) > 0 {
+		return false
+	}
 	if len(a.Manpages) > 0 {
 		return false
 	}
@@ -265,7 +270,7 @@ func (a *Artifacts) validate() error {
 	checkCapabilities := func(artifactType string, artifacts map[string]ArtifactConfig) {
 		for path, cfg := range artifacts {
 			if len(cfg.LinuxCapabilities) > 0 {
-				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on %s '%s'", artifactType, path))
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec, opt); cannot set capabilities on %s '%s'", artifactType, path))
 			}
 		}
 	}
@@ -282,12 +287,12 @@ func (a *Artifacts) validate() error {
 	if a.Systemd != nil {
 		for path, cfg := range a.Systemd.Units {
 			if artifact := cfg.Artifact(); artifact != nil && len(artifact.LinuxCapabilities) > 0 {
-				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd unit '%s'", path))
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec, opt); cannot set capabilities on systemd unit '%s'", path))
 			}
 		}
 		for path, cfg := range a.Systemd.Dropins {
 			if artifact := cfg.Artifact(); artifact != nil && len(artifact.LinuxCapabilities) > 0 {
-				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec); cannot set capabilities on systemd dropin '%s'", path))
+				errs = append(errs, fmt.Errorf("capabilities can only be set on executable files (binaries, libs, libexec, opt); cannot set capabilities on systemd dropin '%s'", path))
 			}
 		}
 	}
