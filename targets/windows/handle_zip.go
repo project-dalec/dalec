@@ -288,8 +288,7 @@ func windowsPackages(spec *dalec.Spec, targetKey string) []windowsPackage {
 		Primary:  true,
 	}}
 
-	sub := spec.GetSubPackages(targetKey)
-	for key, p := range dalec.SortedMapIter(sub) {
+	for key, p := range dalec.GetSubPackagesForTarget(spec, targetKey) {
 		var binaries map[string]dalec.ArtifactConfig
 		if p.Artifacts != nil {
 			binaries = p.Artifacts.Binaries
