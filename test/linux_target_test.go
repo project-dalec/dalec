@@ -1476,6 +1476,10 @@ index 0000000..5260cb1
 					"zsh":  {Version: []string{">= 3", "< 99"}},
 					"zstd": {Version: []string{">= 1.5.0"}},
 				},
+				Test: map[string]dalec.PackageConstraints{
+					"bash": {},
+					"grep": {},
+				},
 			},
 
 			Build: dalec.ArtifactBuild{
@@ -3356,6 +3360,10 @@ func Value() string {
 			Dependencies: &dalec.PackageDependencies{
 				Runtime: map[string]dalec.PackageConstraints{
 					"coreutils": {},
+				},
+				Test: map[string]dalec.PackageConstraints{
+					"bash": {},
+					"grep": {},
 				},
 			},
 			Tests: []*dalec.TestSpec{
@@ -5593,6 +5601,11 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Test using pre-built packages",
+			Dependencies: &dalec.PackageDependencies{
+				Test: dalec.PackageDependencyList{
+					"bash": {},
+				},
+			},
 			Sources: map[string]dalec.Source{
 				"hello": {
 					Inline: &dalec.SourceInline{
