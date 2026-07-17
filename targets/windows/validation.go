@@ -8,12 +8,22 @@ import (
 )
 
 func validateRuntimeDeps(s *dalec.Spec, targetKey string) error {
+	var errs []error
 	rd := s.GetPackageDeps(targetKey).GetRuntime()
 	if len(rd) != 0 {
-		return fmt.Errorf("targets with windows output images cannot have runtime dependencies")
+		errs = append(errs, fmt.Errorf("package %q: targets with windows output images cannot have runtime dependencies", s.Name))
 	}
 
-	return nil
+	subpackages := s.GetSubPackages(targetKey)
+	for _, key := range dalec.SortMapKeys(subpackages) {
+		pkg := subpackages[key]
+		if len(pkg.Dependencies.GetRuntime()) == 0 {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("package %q: targets with windows output images cannot have runtime dependencies", pkg.ResolvedName(s.Name, key)))
+	}
+
+	return goerrors.Join(errs...)
 }
 
 // validateZipArtifacts ensures every package produced for a windowscross/zip

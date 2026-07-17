@@ -47,6 +47,7 @@ func debLinuxTestConfigFor(targetKey string, cfg *distro.Config, opts ...func(*t
 				return ver + "-" + cfg.VersionID + "u" + rev
 			},
 			ListExpectedSignFiles: debExpectedFiles(cfg.VersionID),
+			Subpackages:           debSubpackageTests(),
 		},
 		LicenseDir: "/usr/share/doc",
 		SystemdDir: struct {
