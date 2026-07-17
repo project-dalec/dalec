@@ -46,40 +46,35 @@ func subpackageSpec() *dalec.Spec {
 }
 
 func TestWindowsPackages(t *testing.T) {
-	spec := subpackageSpec()
-	pkgs := windowsPackages(spec, testTargetKey)
+	t.Run("packages use deterministic indices independent of their names", func(t *testing.T) {
+		spec := subpackageSpec()
+		pkgs := windowsPackages(spec, testTargetKey)
 
-	// Primary is always first; supplemental packages follow sorted by map key
-	// ("contrib" before "tools").
-	assert.Equal(t, len(pkgs), 3)
-	assert.Equal(t, pkgs[0].Name, "foo")
-	assert.Equal(t, pkgs[1].Name, "foo-contrib")
-	// "tools" has a name override.
-	assert.Equal(t, pkgs[2].Name, "foo-utilities")
-
-	assert.Equal(t, len(pkgs[0].Binaries), 1)
-	assert.Equal(t, len(pkgs[2].Binaries), 1)
+		assert.Equal(t, len(pkgs), 3)
+		assert.Equal(t, pkgs[0].Name, "foo")
+		assert.Equal(t, pkgs[1].Name, "foo-contrib")
+		assert.Equal(t, pkgs[2].Name, "foo-utilities")
+		assert.Equal(t, pkgs[0].internalDir(), "/0")
+		assert.Equal(t, pkgs[1].internalDir(), "/1")
+		assert.Equal(t, pkgs[2].internalDir(), "/2")
+		assert.Equal(t, len(pkgs[0].Binaries), 1)
+		assert.Equal(t, len(pkgs[2].Binaries), 1)
+	})
 }
 
 func TestGenerateInvocationScript(t *testing.T) {
-	spec := subpackageSpec()
-	script := generateInvocationScript(spec, testTargetKey).String()
+	t.Run("each package is staged into an independent flat output", func(t *testing.T) {
+		spec := subpackageSpec()
+		script := generateInvocationScript(spec, testTargetKey).String()
 
-	// The primary package stages at the root of the output dir; supplemental
-	// packages each get their own subdirectory.
-	assert.Assert(t, strings.Contains(script, "mkdir -p '"+outputDir+"'"))
-	assert.Assert(t, strings.Contains(script, "mkdir -p '"+outputDir+"/foo-contrib'"))
-	assert.Assert(t, strings.Contains(script, "mkdir -p '"+outputDir+"/foo-utilities'"))
-
-	// Files are copied (not moved) into the package's staging directory by their
-	// resolved name. The primary package's files land at the output dir root.
-	assert.Assert(t, strings.Contains(script, "cp -r 'bin/foo.exe' '"+outputDir+"/foo.exe'"))
-	assert.Assert(t, strings.Contains(script, "cp -r 'bin/foo-contrib.exe' '"+outputDir+"/foo-contrib/foo-contrib.exe'"))
-	// Name override on the artifact is honored.
-	assert.Assert(t, strings.Contains(script, "cp -r 'bin/util.exe' '"+outputDir+"/foo-utilities/foo-util.exe'"))
-
-	// The build script is still invoked.
-	assert.Assert(t, strings.Contains(script, buildScriptName))
+		assert.Assert(t, strings.Contains(script, "mkdir -p '"+outputDir+"/0'"))
+		assert.Assert(t, strings.Contains(script, "mkdir -p '"+outputDir+"/1'"))
+		assert.Assert(t, strings.Contains(script, "mkdir -p '"+outputDir+"/2'"))
+		assert.Assert(t, strings.Contains(script, "cp -r 'bin/foo.exe' '"+outputDir+"/0/foo.exe'"))
+		assert.Assert(t, strings.Contains(script, "cp -r 'bin/foo-contrib.exe' '"+outputDir+"/1/foo-contrib.exe'"))
+		assert.Assert(t, strings.Contains(script, "cp -r 'bin/util.exe' '"+outputDir+"/2/foo-util.exe'"))
+		assert.Assert(t, strings.Contains(script, buildScriptName))
+	})
 }
 
 func TestGenerateInvocationScriptPermissions(t *testing.T) {
@@ -98,8 +93,38 @@ func TestGenerateInvocationScriptPermissions(t *testing.T) {
 	// build path. This guards against the previous bug where chmod referenced
 	// the source path under the output dir. The primary package stages at the
 	// output dir root.
-	assert.Assert(t, strings.Contains(script, "cp -r 'sub/dir/foo.exe' '"+outputDir+"/foo.exe'"))
-	assert.Assert(t, strings.Contains(script, "chmod 755 '"+outputDir+"/foo.exe'"))
+	assert.Assert(t, strings.Contains(script, "cp -r 'sub/dir/foo.exe' '"+outputDir+"/0/foo.exe'"))
+	assert.Assert(t, strings.Contains(script, "chmod 755 '"+outputDir+"/0/foo.exe'"))
+}
+
+func TestValidateRuntimeDeps(t *testing.T) {
+	t.Run("a supplemental package runtime dependency identifies the package", func(t *testing.T) {
+		spec := subpackageSpec()
+		target := spec.Targets[testTargetKey]
+		pkg := target.Packages["contrib"]
+		pkg.Dependencies = &dalec.SubPackageDependencies{
+			Runtime: dalec.PackageDependencyList{"distinctive-runtime-dependency": {}},
+		}
+		target.Packages["contrib"] = pkg
+		spec.Targets[testTargetKey] = target
+
+		err := validateRuntimeDeps(spec, testTargetKey)
+		assert.ErrorContains(t, err, `package "foo-contrib"`)
+		assert.ErrorContains(t, err, "cannot have runtime dependencies")
+	})
+
+	t.Run("supplemental runtime dependencies do not affect zip validation", func(t *testing.T) {
+		spec := subpackageSpec()
+		target := spec.Targets[testTargetKey]
+		pkg := target.Packages["contrib"]
+		pkg.Dependencies = &dalec.SubPackageDependencies{
+			Runtime: dalec.PackageDependencyList{"distinctive-runtime-dependency": {}},
+		}
+		target.Packages["contrib"] = pkg
+		spec.Targets[testTargetKey] = target
+
+		assert.NilError(t, validateZipArtifacts(spec, testTargetKey))
+	})
 }
 
 func TestValidateZipArtifacts(t *testing.T) {
