@@ -39,10 +39,16 @@ func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []st
 	// vendor/version differences that arise when pulling from the Microsoft
 	// prod repos alongside the base SUSE repos.
 	installFlags := "--auto-agree-with-licenses --allow-downgrade --allow-vendor-change"
+
+	// zypper/libzypp has no command-line flag equivalent to dnf's
+	// --setopt=tsflags=nodocs: passing "--rpm-installexcludedocs" is rejected as
+	// an unknown option and fails the whole install before any package is laid
+	// down. Documentation exclusion is instead controlled by libzypp's
+	// "rpm.install.excludedocs" option in zypp.conf, which the install script
+	// enables for this invocation when docs should be excluded.
+	excludeDocs := "false"
 	if !cfg.includeDocs {
-		// Match dnf behavior by omitting docs unless the caller explicitly keeps
-		// them (IncludeDocs(true)).
-		installFlags += " --rpm-installexcludedocs"
+		excludeDocs = "true"
 	}
 
 	installScriptDt := `#!/usr/bin/env bash
@@ -52,9 +58,24 @@ import_keys_path="` + importKeysPath + `"
 global_flags="` + globalFlags + `"
 zypper_sub_cmd="` + strings.Join(zypperSubCmd, " ") + `"
 install_flags="` + installFlags + `"
+exclude_docs="` + excludeDocs + `"
+root_dir="` + cfg.root + `"
 
 if [ -x "$import_keys_path" ]; then
 	"$import_keys_path"
+fi
+
+if [ "$exclude_docs" = "true" ]; then
+	# libzypp (not the zypper CLI) controls documentation exclusion via the
+	# rpm.install.excludedocs option in zypp.conf. Enable it in the config file
+	# libzypp will read for this install (honoring --root when set).
+	zypp_conf="${root_dir}/etc/zypp/zypp.conf"
+	mkdir -p "$(dirname "$zypp_conf")"
+	if [ -f "$zypp_conf" ] && grep -Eq '^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs' "$zypp_conf"; then
+		sed -i -E 's|^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs.*|rpm.install.excludedocs = yes|' "$zypp_conf"
+	else
+		printf '\nrpm.install.excludedocs = yes\n' >> "$zypp_conf"
+	fi
 fi
 
 zypper $global_flags $zypper_sub_cmd $install_flags "${@}"
