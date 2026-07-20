@@ -42,6 +42,14 @@ type Config struct {
 
 	// erofs-utils 1.7+ is required for tar support.
 	SysextSupported bool
+
+	// CrossArchInstallUnsupported indicates the distro's package manager cannot
+	// install packages into a foreign-architecture rootfs. The cross-arch worker
+	// path relies on dnf's --forcearch/--installroot combination, which zypper
+	// (SUSE/openSUSE) does not support. When true, worker builds for a
+	// non-native target platform fail fast with a clear error instead of
+	// silently invoking dnf.
+	CrossArchInstallUnsupported bool
 }
 
 func (cfg *Config) PackageCacheMount(root string) llb.RunOption {

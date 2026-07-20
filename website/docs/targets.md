@@ -26,6 +26,7 @@ DALEC includes a number of built-in targets that you can either use in your spec
 - `almalinux8` - AlmaLinux 8 (v0.13)
 - `rockylinux8` - Rocky Linux 8 (v0.13)
 - `rockylinux9` - Rocky Linux 9 (v0.13)
+- `sles15` - SUSE Linux Enterprise 15 (native-architecture builds only)
 
 When specifying a "target" to `docker build --target=<target>` DALEC treats
 `<target>` as a route (much like an HTTP path) and each of the above mentioned
