@@ -22,6 +22,7 @@ func TestRockylinux9(t *testing.T) {
 				return v
 			},
 			ListExpectedSignFiles: azlinuxListSignFiles("el9"),
+			Subpackages:           rpmSubpackageTests(),
 			PackageOverrides: map[string]string{
 				"rust":  "rust cargo",
 				"bazel": noPackageAvailable,
@@ -59,6 +60,7 @@ func TestRockylinux8(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
+			Key:       "rockylinux8",
 			Package:   "rockylinux8/rpm",
 			Container: "rockylinux8/container",
 			DepsOnly:  "rockylinux8/container/depsonly",
@@ -67,6 +69,7 @@ func TestRockylinux8(t *testing.T) {
 				return v
 			},
 			ListExpectedSignFiles: azlinuxListSignFiles("el8"),
+			Subpackages:           rpmSubpackageTests(),
 			PackageOverrides: map[string]string{
 				"rust":  "rust cargo",
 				"bazel": noPackageAvailable,

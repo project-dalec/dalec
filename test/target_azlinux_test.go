@@ -50,6 +50,7 @@ func TestAzlinux3(t *testing.T) {
 			Worker:                "azlinux3/worker",
 			Sysext:                "azlinux3/testing/sysext",
 			ListExpectedSignFiles: azlinuxListSignFiles("azl3"),
+			Subpackages:           rpmSubpackageTests(),
 		},
 		LicenseDir: "/usr/share/licenses",
 		SystemdDir: struct {
@@ -96,6 +97,7 @@ func TestAzlinux4(t *testing.T) {
 			Worker:                "azlinux4/worker",
 			Sysext:                "azlinux4/testing/sysext",
 			ListExpectedSignFiles: azlinuxListSignFiles("azl4"),
+			Subpackages:           rpmSubpackageTests(),
 			PackageOverrides: map[string]string{
 				// NOTE: bazel is not presently available in azl4 base repos.
 				"bazel": noPackageAvailable,

@@ -51,6 +51,7 @@ BuildArch: noarch
 {{ .PreUn -}}
 {{ .PostUn -}}
 {{ .Files -}}
+{{ .SubPackages -}}
 {{ .Changelog -}}
 `)))
 
@@ -59,6 +60,15 @@ func optionalField(key, value string) string {
 		return ""
 	}
 	return key + ": " + value + "\n"
+}
+
+func writeUserGroupProvides(b *strings.Builder, artifacts dalec.Artifacts) {
+	for _, user := range artifacts.Users {
+		fmt.Fprintf(b, "Provides: user(%s)\n", user.Name)
+	}
+	for _, group := range artifacts.Groups {
+		fmt.Fprintf(b, "Provides: group(%s)\n", group.Name)
+	}
 }
 
 var tmplFuncs = map[string]any{
@@ -96,10 +106,8 @@ func (w *specWrapper) Provides() fmt.Stringer {
 
 	provides := w.Spec.GetProvides(w.Target)
 
-	ls := dalec.SortMapKeys(provides)
-
-	for _, name := range ls {
-		writeDep(b, "Provides", name, provides[name])
+	for name, constraints := range dalec.SortedMapIter(provides) {
+		writeDep(b, "Provides", name, constraints)
 	}
 
 	// Self-Provide `user(X)` / `group(X)` for every user/group this
@@ -136,13 +144,7 @@ func (w *specWrapper) Provides() fmt.Stringer {
 	//   - rpm-sysusers(7), "DEPENDENCIES" section, current doc covering
 	//     the %attr → user()/group() Requires generation:
 	//     https://rpm-software-management.github.io/rpm/man/rpm-sysusers.7
-	artifacts := w.Spec.GetArtifacts(w.Target)
-	for _, user := range artifacts.Users {
-		fmt.Fprintf(b, "Provides: user(%s)\n", user.Name)
-	}
-	for _, group := range artifacts.Groups {
-		fmt.Fprintf(b, "Provides: group(%s)\n", group.Name)
-	}
+	writeUserGroupProvides(b, w.Spec.GetArtifacts(w.Target))
 
 	if b.Len() > 0 {
 		b.WriteString("\n")
@@ -228,24 +230,72 @@ func getUserPostRequires(users []dalec.AddUserConfig, groups []dalec.AddGroupCon
 // However, AzureLinux cannot resolve the /usr/bin/chown requirement.
 // Thus, we just require coreutils which provides chown/chgrp on all distros hopefully.
 func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
-	out := "Requires(post): coreutils\n"
-	for _, cfg := range artifacts.Binaries {
-		if cfg.User != "" || cfg.Group != "" {
-			return out
+	if hasOwnershipCommands(artifacts) {
+		return "Requires(post): coreutils\n"
+	}
+	return ""
+}
+
+func ownershipRequested(user, group string) bool {
+	return user != "" || group != ""
+}
+
+func artifactMapHasOwnership(artifacts map[string]dalec.ArtifactConfig) bool {
+	for _, cfg := range artifacts {
+		if ownershipRequested(cfg.User, cfg.Group) {
+			return true
 		}
 	}
-	for _, cfg := range artifacts.Libs {
-		if cfg.User != "" || cfg.Group != "" {
-			return out
+	return false
+}
+
+func directoryMapHasOwnership(dirs map[string]dalec.ArtifactDirConfig) bool {
+	for _, cfg := range dirs {
+		if ownershipRequested(cfg.User, cfg.Group) {
+			return true
 		}
 	}
-	for _, cfg := range artifacts.Libexec {
-		if cfg.User != "" || cfg.Group != "" {
-			return out
+	return false
+}
+
+func symlinkOwnershipChanges(artifacts dalec.Artifacts, link dalec.ArtifactSymlinkConfig) (user, group bool) {
+	for _, candidate := range artifacts.Users {
+		if candidate.Name == link.User {
+			user = true
+			break
 		}
+	}
+	for _, candidate := range artifacts.Groups {
+		if candidate.Name == link.Group {
+			group = true
+			break
+		}
+	}
+	return user, group
+}
+
+func hasOwnershipCommands(artifacts dalec.Artifacts) bool {
+	if artifactMapHasOwnership(artifacts.ConfigFiles) ||
+		artifactMapHasOwnership(artifacts.DataDirs) ||
+		artifactMapHasOwnership(artifacts.Libs) ||
+		artifactMapHasOwnership(artifacts.Binaries) ||
+		artifactMapHasOwnership(artifacts.Libexec) {
+		return true
 	}
 
-	return ""
+	if artifacts.Directories != nil &&
+		(directoryMapHasOwnership(artifacts.Directories.Config) ||
+			directoryMapHasOwnership(artifacts.Directories.State)) {
+		return true
+	}
+
+	for _, link := range artifacts.Links {
+		user, group := symlinkOwnershipChanges(artifacts, link)
+		if user || group {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *specWrapper) Requires() fmt.Stringer {
@@ -553,23 +603,31 @@ func systemdPreUnScript(unitName string, cfg dalec.SystemdUnitConfig) string {
 	return fmt.Sprintf("%%systemd_preun %s\n", unitName)
 }
 
-func (w *specWrapper) PreUn() fmt.Stringer {
-	b := &strings.Builder{}
-
-	artifacts := w.GetArtifacts(w.Target)
+func preUnScriptBody(artifacts dalec.Artifacts) string {
 	if artifacts.Systemd.IsEmpty() || (len(artifacts.Systemd.EnabledUnits()) == 0) {
-		return b
+		return ""
 	}
 
-	b.WriteString("%preun\n")
-	keys := dalec.SortMapKeys(artifacts.Systemd.Units)
-	for _, servicePath := range keys {
-		serviceName := filepath.Base(servicePath)
-		unitConf := artifacts.Systemd.Units[servicePath]
+	b := &strings.Builder{}
+	for servicePath, unitConf := range dalec.SortedMapIter(artifacts.Systemd.Units) {
+		serviceName := unitConf.Artifact().ResolveName(servicePath)
 		b.WriteString(
 			systemdPreUnScript(serviceName, unitConf),
 		)
 	}
+	return b.String()
+}
+
+func (w *specWrapper) PreUn() fmt.Stringer {
+	b := &strings.Builder{}
+
+	body := preUnScriptBody(w.GetArtifacts(w.Target))
+	if body == "" {
+		return b
+	}
+
+	b.WriteString("%preun\n")
+	b.WriteString(body)
 	return b
 }
 
@@ -607,50 +665,33 @@ fi
 	return s
 }
 
+func postScriptBody(artifacts dalec.Artifacts) string {
+	b := &strings.Builder{}
+	b.WriteString(systemdPostSection(artifacts))
+	b.WriteString(postUsersScript(artifacts))
+	b.WriteString(postGroupsScript(artifacts))
+	b.WriteString(symlinkOwnershipScript(artifacts))
+	b.WriteString(artifactOwnershipScript(artifacts))
+	b.WriteString(directoryOwnershipScript(artifacts))
+	b.WriteString(artifactCapabilitiesScript(artifacts))
+	return b.String()
+}
+
 func (w *specWrapper) Post() fmt.Stringer {
 	b := &strings.Builder{}
 
-	systemd := w.postSystemd()
-	users := w.postUsers()
-	groups := w.postGroups()
-	symlinkOwnership := w.getSymlinkOwnership()
-	artifactOwnership := w.getArtifactOwnership()
-	directoryOwnership := w.getDirectoryOwnership()
-	artifactCapabilities := w.getArtifactCapabilities()
-
-	if systemd == "" && users == "" && groups == "" && symlinkOwnership == "" && artifactOwnership == "" && directoryOwnership == "" && artifactCapabilities == "" {
+	body := postScriptBody(w.Spec.GetArtifacts(w.Target))
+	if body == "" {
 		return b
 	}
 
 	b.WriteString("%post\n")
-	if systemd != "" {
-		b.WriteString(systemd)
-	}
-	if users != "" {
-		b.WriteString(users)
-	}
-	if groups != "" {
-		b.WriteString(groups)
-	}
-	if symlinkOwnership != "" {
-		b.WriteString(symlinkOwnership)
-	}
-	if artifactOwnership != "" {
-		b.WriteString(artifactOwnership)
-	}
-	if directoryOwnership != "" {
-		b.WriteString(directoryOwnership)
-	}
-	if artifactCapabilities != "" {
-		b.WriteString(artifactCapabilities)
-	}
-
+	b.WriteString(body)
 	b.WriteString("\n")
 	return b
 }
 
-func (w *specWrapper) postUsers() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func postUsersScript(artifacts dalec.Artifacts) string {
 	if len(artifacts.Users) == 0 {
 		return ""
 	}
@@ -662,8 +703,7 @@ func (w *specWrapper) postUsers() string {
 	return b.String()
 }
 
-func (w *specWrapper) postGroups() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func postGroupsScript(artifacts dalec.Artifacts) string {
 	if len(artifacts.Groups) == 0 {
 		return ""
 	}
@@ -675,14 +715,13 @@ func (w *specWrapper) postGroups() string {
 	return b.String()
 }
 
-func (w *specWrapper) getDirectoryOwnership() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func directoryOwnershipScript(artifacts dalec.Artifacts) string {
 	if artifacts.Directories == nil {
 		return ""
 	}
 	b := &strings.Builder{}
 	setDirOwnership := func(root, p string, cfg *dalec.ArtifactDirConfig) {
-		if cfg == nil {
+		if cfg == nil || !ownershipRequested(cfg.User, cfg.Group) {
 			return
 		}
 		user := cfg.User
@@ -695,25 +734,20 @@ func (w *specWrapper) getDirectoryOwnership() string {
 			fmt.Fprintf(b, "chgrp -R %s %s\n", group, targetDir)
 		}
 	}
-	configKeys := dalec.SortMapKeys(artifacts.Directories.Config)
-	for _, p := range configKeys {
-		cfg := artifacts.Directories.Config[p]
+	for p, cfg := range dalec.SortedMapIter(artifacts.Directories.Config) {
 		setDirOwnership(`/%{_sysconfdir}`, p, &cfg)
 	}
-	stateKeys := dalec.SortMapKeys(artifacts.Directories.State)
-	for _, p := range stateKeys {
-		cfg := artifacts.Directories.State[p]
+	for p, cfg := range dalec.SortedMapIter(artifacts.Directories.State) {
 		setDirOwnership(`/%{_sharedstatedir}`, p, &cfg)
 	}
 	return b.String()
 }
 
-func (w *specWrapper) getArtifactOwnership() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func artifactOwnershipScript(artifacts dalec.Artifacts) string {
 	b := &strings.Builder{}
 
 	setArtifactOwnership := func(root, p string, cfg *dalec.ArtifactConfig) {
-		if cfg == nil {
+		if cfg == nil || !ownershipRequested(cfg.User, cfg.Group) {
 			return
 		}
 		user := cfg.User
@@ -735,40 +769,36 @@ func (w *specWrapper) getArtifactOwnership() string {
 	}
 
 	if artifacts.ConfigFiles != nil {
-		configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
-		for _, c := range configKeys {
-			cfg := artifacts.ConfigFiles[c]
+		for c, cfg := range dalec.SortedMapIter(artifacts.ConfigFiles) {
 			setArtifactOwnership(`/%{_sysconfdir}`, c, &cfg)
 		}
 	}
 	if artifacts.DataDirs != nil {
-		dataFileKeys := dalec.SortMapKeys(artifacts.DataDirs)
-		for _, k := range dataFileKeys {
-			df := artifacts.DataDirs[k]
+		for k, df := range dalec.SortedMapIter(artifacts.DataDirs) {
 			setArtifactOwnership(`/%{_datadir}`, k, &df)
 		}
 	}
 	// Directory ownership is handled in getDirectoryOwnership; do not duplicate here.
 	if artifacts.Libs != nil {
-		libs := dalec.SortMapKeys(artifacts.Libs)
-		for _, l := range libs {
-			cfg := artifacts.Libs[l]
+		for l, cfg := range dalec.SortedMapIter(artifacts.Libs) {
 			setArtifactOwnership(`/%{_libdir}`, l, &cfg)
 		}
 	}
 	if artifacts.Binaries != nil {
-		binKeys := dalec.SortMapKeys(artifacts.Binaries)
-		for _, p := range binKeys {
-			cfg := artifacts.Binaries[p]
+		for p, cfg := range dalec.SortedMapIter(artifacts.Binaries) {
 			setArtifactOwnership(`/%{_bindir}`, p, &cfg)
+		}
+	}
+	if artifacts.Libexec != nil {
+		for p, cfg := range dalec.SortedMapIter(artifacts.Libexec) {
+			setArtifactOwnership(`/%{_libexecdir}`, p, &cfg)
 		}
 	}
 
 	return b.String()
 }
 
-func (w *specWrapper) getArtifactCapabilities() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func artifactCapabilitiesScript(artifacts dalec.Artifacts) string {
 	b := &strings.Builder{}
 
 	// Only use setcap in postinstall if there's also a chown/chgrp
@@ -792,23 +822,17 @@ func (w *specWrapper) getArtifactCapabilities() string {
 	}
 
 	if artifacts.Libs != nil {
-		libs := dalec.SortMapKeys(artifacts.Libs)
-		for _, l := range libs {
-			cfg := artifacts.Libs[l]
+		for l, cfg := range dalec.SortedMapIter(artifacts.Libs) {
 			setArtifactCapabilities(`/%{_libdir}`, l, &cfg)
 		}
 	}
 	if artifacts.Binaries != nil {
-		binKeys := dalec.SortMapKeys(artifacts.Binaries)
-		for _, p := range binKeys {
-			cfg := artifacts.Binaries[p]
+		for p, cfg := range dalec.SortedMapIter(artifacts.Binaries) {
 			setArtifactCapabilities(`/%{_bindir}`, p, &cfg)
 		}
 	}
 	if artifacts.Libexec != nil {
-		libexecKeys := dalec.SortMapKeys(artifacts.Libexec)
-		for _, k := range libexecKeys {
-			cfg := artifacts.Libexec[k]
+		for k, cfg := range dalec.SortedMapIter(artifacts.Libexec) {
 			setArtifactCapabilities(`/%{_libexecdir}`, k, &cfg)
 		}
 	}
@@ -816,35 +840,25 @@ func (w *specWrapper) getArtifactCapabilities() string {
 	return b.String()
 }
 
-func (w *specWrapper) getSymlinkOwnership() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func symlinkOwnershipScript(artifacts dalec.Artifacts) string {
 	if len(artifacts.Links) == 0 {
 		return ""
 	}
 	b := &strings.Builder{}
 
-	users := make(map[string]struct{}, len(artifacts.Users))
-	groups := make(map[string]struct{}, len(artifacts.Groups))
-	for _, user := range artifacts.Users {
-		users[user.Name] = struct{}{}
-	}
-	for _, group := range artifacts.Groups {
-		groups[group.Name] = struct{}{}
-	}
-
 	for _, link := range artifacts.Links {
-		if _, ok := users[link.User]; ok {
+		user, group := symlinkOwnershipChanges(artifacts, link)
+		if user {
 			fmt.Fprintf(b, "chown -h %s %s\n", link.User, link.Dest)
 		}
-		if _, ok := groups[link.Group]; ok {
+		if group {
 			fmt.Fprintf(b, "chgrp -h %s %s\n", link.Group, link.Dest)
 		}
 	}
 	return b.String()
 }
 
-func (w *specWrapper) postSystemd() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
+func systemdPostSection(artifacts dalec.Artifacts) string {
 	if artifacts.Systemd.IsEmpty() {
 		return ""
 	}
@@ -855,10 +869,8 @@ func (w *specWrapper) postSystemd() string {
 		// as this eliminates the need for extra dependencies in the target container
 		return ""
 	}
-
 	b := &strings.Builder{}
-	keys := dalec.SortMapKeys(enabledUnits)
-	for _, servicePath := range keys {
+	for servicePath := range dalec.SortedMapIter(enabledUnits) {
 		unitConf := artifacts.Systemd.Units[servicePath]
 		artifact := unitConf.Artifact()
 		b.WriteString(
@@ -869,23 +881,30 @@ func (w *specWrapper) postSystemd() string {
 	return b.String()
 }
 
-func (w *specWrapper) PostUn() fmt.Stringer {
-	b := &strings.Builder{}
-
-	artifacts := w.GetArtifacts(w.Target)
+func postUnScriptBody(artifacts dalec.Artifacts) string {
 	if artifacts.Systemd.IsEmpty() {
-		return b
+		return ""
 	}
 
-	b.WriteString("%postun\n")
-	keys := dalec.SortMapKeys(artifacts.Systemd.Units)
-	for _, servicePath := range keys {
-		cfg := artifacts.Systemd.Units[servicePath]
+	b := &strings.Builder{}
+	for servicePath, cfg := range dalec.SortedMapIter(artifacts.Systemd.Units) {
 		a := cfg.Artifact()
 		serviceName := a.ResolveName(servicePath)
 		fmt.Fprintf(b, "%%systemd_postun %s\n", serviceName)
 	}
+	return b.String()
+}
 
+func (w *specWrapper) PostUn() fmt.Stringer {
+	b := &strings.Builder{}
+
+	body := postUnScriptBody(w.GetArtifacts(w.Target))
+	if body == "" {
+		return b
+	}
+
+	b.WriteString("%postun\n")
+	b.WriteString(body)
 	return b
 }
 
@@ -894,7 +913,20 @@ func (w *specWrapper) Install() fmt.Stringer {
 	fmt.Fprintln(b, "%install")
 
 	artifacts := w.Spec.GetArtifacts(w.Target)
+	installArtifacts(b, artifacts, w.Name)
 
+	for key, pkg := range dalec.GetSubPackagesForTarget(w.Spec, w.Target) {
+		if pkg.Artifacts != nil {
+			resolvedName := pkg.ResolvedName(w.Spec.Name, key)
+			installArtifacts(b, *pkg.Artifacts, resolvedName)
+		}
+	}
+
+	b.WriteString("\n")
+	return b
+}
+
+func installArtifacts(b *strings.Builder, artifacts dalec.Artifacts, pkgName string) {
 	copyArtifact := func(root, p string, cfg *dalec.ArtifactConfig) {
 		if cfg == nil {
 			return
@@ -915,20 +947,12 @@ func (w *specWrapper) Install() fmt.Stringer {
 		}
 	}
 
-	if len(artifacts.Binaries) > 0 {
-		binKeys := dalec.SortMapKeys(artifacts.Binaries)
-		for _, p := range binKeys {
-			cfg := artifacts.Binaries[p]
-			copyArtifact(`%{buildroot}/%{_bindir}`, p, &cfg)
-		}
+	for p, cfg := range dalec.SortedMapIter(artifacts.Binaries) {
+		copyArtifact(`%{buildroot}/%{_bindir}`, p, &cfg)
 	}
 
-	if len(artifacts.Manpages) > 0 {
-		manKeys := dalec.SortMapKeys(artifacts.Manpages)
-		for _, p := range manKeys {
-			cfg := artifacts.Manpages[p]
-			copyArtifact(`%{buildroot}/%{_mandir}`, p, &cfg)
-		}
+	for p, cfg := range dalec.SortedMapIter(artifacts.Manpages) {
+		copyArtifact(`%{buildroot}/%{_mandir}`, p, &cfg)
 	}
 
 	createArtifactDir := func(root, p string, cfg dalec.ArtifactDirConfig) {
@@ -942,73 +966,51 @@ func (w *specWrapper) Install() fmt.Stringer {
 	}
 
 	if artifacts.Directories != nil {
-		configKeys := dalec.SortMapKeys(artifacts.Directories.Config)
-		for _, p := range configKeys {
-			cfg := artifacts.Directories.Config[p]
+		for p, cfg := range dalec.SortedMapIter(artifacts.Directories.Config) {
 			createArtifactDir(`%{buildroot}/%{_sysconfdir}`, p, cfg)
 		}
 
-		stateKeys := dalec.SortMapKeys(artifacts.Directories.State)
-		for _, p := range stateKeys {
-			cfg := artifacts.Directories.State[p]
+		for p, cfg := range dalec.SortedMapIter(artifacts.Directories.State) {
 			createArtifactDir(`%{buildroot}/%{_sharedstatedir}`, p, cfg)
 		}
 	}
 
-	if len(artifacts.DataDirs) > 0 {
-		dataFileKeys := dalec.SortMapKeys(artifacts.DataDirs)
-		for _, k := range dataFileKeys {
-			df := artifacts.DataDirs[k]
-			copyArtifact(`%{buildroot}/%{_datadir}`, k, &df)
-		}
+	for k, df := range dalec.SortedMapIter(artifacts.DataDirs) {
+		copyArtifact(`%{buildroot}/%{_datadir}`, k, &df)
 	}
 
 	if artifacts.Libexec != nil {
-		libexecFileKeys := dalec.SortMapKeys(artifacts.Libexec)
-		for _, k := range libexecFileKeys {
-			le := artifacts.Libexec[k]
+		for k, le := range dalec.SortedMapIter(artifacts.Libexec) {
 			copyArtifact(`%{buildroot}/%{_libexecdir}`, k, &le)
 		}
 	}
 
-	configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
-	for _, c := range configKeys {
-		cfg := artifacts.ConfigFiles[c]
+	for c, cfg := range dalec.SortedMapIter(artifacts.ConfigFiles) {
 		copyArtifact(`%{buildroot}/%{_sysconfdir}`, c, &cfg)
 	}
 
 	if artifacts.Systemd != nil {
-		serviceKeys := dalec.SortMapKeys(artifacts.Systemd.Units)
-		for _, p := range serviceKeys {
-			cfg := artifacts.Systemd.Units[p]
+		for p, cfg := range dalec.SortedMapIter(artifacts.Systemd.Units) {
 			// must include systemd unit extension (.service, .socket, .timer, etc.) in name
 			copyArtifact(`%{buildroot}/%{_unitdir}`, p, cfg.Artifact())
 		}
 
-		dropinKeys := dalec.SortMapKeys(artifacts.Systemd.Dropins)
-		for _, d := range dropinKeys {
-			cfg := artifacts.Systemd.Dropins[d]
+		for d, cfg := range dalec.SortedMapIter(artifacts.Systemd.Dropins) {
 			copyArtifact(`%{buildroot}/%{_unitdir}`, d, cfg.Artifact())
 		}
 	}
 
-	docKeys := dalec.SortMapKeys(artifacts.Docs)
-	for _, d := range docKeys {
-		cfg := artifacts.Docs[d]
-		root := filepath.Join(`%{buildroot}/%{_docdir}`, w.Name)
+	for d, cfg := range dalec.SortedMapIter(artifacts.Docs) {
+		root := filepath.Join(`%{buildroot}/%{_docdir}`, pkgName)
 		copyArtifact(root, d, &cfg)
 	}
 
-	licenseKeys := dalec.SortMapKeys(artifacts.Licenses)
-	for _, l := range licenseKeys {
-		cfg := artifacts.Licenses[l]
-		root := filepath.Join(`%{buildroot}/%{_licensedir}`, w.Name)
+	for l, cfg := range dalec.SortedMapIter(artifacts.Licenses) {
+		root := filepath.Join(`%{buildroot}/%{_licensedir}`, pkgName)
 		copyArtifact(root, l, &cfg)
 	}
 
-	libs := dalec.SortMapKeys(artifacts.Libs)
-	for _, l := range libs {
-		cfg := artifacts.Libs[l]
+	for l, cfg := range dalec.SortedMapIter(artifacts.Libs) {
 		root := filepath.Join(`%{buildroot}/%{_libdir}`)
 		copyArtifact(root, l, &cfg)
 	}
@@ -1018,67 +1020,55 @@ func (w *specWrapper) Install() fmt.Stringer {
 		fmt.Fprintln(b, "ln -sf", l.Source, "%{buildroot}/"+l.Dest)
 	}
 
-	headersKeys := dalec.SortMapKeys(artifacts.Headers)
-	for _, h := range headersKeys {
-		cfg := artifacts.Headers[h]
+	for h, cfg := range dalec.SortedMapIter(artifacts.Headers) {
 		copyArtifact(`%{buildroot}/%{_includedir}`, h, &cfg)
 	}
-	b.WriteString("\n")
-	return b
 }
 
 func (w *specWrapper) Files() fmt.Stringer {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "%%files\n")
+	writeFilesBody(b, w.GetArtifacts(w.Target), w.Name)
+	b.WriteString("\n")
+	return b
+}
 
-	artifacts := w.GetArtifacts(w.Target)
-
-	if len(artifacts.Binaries) > 0 {
-		binKeys := dalec.SortMapKeys(artifacts.Binaries)
-		for _, p := range binKeys {
-			cfg := artifacts.Binaries[p]
-			full := filepath.Join(`%{_bindir}/`, cfg.SubPath, cfg.ResolveName(p))
-			// Use %caps macro if capabilities are set and there's no chown
-			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
-			if capString != "" && cfg.User == "" && cfg.Group == "" {
-				fmt.Fprintf(b, "%%caps(%s) %s\n", capString, full)
-			} else {
-				fmt.Fprintln(b, full)
-			}
+func writeFilesBody(b *strings.Builder, artifacts dalec.Artifacts, pkgName string) {
+	for p, cfg := range dalec.SortedMapIter(artifacts.Binaries) {
+		full := filepath.Join(`%{_bindir}/`, cfg.SubPath, cfg.ResolveName(p))
+		// Use %caps macro if capabilities are set and there's no chown
+		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+		if capString != "" && cfg.User == "" && cfg.Group == "" {
+			fmt.Fprintf(b, "%%caps(%s) %s\n", capString, full)
+		} else {
+			fmt.Fprintln(b, full)
 		}
 	}
 
-	if len(artifacts.Manpages) > 0 {
-		fmt.Fprintln(b, `%{_mandir}/*/*`)
+	for p, cfg := range dalec.SortedMapIter(artifacts.Manpages) {
+		path := filepath.Join(`%{_mandir}`, cfg.SubPath, cfg.ResolveName(p))
+		fmt.Fprintln(b, path)
 	}
 
 	if artifacts.Directories != nil {
-		configKeys := dalec.SortMapKeys(artifacts.Directories.Config)
-		for _, p := range configKeys {
+		for p := range dalec.SortedMapIter(artifacts.Directories.Config) {
 			dir := strings.Join([]string{`%dir`, filepath.Join(`%{_sysconfdir}`, p)}, " ")
 			fmt.Fprintln(b, dir)
 		}
 
-		stateKeys := dalec.SortMapKeys(artifacts.Directories.State)
-		for _, p := range stateKeys {
+		for p := range dalec.SortedMapIter(artifacts.Directories.State) {
 			dir := strings.Join([]string{`%dir`, filepath.Join(`%{_sharedstatedir}`, p)}, " ")
 			fmt.Fprintln(b, dir)
 		}
 	}
-
 	if artifacts.DataDirs != nil {
-		dataKeys := dalec.SortMapKeys(artifacts.DataDirs)
-		for _, k := range dataKeys {
-			df := artifacts.DataDirs[k]
+		for k, df := range dalec.SortedMapIter(artifacts.DataDirs) {
 			fullPath := filepath.Join(`%{_datadir}`, df.SubPath, df.ResolveName(k))
 			fmt.Fprintln(b, fullPath)
 		}
 	}
-
 	if artifacts.Libexec != nil {
-		dataKeys := dalec.SortMapKeys(artifacts.Libexec)
-		for _, k := range dataKeys {
-			le := artifacts.Libexec[k]
+		for k, le := range dalec.SortedMapIter(artifacts.Libexec) {
 			targetDir := filepath.Join(`%{_libexecdir}`, le.SubPath)
 			fullPath := filepath.Join(targetDir, le.ResolveName(k))
 			// Use %caps macro if capabilities are set and there's no chown
@@ -1091,18 +1081,13 @@ func (w *specWrapper) Files() fmt.Stringer {
 		}
 	}
 
-	configKeys := dalec.SortMapKeys(artifacts.ConfigFiles)
-	for _, c := range configKeys {
-		cfg := artifacts.ConfigFiles[c]
+	for c, cfg := range dalec.SortedMapIter(artifacts.ConfigFiles) {
 		fullPath := filepath.Join(`%{_sysconfdir}`, cfg.SubPath, cfg.ResolveName(c))
 		fullDirective := strings.Join([]string{`%config(noreplace)`, fullPath}, " ")
 		fmt.Fprintln(b, fullDirective)
 	}
-
 	if artifacts.Systemd != nil {
-		serviceKeys := dalec.SortMapKeys(artifacts.Systemd.Units)
-		for _, p := range serviceKeys {
-			cfg := artifacts.Systemd.Units[p]
+		for p, cfg := range dalec.SortedMapIter(artifacts.Systemd.Units) {
 			a := cfg.Artifact()
 			unitPath := filepath.Join(`%{_unitdir}/`, a.SubPath, a.ResolveName(p))
 			fmt.Fprintln(b, unitPath)
@@ -1112,9 +1097,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 		// process these to get a unique list of files per unit name.
 		// we need a single dir entry for the directory
 		// need a file entry for each of files
-		dropinKeys := dalec.SortMapKeys(artifacts.Systemd.Dropins)
-		for _, d := range dropinKeys {
-			cfg := artifacts.Systemd.Dropins[d]
+		for d, cfg := range dalec.SortedMapIter(artifacts.Systemd.Dropins) {
 			art := cfg.Artifact()
 			files, ok := dropins[cfg.Unit]
 			if !ok {
@@ -1127,8 +1110,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 			)
 			dropins[cfg.Unit] = append(files, p)
 		}
-		unitNames := dalec.SortMapKeys(dropins)
-		for _, u := range unitNames {
+		for u := range dalec.SortedMapIter(dropins) {
 			dir := strings.Join([]string{
 				`%dir`,
 				filepath.Join(
@@ -1144,25 +1126,19 @@ func (w *specWrapper) Files() fmt.Stringer {
 		}
 	}
 
-	docKeys := dalec.SortMapKeys(artifacts.Docs)
-	for _, d := range docKeys {
-		cfg := artifacts.Docs[d]
-		path := filepath.Join(`%{_docdir}`, w.Name, cfg.SubPath, cfg.ResolveName(d))
+	for d, cfg := range dalec.SortedMapIter(artifacts.Docs) {
+		path := filepath.Join(`%{_docdir}`, pkgName, cfg.SubPath, cfg.ResolveName(d))
 		fullDirective := strings.Join([]string{`%doc`, path}, " ")
 		fmt.Fprintln(b, fullDirective)
 	}
 
-	licenseKeys := dalec.SortMapKeys(artifacts.Licenses)
-	for _, l := range licenseKeys {
-		cfg := artifacts.Licenses[l]
-		path := filepath.Join(`%{_licensedir}`, w.Name, cfg.SubPath, cfg.ResolveName(l))
+	for l, cfg := range dalec.SortedMapIter(artifacts.Licenses) {
+		path := filepath.Join(`%{_licensedir}`, pkgName, cfg.SubPath, cfg.ResolveName(l))
 		fullDirective := strings.Join([]string{`%license`, path}, " ")
 		fmt.Fprintln(b, fullDirective)
 	}
 
-	libKeys := dalec.SortMapKeys(artifacts.Libs)
-	for _, l := range libKeys {
-		cfg := artifacts.Libs[l]
+	for l, cfg := range dalec.SortedMapIter(artifacts.Libs) {
 		path := filepath.Join(`%{_libdir}`, cfg.SubPath, cfg.ResolveName(l))
 		// Use %caps macro if capabilities are set and there's no chown
 		capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
@@ -1189,21 +1165,14 @@ func (w *specWrapper) Files() fmt.Stringer {
 		}
 	}
 
-	if len(artifacts.Headers) > 0 {
-		headersKeys := dalec.SortMapKeys(artifacts.Headers)
-		for _, h := range headersKeys {
-			hf := artifacts.Headers[h]
-			path := filepath.Join(`%{_includedir}`, hf.SubPath, hf.ResolveName(h))
-			fmt.Fprintln(b, path)
-		}
+	for h, hf := range dalec.SortedMapIter(artifacts.Headers) {
+		path := filepath.Join(`%{_includedir}`, hf.SubPath, hf.ResolveName(h))
+		fmt.Fprintln(b, path)
 	}
-	b.WriteString("\n")
-	return b
 }
 
 func (w *specWrapper) DisableStrip() string {
-	artifacts := w.Spec.GetArtifacts(w.Target)
-	if artifacts.DisableStrip {
+	if w.Spec.GetArtifacts(w.Target).DisableStrip {
 		return "%global __strip /bin/true"
 	}
 	return ""
@@ -1215,6 +1184,135 @@ func (w *specWrapper) DisableAutoReq() string {
 		return "AutoReq: no"
 	}
 	return ""
+}
+
+type subPkgWrapper struct {
+	ResolvedName string
+	Pkg          dalec.SubPackage
+	ParentName   string
+}
+
+// RPM's -n form handles both derived and custom package names uniformly.
+func (s *subPkgWrapper) directive() string {
+	return "-n " + s.ResolvedName
+}
+
+func (w *specWrapper) SubPackages() (fmt.Stringer, error) {
+	b := &strings.Builder{}
+
+	for key, pkg := range dalec.GetSubPackagesForTarget(w.Spec, w.Target) {
+		sw := &subPkgWrapper{
+			ResolvedName: pkg.ResolvedName(w.Spec.Name, key),
+			Pkg:          pkg,
+			ParentName:   w.Spec.Name,
+		}
+
+		sw.writePackageHeader(b)
+		sw.writeDescription(b)
+		sw.writePost(b)
+		sw.writePreUn(b)
+		sw.writePostUn(b)
+		sw.writeFiles(b)
+	}
+
+	return b, nil
+}
+
+func (s *subPkgWrapper) writePackageHeader(b *strings.Builder) {
+	fmt.Fprintf(b, "%%package %s\n", s.directive())
+	fmt.Fprintf(b, "Summary: %s\n", s.Pkg.Description)
+
+	// Install-time requirements for the subpackage's own scriptlets. These do
+	// not come from the spec's declared dependencies; they are derived from the
+	// artifacts the subpackage ships (systemd units, users/groups, ownership).
+	if s.Pkg.Artifacts != nil {
+		if s.Pkg.Artifacts.DisableAutoRequires {
+			b.WriteString("AutoReq: no\n")
+		}
+		b.WriteString(getSystemdRequires(s.Pkg.Artifacts.Systemd))
+		b.WriteString(getUserPostRequires(s.Pkg.Artifacts.Users, s.Pkg.Artifacts.Groups))
+		b.WriteString(getOwnershipPostRequires(*s.Pkg.Artifacts))
+	}
+
+	runtimeDeps := s.Pkg.Dependencies.GetRuntime()
+	for name, constraints := range dalec.SortedMapIter(runtimeDeps) {
+		writeDep(b, "Requires", name, constraints)
+	}
+
+	recommends := s.Pkg.Dependencies.GetRecommends()
+	for name, constraints := range dalec.SortedMapIter(recommends) {
+		writeDep(b, "Recommends", name, constraints)
+	}
+
+	for name, constraints := range dalec.SortedMapIter(s.Pkg.Provides) {
+		writeDep(b, "Provides", name, constraints)
+	}
+	if s.Pkg.Artifacts != nil {
+		writeUserGroupProvides(b, *s.Pkg.Artifacts)
+	}
+
+	for name, constraints := range dalec.SortedMapIter(s.Pkg.Conflicts) {
+		writeDep(b, "Conflicts", name, constraints)
+	}
+
+	for name, constraints := range dalec.SortedMapIter(s.Pkg.Replaces) {
+		writeDep(b, "Obsoletes", name, constraints)
+	}
+
+	b.WriteString("\n")
+}
+
+func (s *subPkgWrapper) writeDescription(b *strings.Builder) {
+	fmt.Fprintf(b, "%%description %s\n", s.directive())
+	fmt.Fprintf(b, "%s\n\n", s.Pkg.Description)
+}
+
+func (s *subPkgWrapper) writePost(b *strings.Builder) {
+	if s.Pkg.Artifacts == nil {
+		return
+	}
+	body := postScriptBody(*s.Pkg.Artifacts)
+	if body == "" {
+		return
+	}
+	fmt.Fprintf(b, "%%post %s\n", s.directive())
+	b.WriteString(body)
+	b.WriteString("\n")
+}
+
+func (s *subPkgWrapper) writePreUn(b *strings.Builder) {
+	if s.Pkg.Artifacts == nil {
+		return
+	}
+	body := preUnScriptBody(*s.Pkg.Artifacts)
+	if body == "" {
+		return
+	}
+	fmt.Fprintf(b, "%%preun %s\n", s.directive())
+	b.WriteString(body)
+	b.WriteString("\n")
+}
+
+func (s *subPkgWrapper) writePostUn(b *strings.Builder) {
+	if s.Pkg.Artifacts == nil {
+		return
+	}
+	body := postUnScriptBody(*s.Pkg.Artifacts)
+	if body == "" {
+		return
+	}
+	fmt.Fprintf(b, "%%postun %s\n", s.directive())
+	b.WriteString(body)
+	b.WriteString("\n")
+}
+
+func (s *subPkgWrapper) writeFiles(b *strings.Builder) {
+	fmt.Fprintf(b, "%%files %s\n", s.directive())
+
+	if s.Pkg.Artifacts != nil {
+		writeFilesBody(b, *s.Pkg.Artifacts, s.ResolvedName)
+	}
+	b.WriteString("\n")
 }
 
 // WriteSpec generates an rpm spec from the provided [dalec.Spec] and distro target and writes it to the passed in writer
