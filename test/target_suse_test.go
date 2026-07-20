@@ -57,8 +57,9 @@ func TestSLES15(t *testing.T) {
 		},
 		SupportsGomodVersionUpdate: true,
 		// SUSE workers only support native-architecture builds
-		// (CrossArchInstallUnsupported), so the cross-platform subtests
-		// auto-skip when only the native platform is listed.
+		// (CrossArchInstallUnsupported), so the cross-platform subtest asserts
+		// the fail-fast guard error instead of a successful cross-arch build.
+		CrossArchUnsupported: true,
 		Platforms: []ocispecs.Platform{
 			{OS: "linux", Architecture: "amd64"},
 		},
