@@ -53,7 +53,7 @@ func TestSLES15(t *testing.T) {
 		},
 		Release: OSRelease{
 			ID:        "sles",
-			VersionID: "15.6",
+			VersionID: "15.7",
 		},
 		SupportsGomodVersionUpdate: true,
 		// SUSE workers only support native-architecture builds

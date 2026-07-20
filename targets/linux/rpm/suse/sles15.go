@@ -9,8 +9,10 @@ const (
 	SLES15TargetKey   = "sles15"
 	zypperCacheSLES15 = "sles15-zypper-cache"
 
-	// sles15Ref is the image ref used for the base worker image.
-	sles15Ref      = "registry.suse.com/bci/bci-base:15.6"
+	// sles15Ref is the image ref used for the base worker image. Pin to 15.7:
+	// SP6 (15.6) reached end of general support on 2025-12-31, so builds should
+	// start from the currently-maintained 15.7 BCI (or an LTSS-backed source).
+	sles15Ref      = "registry.suse.com/bci/bci-base:15.7"
 	sles15FullName = "SUSE Linux Enterprise 15"
 	// sles15WorkerContextName is the build context name that can be used to look
 	// up a caller-provided worker image instead of building one from sles15Ref.
