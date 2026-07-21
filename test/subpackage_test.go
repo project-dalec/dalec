@@ -1,7 +1,10 @@
 package test
 
 import (
+	"archive/tar"
+	"bufio"
 	"context"
+	"io"
 	"io/fs"
 	"path"
 	"strings"
@@ -29,6 +32,13 @@ func rpmSubpackageTests() *subpackageTestConfig {
 	return &subpackageTestConfig{
 		ReadPackageMetadata: readRPMPackageMetadata,
 		ArtifactNameMatches: rpmArtifactNameMatches,
+	}
+}
+
+func debSubpackageTests() *subpackageTestConfig {
+	return &subpackageTestConfig{
+		ReadPackageMetadata: readDEBPackageMetadata,
+		ArtifactNameMatches: debArtifactNameMatches,
 	}
 }
 
@@ -285,8 +295,69 @@ func readRPMPackageMetadata(t *testing.T, pkgFS fs.FS, packagePath string) (subp
 	}, true
 }
 
+func readDEBPackageMetadata(t *testing.T, pkgFS fs.FS, packagePath string) (subpackagePackageMetadata, bool) {
+	t.Helper()
+
+	if !strings.HasSuffix(packagePath, ".deb") {
+		return subpackagePackageMetadata{}, false
+	}
+
+	f, err := pkgFS.Open(packagePath)
+	assert.NilError(t, err)
+	defer f.Close()
+
+	readerAt, ok := f.(io.ReaderAt)
+	assert.Assert(t, ok, "DEB %q is not seekable", packagePath)
+	controlArchive := extractDebControlFile(t, readerAt)
+	assert.Assert(t, controlArchive != nil, "control archive not found in DEB %q", packagePath)
+	defer controlArchive.Close()
+
+	metadata := subpackagePackageMetadata{
+		RuntimeDependencies: make(map[string]struct{}),
+	}
+	tarReader := tar.NewReader(controlArchive)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		assert.NilError(t, err)
+		if path.Base(header.Name) != "control" {
+			continue
+		}
+
+		scanner := bufio.NewScanner(tarReader)
+		for scanner.Scan() {
+			field, value, ok := strings.Cut(scanner.Text(), ": ")
+			if !ok {
+				continue
+			}
+
+			switch field {
+			case "Package":
+				metadata.Name = value
+			case "Depends":
+				for dependency := range strings.SplitSeq(value, ",") {
+					name := strings.Fields(strings.TrimSpace(dependency))
+					if len(name) > 0 {
+						metadata.RuntimeDependencies[name[0]] = struct{}{}
+					}
+				}
+			}
+		}
+		assert.NilError(t, scanner.Err())
+		break
+	}
+	assert.Assert(t, metadata.Name != "", "DEB %q has no package name", packagePath)
+	return metadata, true
+}
+
 func rpmArtifactNameMatches(packagePath, packageName string) bool {
 	return strings.HasPrefix(path.Base(packagePath), packageName+"-")
+}
+
+func debArtifactNameMatches(packagePath, packageName string) bool {
+	return strings.HasPrefix(path.Base(packagePath), packageName+"_")
 }
 
 type packageArtifactAssertions struct {

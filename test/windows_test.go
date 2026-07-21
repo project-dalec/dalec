@@ -1,10 +1,13 @@
 package test
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -130,6 +133,12 @@ deb [trusted=yes] copy:` + repoPath + `/ /
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
 		testWindowsZipFilename(ctx, t)
+	})
+
+	t.Run("subpackages", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testWindowsSubpackages(ctx, t)
 	})
 }
 
@@ -829,6 +838,244 @@ func testWindowsDefaultPlatform(ctx context.Context, t *testing.T) {
 		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
 		solveT(ctx, t, gwc, sr)
 	})
+}
+
+// testWindowsSubpackages exercises the windowscross/zip subpackage behavior:
+// a single build produces one zip per package (primary + supplemental), and a
+// package that resolves to no artifacts is rejected because an empty zip is
+// meaningless.
+func testWindowsSubpackages(ctx context.Context, t *testing.T) {
+	const targetKey = "windowscross"
+
+	newSpec := func() *dalec.Spec {
+		return fillMetadata("test-win-subpkgs", &dalec.Spec{
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "echo primary > primary.exe; echo contrib > contrib.exe"},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{
+					"primary.exe": {},
+				},
+			},
+			Targets: map[string]dalec.Target{
+				targetKey: {
+					Packages: map[string]dalec.SubPackage{
+						"contrib": {
+							Description: "Contributed extras",
+							Artifacts: &dalec.Artifacts{
+								Binaries: map[string]dalec.ArtifactConfig{
+									"contrib.exe": {},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	t.Run("one zip per package", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		spec := newSpec()
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+			res := solveT(ctx, t, gwc, sr)
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			for _, name := range []string{spec.Name, spec.Name + "-contrib"} {
+				filename := fmt.Sprintf("/%s_%s-%s_%s.zip", name, spec.Version, spec.Revision, runtime.GOARCH)
+				stat, err := ref.StatFile(ctx, gwclient.StatRequest{Path: filename})
+				assert.NilError(t, err, "expected zip %s", filename)
+				assert.Equal(t, stat.Path, filepath.Base(filename))
+			}
+		})
+	})
+
+	t.Run("signed package archives keep package-scoped replacements and original files", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		spec := newSpec()
+		spec.Build.Steps = []dalec.BuildStep{{
+			Command: "printf primary-replacement > primary-replacement; printf primary-original > primary-original; printf contrib-replacement > contrib-replacement; printf contrib-original > contrib-original",
+		}}
+		spec.Artifacts.Binaries = map[string]dalec.ArtifactConfig{
+			"primary-replacement": {Name: "replace.exe"},
+			"primary-original":    {Name: "primary-original.exe"},
+		}
+		target := spec.Targets[targetKey]
+		pkg := target.Packages["contrib"]
+		pkg.Artifacts.Binaries = map[string]dalec.ArtifactConfig{
+			"contrib-replacement": {Name: "replace.exe"},
+			"contrib-original":    {Name: "contrib-original.exe"},
+		}
+		target.Packages["contrib"] = pkg
+		spec.Targets[targetKey] = target
+		spec.PackageConfig = testWindowsSignerConfig(map[string]string{
+			"DALEC_TEST_SIGNER_REPLACE_FILE": "replace.exe",
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+			res := solveT(ctx, t, gwc, sr)
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			primary := readWindowsZip(ctx, t, ref, windowsZipFilename(spec, spec.Name))
+			assert.Equal(t, string(primary["replace.exe"]), "signed:primary-replacement")
+			assert.Equal(t, string(primary["primary-original.exe"]), "primary-original")
+			assert.Assert(t, primary["contrib-original.exe"] == nil)
+			assertWindowsSignerManifest(t, primary["manifest.json"], "primary-original.exe", "replace.exe")
+
+			supplemental := readWindowsZip(ctx, t, ref, windowsZipFilename(spec, spec.Name+"-contrib"))
+			assert.Equal(t, string(supplemental["replace.exe"]), "signed:contrib-replacement")
+			assert.Equal(t, string(supplemental["contrib-original.exe"]), "contrib-original")
+			assert.Assert(t, supplemental["primary-original.exe"] == nil)
+			assertWindowsSignerManifest(t, supplemental["manifest.json"], "contrib-original.exe", "replace.exe")
+		})
+	})
+
+	t.Run("signed primary and supplemental binaries are installed in the container", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		spec := newSpec()
+		spec.PackageConfig = testWindowsSignerConfig(map[string]string{
+			"DALEC_TEST_SIGNER_REPLACE_FILE": "*",
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/container"), withWindowsAmd64)
+			res := solveT(ctx, t, gwc, sr)
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			primary, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: "/Windows/System32/primary.exe"})
+			assert.NilError(t, err)
+			assert.Equal(t, string(primary), "signed:primary\n")
+
+			supplemental, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: "/Windows/System32/contrib.exe"})
+			assert.NilError(t, err)
+			assert.Equal(t, string(supplemental), "signed:contrib\n")
+		})
+
+		t.Run("an all-dotfile supplemental package is archived", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(ctx, t)
+			spec := newSpec()
+			target := spec.Targets[targetKey]
+			pkg := target.Packages["contrib"]
+			pkg.Artifacts.Binaries["contrib.exe"] = dalec.ArtifactConfig{Name: ".contrib.exe"}
+			target.Packages["contrib"] = pkg
+			spec.Targets[targetKey] = target
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+				res := solveT(ctx, t, gwc, sr)
+				ref, err := res.SingleRef()
+				assert.NilError(t, err)
+
+				supplemental := readWindowsZip(ctx, t, ref, windowsZipFilename(spec, spec.Name+"-contrib"))
+				assert.Equal(t, string(supplemental[".contrib.exe"]), "contrib\n")
+			})
+		})
+
+		t.Run("a primary artifact named like a supplemental package remains isolated", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(ctx, t)
+			spec := newSpec()
+			spec.Artifacts.Binaries["primary.exe"] = dalec.ArtifactConfig{Name: spec.Name + "-contrib"}
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+				res := solveT(ctx, t, gwc, sr)
+				ref, err := res.SingleRef()
+				assert.NilError(t, err)
+
+				primary := readWindowsZip(ctx, t, ref, windowsZipFilename(spec, spec.Name))
+				assert.Equal(t, string(primary[spec.Name+"-contrib"]), "primary\n")
+
+				supplemental := readWindowsZip(ctx, t, ref, windowsZipFilename(spec, spec.Name+"-contrib"))
+				assert.Equal(t, string(supplemental["contrib.exe"]), "contrib\n")
+			})
+		})
+
+		t.Run("a supplemental package signer failure fails the build", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(ctx, t)
+			spec := newSpec()
+			spec.PackageConfig = testWindowsSignerConfig(map[string]string{
+				"DALEC_TEST_SIGNER_FAIL_FILE": "contrib.exe",
+			})
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+				_, err := gwc.Solve(ctx, sr)
+				assert.ErrorContains(t, err, `test signer failed for "contrib.exe"`)
+			})
+		})
+	})
+
+	t.Run("empty package is rejected", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		spec := newSpec()
+		// Add a subpackage with no artifacts; this should fail the build since
+		// it would produce an empty zip.
+		tgt := spec.Targets[targetKey]
+		tgt.Packages["empty"] = dalec.SubPackage{Description: "no artifacts here"}
+		spec.Targets[targetKey] = tgt
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
+			_, err := gwc.Solve(ctx, sr)
+			assert.ErrorContains(t, err, "no artifacts")
+		})
+	})
+}
+
+func testWindowsSignerConfig(args map[string]string) *dalec.PackageConfig {
+	return &dalec.PackageConfig{
+		Signer: &dalec.PackageSigner{
+			Frontend: &dalec.Frontend{Image: phonySignerRef},
+			Args:     args,
+		},
+	}
+}
+
+func windowsZipFilename(spec *dalec.Spec, packageName string) string {
+	return fmt.Sprintf("/%s_%s-%s_%s.zip", packageName, spec.Version, spec.Revision, runtime.GOARCH)
+}
+
+func readWindowsZip(ctx context.Context, t *testing.T, ref gwclient.Reference, filename string) map[string][]byte {
+	t.Helper()
+
+	dt, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: filename})
+	assert.NilError(t, err)
+	archive, err := zip.NewReader(bytes.NewReader(dt), int64(len(dt)))
+	assert.NilError(t, err)
+
+	files := make(map[string][]byte, len(archive.File))
+	for _, f := range archive.File {
+		r, err := f.Open()
+		assert.NilError(t, err)
+		content, err := io.ReadAll(r)
+		r.Close()
+		assert.NilError(t, err)
+		files[f.Name] = content
+	}
+	return files
+}
+
+func assertWindowsSignerManifest(t *testing.T, dt []byte, expected ...string) {
+	t.Helper()
+
+	var actual []string
+	assert.NilError(t, json.Unmarshal(dt, &actual))
+	assert.DeepEqual(t, actual, expected)
 }
 
 func testWindowsZipFilename(ctx context.Context, t *testing.T) {
