@@ -222,7 +222,12 @@ func TestGomodPatchEnvProducesDeterministicLLB(t *testing.T) {
 	worker := llb.Scratch()
 
 	build := func() llb.State {
-		st, err := spec.generateGomodPatchStateForSource("src", gen, base, worker, nil)
+		st, err := spec.generateGomodPatchStateForSource(gomodGeneratorOpts{
+			sourceName:  "src",
+			gen:         gen,
+			sourceState: base,
+			worker:      worker,
+		})
 		assert.NilError(t, err)
 		assert.Assert(t, st != nil)
 		return *st

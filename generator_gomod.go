@@ -19,6 +19,9 @@ const (
 	// GoModCacheKey is the key used to identify the go module cache in the buildkit cache.
 	// It is exported only for testing purposes.
 	GomodCacheKey = "dalec-gomod-proxy-cache"
+	// BuildArgDalecGomodProxy is the frontend build arg used to override GOPROXY
+	// for gomod dependency generation.
+	BuildArgDalecGomodProxy = "DALEC_GOMOD_PROXY"
 )
 
 func (g *GeneratorGomod) processBuildArgs(args map[string]string, allowArg func(key string) bool) error {
@@ -63,7 +66,24 @@ func (s *Spec) HasGomods() bool {
 	return false
 }
 
-func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, credHelper llb.RunOption, opts ...llb.ConstraintsOpt) func(llb.State) llb.State {
+type gomodGeneratorOpts struct {
+	sourceName  string
+	gen         *SourceGenerator
+	sourceState llb.State
+	worker      llb.State
+	credHelper  llb.RunOption
+	extraEnvs   map[string]string
+	constraints []llb.ConstraintsOpt
+}
+
+func (opts gomodGeneratorOpts) gomodProxy() string {
+	if opts.extraEnvs == nil {
+		return ""
+	}
+	return opts.extraEnvs["GOPROXY"]
+}
+
+func withGomod(gomodOpts gomodGeneratorOpts) func(llb.State) llb.State {
 	return func(in llb.State) llb.State {
 		const (
 			workDir                      = "/work/src"
@@ -71,8 +91,10 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, cred
 			gomodDownloadWrapperBasename = "go_mod_download.sh"
 		)
 
-		joinedWorkDir := filepath.Join(workDir, subPath, g.Subpath)
-		srcMount := llb.AddMount(workDir, srcSt)
+		g := gomodOpts.gen
+		opts := gomodOpts.constraints
+		joinedWorkDir := filepath.Join(workDir, gomodOpts.sourceName, g.Subpath)
+		srcMount := llb.AddMount(workDir, gomodOpts.sourceState)
 
 		paths := g.Gomod.Paths
 		if g.Gomod.Paths == nil {
@@ -86,16 +108,16 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, cred
 		scriptPath := filepath.Join(scriptMountpoint, gomodDownloadWrapperBasename)
 
 		for _, path := range paths {
-			in = worker.Run(
+			runOpts := []llb.RunOption{
 				// First download the go module deps to our persistent cache
 				// Then set the GOPROXY to the cache dir so that we can extract just the deps we need
 				// This allows us to persist the module cache across builds and avoid downloading
 				// the same deps over and over again.
-				ShArgs(`set -e; GOMODCACHE="${TMP_GOMODCACHE}" `+scriptPath+`; GOPROXY="file://${TMP_GOMODCACHE}/cache/download" `+scriptPath),
+				ShArgs(`set -e; GOMODCACHE="${TMP_GOMODCACHE}" ` + scriptPath + `; GOPROXY="file://${TMP_GOMODCACHE}/cache/download" ` + scriptPath),
 				g.withGomodSecretsAndSockets(),
 				llb.AddMount(scriptMountpoint, script),
 				llb.AddEnv("GOPATH", "/go"),
-				credHelper,
+				gomodOpts.credHelper,
 				llb.AddEnv("TMP_GOMODCACHE", proxyPath),
 				llb.AddEnv("GIT_SSH_COMMAND", "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"),
 				llb.Dir(filepath.Join(joinedWorkDir, path)),
@@ -103,6 +125,13 @@ func withGomod(g *SourceGenerator, srcSt, worker llb.State, subPath string, cred
 				llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
 				WithConstraints(opts...),
 				g.Gomod._sourceMap.GetLocation(in),
+			}
+			if gomodProxy := gomodOpts.gomodProxy(); gomodProxy != "" {
+				runOpts = append(runOpts, llb.AddEnv("GOPROXY", gomodProxy))
+			}
+
+			in = gomodOpts.worker.Run(
+				runOpts...,
 			).AddMount(gomodCacheDir, in)
 		}
 
@@ -238,7 +267,15 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 		deps = deps.With(func(in llb.State) llb.State {
 			for _, gen := range src.Generate {
 				if gen.Gomod != nil {
-					in = in.With(withGomod(gen, patched[key], worker, key, credHelperRunOpt, opts...))
+					in = in.With(withGomod(gomodGeneratorOpts{
+						sourceName:  key,
+						gen:         gen,
+						sourceState: patched[key],
+						worker:      worker,
+						credHelper:  credHelperRunOpt,
+						extraEnvs:   sOpt.ExtraEnvs,
+						constraints: opts,
+					}))
 				}
 			}
 			return in
