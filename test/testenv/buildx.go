@@ -374,6 +374,12 @@ func WithHostNetworking(trc *TestRunnerConfig) {
 	})
 }
 
+func WithProxyNetwork(trc *TestRunnerConfig) {
+	trc.SolveOptFns = append(trc.SolveOptFns, func(so *client.SolveOpt) {
+		so.ProxyNetwork = true
+	})
+}
+
 func WithSocketProxies(proxies ...socketprovider.ProxyConfig) TestRunnerOpt {
 	return func(cfg *TestRunnerConfig) {
 		cfg.SocketProxies = append(cfg.SocketProxies, proxies...)
@@ -522,9 +528,15 @@ func (b *BuildxEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts 
 	defer cancelOutput()
 
 	ch := make(chan *client.SolveStatus)
-	go fowardToSolveStatusFn(ctx, ch, statusFn, cfg.SolveStatusFn)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		fowardToSolveStatusFn(ctx, ch, statusFn, cfg.SolveStatusFn)
+	})
 
-	defer close(ch)
+	defer func() {
+		close(ch)
+		wg.Wait()
+	}()
 
 	for status, err := range b.runTestWithStatus(ctx, t, f, opts...) {
 		if err != nil {

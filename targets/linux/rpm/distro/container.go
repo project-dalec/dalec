@@ -33,6 +33,7 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	importRepos := []DnfInstallOpt{
 		DnfWithMounts(repoMounts),
 		DnfImportKeys(keyPaths),
+		DnfWithSourceOpts(sOpt),
 		DnfInstallWithConstraints(opts),
 	}
 

@@ -139,6 +139,7 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 	targetBase := frontend.GetBaseImage(targetSOpt, cfg.ImageRef, targetOpts...).Platform(targetPlat)
 
 	installOpts := []DnfInstallOpt{
+		DnfWithSourceOpts(sOpt),
 		DnfInstallWithConstraints(opts),
 	}
 
@@ -175,7 +176,7 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 	es := buildBase.Run(
 		dalec.WithConstraints(append(opts, llb.Platform(buildPlat))...),
 		llb.AddMount(rootfsMount, targetBase),
-		cfg.InstallIntoRoot(rootfsMount, cfg.BuilderPackages, targetArch, buildPlat),
+		cfg.InstallIntoRoot(rootfsMount, cfg.BuilderPackages, targetArch, buildPlat, sOpt),
 	)
 	return es.GetMount(rootfsMount).Platform(targetPlat)
 
@@ -191,6 +192,7 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 	}
 
 	installOpts := []DnfInstallOpt{
+		DnfWithSourceOpts(sOpts),
 		DnfInstallWithConstraints(opts),
 	}
 
@@ -221,7 +223,7 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 	es := buildBase.Run(
 		dalec.WithConstraints(append(opts, llb.Platform(buildPlat))...),
 		llb.AddMount(rootfsMount, worker),
-		cfg.InstallIntoRoot(rootfsMount, []string{"erofs-utils"}, targetArch, buildPlat),
+		cfg.InstallIntoRoot(rootfsMount, []string{"erofs-utils"}, targetArch, buildPlat, sOpts),
 	)
 
 	return es.GetMount(rootfsMount).Platform(targetPlat)

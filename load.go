@@ -22,6 +22,12 @@ const (
 	// the target name.
 	KeyDalecTarget = "DALEC_TARGET"
 
+	// BuildArgDalecDisableProxyConfig disables DALEC-managed proxy configuration
+	// for tools that need explicit proxy/CA setup in BuildKit proxy network mode.
+	//
+	// This does not disable BuildKit's solve-level proxy network enforcement.
+	BuildArgDalecDisableProxyConfig = "DALEC_DISABLE_PROXY_CONFIG"
+
 	parseModeIgnoreComments = 0
 )
 
@@ -40,6 +46,8 @@ func knownArg(key string) bool {
 	case "DALEC_DISABLE_PASSTHROUGH":
 		return true
 	case "DALEC_DISABLE_SYMLINK":
+		return true
+	case BuildArgDalecDisableProxyConfig:
 		return true
 	case "DALEC_SKIP_SIGNING":
 		return true

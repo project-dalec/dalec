@@ -12,6 +12,7 @@ import (
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/opencontainers/go-digest"
+	"github.com/project-dalec/dalec"
 )
 
 func TestRouter(t *testing.T) {
@@ -219,6 +220,25 @@ type stubOpt func(*stubClient)
 func withStubOptTarget(t string) stubOpt {
 	return func(c *stubClient) {
 		c.opts[keyTarget] = t
+	}
+}
+
+func withStubBuildArg(k, v string) stubOpt {
+	return func(c *stubClient) {
+		c.opts["build-arg:"+k] = v
+	}
+}
+
+func TestSourceOptFromClientCopiesDisableProxyBuildArg(t *testing.T) {
+	client := newStubClient(withStubBuildArg(dalec.BuildArgDalecDisableProxyConfig, "1"))
+
+	sOpt, err := SourceOptFromClient(context.Background(), client, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !sOpt.DisableProxyConfig() {
+		t.Fatal("expected DALEC_DISABLE_PROXY_CONFIG build arg to disable proxy config")
 	}
 }
 

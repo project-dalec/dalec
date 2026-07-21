@@ -116,6 +116,7 @@ func (cfg *Config) InstallTestDeps(sOpt dalec.SourceOpts, targetKey string, spec
 			DnfAtRoot("/tmp/rootfs"),
 			DnfWithMounts(repoMounts),
 			DnfImportKeys(keyPaths),
+			DnfWithSourceOpts(sOpt),
 			DnfInstallWithConstraints(opts),
 		}
 

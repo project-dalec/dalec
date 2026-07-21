@@ -3799,6 +3799,18 @@ func Value() string {
 		testBuildNetworkMode(ctx, t, testConfig.Target)
 	})
 
+	t.Run("package manager proxy network", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testPackageManagerProxyNetwork(ctx, t, testConfig.Target)
+	})
+
+	t.Run("sandbox build proxy network", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testSandboxBuildProxyNetwork(ctx, t, testConfig.Target)
+	})
+
 	t.Run("user and group creation", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
