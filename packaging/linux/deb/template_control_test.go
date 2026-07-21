@@ -34,45 +34,45 @@ func TestAppendConstraints(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "nil dependencies",
+			name: "nil dependencies produce a nil result",
 			deps: nil,
 			want: nil,
 		},
 		{
-			name: "empty dependencies",
+			name: "empty dependencies produce an empty result",
 			deps: map[string]dalec.PackageConstraints{},
 			want: []string{},
 		},
 		{
-			name: "single dependency without constraints",
+			name: "a dependency without constraints renders as its name alone",
 			deps: map[string]dalec.PackageConstraints{
 				"packageA": {},
 			},
 			want: []string{"packageA"},
 		},
 		{
-			name: "single dependency with version constraints",
+			name: "version constraints render sorted in parentheses",
 			deps: map[string]dalec.PackageConstraints{
 				"packageA": {Version: []string{">= 1.0", "<< 2.0"}},
 			},
 			want: []string{"packageA (<< 2.0), packageA (>= 1.0)"},
 		},
 		{
-			name: "single dependency with architecture constraints",
+			name: "architecture constraints render in brackets",
 			deps: map[string]dalec.PackageConstraints{
 				"packageA": {Arch: []string{"amd64", "arm64"}},
 			},
 			want: []string{"packageA [amd64 arm64]"},
 		},
 		{
-			name: "single dependency with version and architecture constraints",
+			name: "version and architecture constraints render together",
 			deps: map[string]dalec.PackageConstraints{
 				"packageA": {Version: []string{">= 1.0", "<< 2.0"}, Arch: []string{"amd64", "arm64"}},
 			},
 			want: []string{"packageA (<< 2.0) [amd64 arm64], packageA (>= 1.0) [amd64 arm64]"},
 		},
 		{
-			name: "multiple dependencies with constraints",
+			name: "multiple dependencies render sorted by name",
 			deps: map[string]dalec.PackageConstraints{
 				"packageB": {Version: []string{"= 1.0"}},
 				"packageA": {Arch: []string{"amd64"}},
@@ -91,7 +91,7 @@ func TestAppendConstraints(t *testing.T) {
 }
 
 func TestControlWrapper_ReplacesConflictsProvides(t *testing.T) {
-	t.Run("target specific", func(t *testing.T) {
+	t.Run("target-specific replaces, conflicts, and provides render for their target", func(t *testing.T) {
 		spec := &dalec.Spec{
 			Name:    "test-pkg",
 			Version: "1.0.0",
@@ -152,7 +152,7 @@ func TestControlWrapper_ReplacesConflictsProvides(t *testing.T) {
 		assert.Assert(t, cmp.Contains(provides, "Provides: pkg-f (>= 4.0.0)"))
 	})
 
-	t.Run("non-target specific", func(t *testing.T) {
+	t.Run("root-level replaces, conflicts, and provides render when set at the top level", func(t *testing.T) {
 		spec := &dalec.Spec{
 			Name:    "test-pkg",
 			Version: "1.0.0",
@@ -183,7 +183,7 @@ func TestControlWrapper_ReplacesConflictsProvides(t *testing.T) {
 		assert.Assert(t, cmp.Contains(provides, "Provides: pkg-i (>= 3.0.0) [amd64]"))
 	})
 
-	t.Run("empty values", func(t *testing.T) {
+	t.Run("unset replaces, conflicts, and provides render as empty", func(t *testing.T) {
 		spec := &dalec.Spec{
 			Name:    "test-pkg",
 			Version: "1.0.0",
@@ -198,7 +198,7 @@ func TestControlWrapper_ReplacesConflictsProvides(t *testing.T) {
 		assert.DeepEqual(t, wrapper.Provides().String(), "")
 	})
 
-	t.Run("multiline format", func(t *testing.T) {
+	t.Run("multiple entries render one per line with continuation indentation", func(t *testing.T) {
 		spec := &dalec.Spec{
 			Name:    "test-pkg",
 			Version: "1.0.0",
@@ -220,7 +220,7 @@ func TestControlWrapper_ReplacesConflictsProvides(t *testing.T) {
 		assert.Assert(t, cmp.Contains(lines[2], "         pkg-c (>= 3.0.0)"))
 	})
 
-	t.Run("target precedence", func(t *testing.T) {
+	t.Run("target-specific settings take precedence over root-level ones", func(t *testing.T) {
 		// Create spec with both root-level and target-specific values
 		spec := &dalec.Spec{
 			Name:    "test-pkg",
@@ -320,5 +320,268 @@ func TestControlWrapper_ReplacesConflictsProvides(t *testing.T) {
 
 		deps = wrapper2.AllRuntimeDeps()
 		assert.Assert(t, cmp.Contains(deps.String(), "${shlibs:Depends}"))
+	})
+}
+
+func TestControlWrapper_SubPackages(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a spec with no subpackages emits nothing", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		assert.Equal(t, wrapper.SubPackages().String(), "")
+	})
+
+	t.Run("subpackages defined on another target are not emitted", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"libs": {Description: "Library files"},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "non-existent"}
+		assert.Equal(t, wrapper.SubPackages().String(), "")
+	})
+
+	t.Run("a subpackage with only a description renders a default stanza", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"libs": {Description: "Library files"},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		result := wrapper.SubPackages().String()
+
+		assert.Assert(t, cmp.Contains(result, "Package: test-pkg-libs"))
+		assert.Assert(t, cmp.Contains(result, "Architecture: linux-any"))
+		assert.Assert(t, cmp.Contains(result, "Section: -"))
+		assert.Assert(t, cmp.Contains(result, "Description: Library files"))
+		// Should include misc:Depends and shlibs:Depends by default
+		assert.Assert(t, cmp.Contains(result, "${misc:Depends}"))
+		assert.Assert(t, cmp.Contains(result, "${shlibs:Depends}"))
+	})
+
+	t.Run("an explicit subpackage name overrides the default name", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"libs": {
+							Name:        "custom-libs-name",
+							Description: "Custom library files",
+						},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		result := wrapper.SubPackages().String()
+
+		assert.Assert(t, cmp.Contains(result, "Package: custom-libs-name"))
+		assert.Assert(t, !strings.Contains(result, "test-pkg-libs"))
+	})
+
+	t.Run("a noarch spec sets the subpackage architecture to all", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			NoArch:  true,
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"data": {Description: "Data files"},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		result := wrapper.SubPackages().String()
+
+		assert.Assert(t, cmp.Contains(result, "Architecture: all"))
+	})
+
+	t.Run("subpackage runtime and recommends dependencies appear in its stanza", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"libs": {
+							Description: "Library files",
+							Dependencies: &dalec.SubPackageDependencies{
+								Runtime: dalec.PackageDependencyList{
+									"libfoo": dalec.PackageConstraints{Version: []string{">= 1.0"}},
+									"libbar": dalec.PackageConstraints{},
+								},
+								Recommends: dalec.PackageDependencyList{
+									"suggested-pkg": dalec.PackageConstraints{},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		result := wrapper.SubPackages().String()
+
+		assert.Assert(t, cmp.Contains(result, "libbar"))
+		assert.Assert(t, cmp.Contains(result, "libfoo (>= 1.0)"))
+		assert.Assert(t, cmp.Contains(result, "${misc:Depends}"))
+		assert.Assert(t, cmp.Contains(result, "Recommends: suggested-pkg"))
+	})
+
+	t.Run("a subpackage's conflicts, replaces, and provides appear in its stanza", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"libs": {
+							Description: "Library files",
+							Conflicts: dalec.PackageDependencyList{
+								"old-libs": dalec.PackageConstraints{Version: []string{"<< 2.0"}},
+							},
+							Replaces: dalec.PackageDependencyList{
+								"old-libs": dalec.PackageConstraints{Version: []string{"<< 2.0"}},
+							},
+							Provides: dalec.PackageDependencyList{
+								"libs-api": dalec.PackageConstraints{},
+							},
+						},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		result := wrapper.SubPackages().String()
+
+		assert.Assert(t, cmp.Contains(result, "Conflicts: old-libs (<< 2.0)"))
+		assert.Assert(t, cmp.Contains(result, "Replaces: old-libs (<< 2.0)"))
+		assert.Assert(t, cmp.Contains(result, "Provides: libs-api"))
+	})
+
+	t.Run("disabling auto-requires on the target still emits subpackage shlibs and misc depends", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Artifacts: &dalec.Artifacts{
+						DisableAutoRequires: true,
+					},
+					Packages: map[string]dalec.SubPackage{
+						"libs": {Description: "Library files"},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		result := wrapper.SubPackages().String()
+
+		assert.Assert(t, cmp.Contains(result, "${shlibs:Depends}"))
+		assert.Assert(t, cmp.Contains(result, "${misc:Depends}"))
+	})
+
+	t.Run("multiple subpackages are emitted sorted by name", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:    "test-pkg",
+			Version: "1.0.0",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"zeta": {Description: "Zeta package"},
+						"alpha": {
+							Description: "Alpha package",
+							Dependencies: &dalec.SubPackageDependencies{
+								Runtime: dalec.PackageDependencyList{
+									"dep-a": dalec.PackageConstraints{},
+								},
+							},
+						},
+						"beta": {Description: "Beta package"},
+					},
+				},
+			},
+		}
+		wrapper := &controlWrapper{spec, "target1"}
+		result := wrapper.SubPackages().String()
+
+		// All three should be present
+		assert.Assert(t, cmp.Contains(result, "Package: test-pkg-alpha"))
+		assert.Assert(t, cmp.Contains(result, "Package: test-pkg-beta"))
+		assert.Assert(t, cmp.Contains(result, "Package: test-pkg-zeta"))
+
+		// Alpha should appear before beta which should appear before zeta
+		alphaIdx := strings.Index(result, "Package: test-pkg-alpha")
+		betaIdx := strings.Index(result, "Package: test-pkg-beta")
+		zetaIdx := strings.Index(result, "Package: test-pkg-zeta")
+		assert.Assert(t, alphaIdx < betaIdx)
+		assert.Assert(t, betaIdx < zetaIdx)
+	})
+
+	t.Run("WriteControl places the subpackage stanza after the primary, separated by a blank line", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Name:        "test-pkg",
+			Version:     "1.0.0",
+			Description: "Main package",
+			Targets: map[string]dalec.Target{
+				"target1": {
+					Packages: map[string]dalec.SubPackage{
+						"libs": {
+							Description: "Library files",
+							Dependencies: &dalec.SubPackageDependencies{
+								Runtime: dalec.PackageDependencyList{
+									"libfoo": dalec.PackageConstraints{},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		buf := &strings.Builder{}
+		err := WriteControl(spec, "target1", buf)
+		assert.NilError(t, err)
+		result := buf.String()
+
+		// Primary package stanza (template uses {{- .Name -}} which strips the space)
+		assert.Assert(t, cmp.Contains(result, "Source:test-pkg"))
+		assert.Assert(t, cmp.Contains(result, "Package:test-pkg\n"))
+		assert.Assert(t, cmp.Contains(result, "Description: Main package"))
+
+		// Subpackage stanza
+		assert.Assert(t, cmp.Contains(result, "Package: test-pkg-libs"))
+		assert.Assert(t, cmp.Contains(result, "Description: Library files"))
+		assert.Assert(t, cmp.Contains(result, "libfoo"))
+
+		// Subpackage stanza appears after primary
+		primaryIdx := strings.Index(result, "Package:test-pkg\n")
+		subIdx := strings.Index(result, "Package: test-pkg-libs")
+		assert.Assert(t, primaryIdx < subIdx)
+
+		// Debian control paragraphs must be separated by a blank line, otherwise
+		// dpkg parses the subpackage fields as part of the primary stanza and
+		// fails with a duplicate "Package" field.
+		assert.Assert(t, cmp.Contains(result, "Description: Main package\n\nPackage: test-pkg-libs"))
 	})
 }
