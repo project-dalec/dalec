@@ -1,6 +1,7 @@
 package distro
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
@@ -28,64 +29,64 @@ func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []st
 	// installs, which are guarded out for zypper-based distros at the worker
 	// level (Config.CrossArchInstallUnsupported), so this is a best-effort
 	// native rootfs install only.
-	rootFlag := ""
+	globalFlags := []string{"--non-interactive", "--gpg-auto-import-keys"}
 	if cfg.root != "" {
-		rootFlag = "--root " + cfg.root + " "
+		globalFlags = append(globalFlags, "--root", cfg.root)
 	}
 
 	// Global zypper flags: run unattended and auto-import repo signing keys.
-	globalFlags := "--non-interactive --gpg-auto-import-keys " + rootFlag
+	globalFlagsStr := strings.Join(globalFlags, " ")
 	// Install-time flags: accept licenses non-interactively and tolerate the
 	// vendor/version differences that arise when pulling from the Microsoft
 	// prod repos alongside the base SUSE repos.
-	installFlags := "--auto-agree-with-licenses --allow-downgrade --allow-vendor-change"
+	installFlags := []string{"--auto-agree-with-licenses", "--allow-downgrade", "--allow-vendor-change"}
+	installFlagsStr := strings.Join(installFlags, " ")
 
 	// zypper/libzypp has no command-line flag equivalent to dnf's
 	// --setopt=tsflags=nodocs: passing "--rpm-installexcludedocs" is rejected as
 	// an unknown option and fails the whole install before any package is laid
 	// down. Documentation exclusion is instead controlled by libzypp's
-	// "rpm.install.excludedocs" option in zypp.conf, which the install script
-	// enables for this invocation when docs should be excluded.
-	excludeDocs := "false"
+	// "rpm.install.excludedocs" option in zypp.conf. When docs are excluded,
+	// we inject a one-off config block into the generated install script.
+	excludeDocsConfigBlock := ""
 	if !cfg.includeDocs {
-		excludeDocs = "true"
+		excludeDocsConfigBlock = `
+# libzypp (not the zypper CLI) controls documentation exclusion via the
+# rpm.install.excludedocs option in zypp.conf. Enable it in the config file
+# libzypp will read for this install (honoring --root when set).
+zypp_conf="${root_dir}/etc/zypp/zypp.conf"
+mkdir -p "$(dirname "$zypp_conf")"
+if [ -f "$zypp_conf" ] && grep -Eq '^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs' "$zypp_conf"; then
+	sed -i -E 's|^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs.*|rpm.install.excludedocs = yes|' "$zypp_conf"
+else
+	printf '\nrpm.install.excludedocs = yes\n' >> "$zypp_conf"
+fi
+`
 	}
 
-	installScriptDt := `#!/usr/bin/env bash
+	installScriptDt := fmt.Sprintf(`#!/usr/bin/env bash
 set -eux -o pipefail
 
-import_keys_path="` + importKeysPath + `"
-global_flags="` + globalFlags + `"
-zypper_sub_cmd="` + strings.Join(zypperSubCmd, " ") + `"
-install_flags="` + installFlags + `"
-exclude_docs="` + excludeDocs + `"
-root_dir="` + cfg.root + `"
+import_keys_path=%q
+global_flags=%q
+zypper_sub_cmd=%q
+install_flags=%q
+root_dir=%q
 
 if [ -x "$import_keys_path" ]; then
 	"$import_keys_path"
 fi
 
-if [ "$exclude_docs" = "true" ]; then
-	# libzypp (not the zypper CLI) controls documentation exclusion via the
-	# rpm.install.excludedocs option in zypp.conf. Enable it in the config file
-	# libzypp will read for this install (honoring --root when set).
-	zypp_conf="${root_dir}/etc/zypp/zypp.conf"
-	mkdir -p "$(dirname "$zypp_conf")"
-	if [ -f "$zypp_conf" ] && grep -Eq '^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs' "$zypp_conf"; then
-		sed -i -E 's|^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs.*|rpm.install.excludedocs = yes|' "$zypp_conf"
-	else
-		printf '\nrpm.install.excludedocs = yes\n' >> "$zypp_conf"
-	fi
-fi
+%s
 
 zypper $global_flags $zypper_sub_cmd $install_flags "${@}"
-`
-	var runOpts []llb.RunOption
-
+`, importKeysPath, globalFlagsStr, strings.Join(zypperSubCmd, " "), installFlagsStr, cfg.root, excludeDocsConfigBlock)
 	installScript := llb.Scratch().File(llb.Mkfile("install.sh", 0o700, []byte(installScriptDt)), cfg.constraints...)
 	const installScriptPath = "/tmp/dalec/internal/zypper/install.sh"
 
-	runOpts = append(runOpts, llb.AddMount(installScriptPath, installScript, llb.SourcePath("install.sh"), llb.Readonly))
+	runOpts := []llb.RunOption{
+		llb.AddMount(installScriptPath, installScript, llb.SourcePath("install.sh"), llb.Readonly),
+	}
 
 	// If we have keys to import in order to access a repo, mount a script that
 	// imports them into the rpm keyring (zypper uses the same rpm keyring).
