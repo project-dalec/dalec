@@ -113,11 +113,12 @@ jobs:
           - Almalinux9
           - Rockylinux8
           - Rockylinux9
+          - SLES15
           - Trixie
           - other
         include:
           - suite: other
-            skip: Azlinux3|Azlinux4|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Resolute|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|Trixie
+            skip: Azlinux3|Azlinux4|Bookworm|Bullseye|Bionic|Focal|Jammy|Noble|Resolute|Windows|Almalinux8|Almalinux9|Rockylinux8|Rockylinux9|SLES15|Trixie
 
     steps:
       - name: Harden Runner
