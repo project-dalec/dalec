@@ -1,8 +1,10 @@
 package distro
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
+	"text/template"
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-dalec/dalec"
@@ -41,16 +43,29 @@ func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []st
 	// prod repos alongside the base SUSE repos.
 	installFlags := []string{"--auto-agree-with-licenses", "--allow-downgrade", "--allow-vendor-change"}
 	installFlagsStr := strings.Join(installFlags, " ")
+	zypperSubCmdStr := strings.Join(zypperSubCmd, " ")
 
-	// zypper/libzypp has no command-line flag equivalent to dnf's
-	// --setopt=tsflags=nodocs: passing "--rpm-installexcludedocs" is rejected as
-	// an unknown option and fails the whole install before any package is laid
-	// down. Documentation exclusion is instead controlled by libzypp's
-	// "rpm.install.excludedocs" option in zypp.conf. When docs are excluded,
-	// we inject a one-off config block into the generated install script.
-	excludeDocsConfigBlock := ""
-	if !cfg.includeDocs {
-		excludeDocsConfigBlock = `
+	// zypperInstallScriptTmpl renders the installer shell script.
+	// Scalar values are shell-quoted with %q to preserve safe literal values.
+	zypperInstallScriptTmpl := template.Must(template.New("zypper-install").Funcs(template.FuncMap{
+		"shellQuote": func(s string) string { return fmt.Sprintf("%q", s) },
+	}).Parse(`#!/usr/bin/env bash
+set -eux -o pipefail
+
+import_keys_path={{ shellQuote .ImportKeysPath }}
+global_flags={{ shellQuote .GlobalFlags }}
+zypper_sub_cmd={{ shellQuote .ZypperSubCmd }}
+install_flags={{ shellQuote .InstallFlags }}
+root_dir={{ shellQuote .Root }}
+
+if [ -x "$import_keys_path" ]; then
+	"$import_keys_path"
+fi
+
+{{ if not .IncludeDocs }}
+# zypper/libzypp has no command-line flag equivalent to dnf's
+# --setopt=tsflags=nodocs: passing "--rpm-installexcludedocs" is rejected as an
+# unknown option and fails the whole install before any package is laid down.
 # libzypp (not the zypper CLI) controls documentation exclusion via the
 # rpm.install.excludedocs option in zypp.conf. Enable it in the config file
 # libzypp will read for this install (honoring --root when set).
@@ -61,27 +76,32 @@ if [ -f "$zypp_conf" ] && grep -Eq '^[[:space:]]*#?[[:space:]]*rpm\.install\.exc
 else
 	printf '\nrpm.install.excludedocs = yes\n' >> "$zypp_conf"
 fi
-`
-	}
-
-	installScriptDt := fmt.Sprintf(`#!/usr/bin/env bash
-set -eux -o pipefail
-
-import_keys_path=%q
-global_flags=%q
-zypper_sub_cmd=%q
-install_flags=%q
-root_dir=%q
-
-if [ -x "$import_keys_path" ]; then
-	"$import_keys_path"
-fi
-
-%s
+{{ end }}
 
 zypper $global_flags $zypper_sub_cmd $install_flags "${@}"
-`, importKeysPath, globalFlagsStr, strings.Join(zypperSubCmd, " "), installFlagsStr, cfg.root, excludeDocsConfigBlock)
-	installScript := llb.Scratch().File(llb.Mkfile("install.sh", 0o700, []byte(installScriptDt)), cfg.constraints...)
+`))
+
+	var installScriptBuf bytes.Buffer
+	err := zypperInstallScriptTmpl.Execute(&installScriptBuf, struct {
+		ImportKeysPath string
+		GlobalFlags    string
+		ZypperSubCmd   string
+		InstallFlags   string
+		Root           string
+		IncludeDocs    bool
+	}{
+		ImportKeysPath: importKeysPath,
+		GlobalFlags:    globalFlagsStr,
+		ZypperSubCmd:   zypperSubCmdStr,
+		InstallFlags:   installFlagsStr,
+		Root:           cfg.root,
+		IncludeDocs:    cfg.includeDocs,
+	})
+	if err != nil {
+		panic(fmt.Errorf("rendering zypper install script: %w", err))
+	}
+
+	installScript := llb.Scratch().File(llb.Mkfile("install.sh", 0o700, installScriptBuf.Bytes()), cfg.constraints...)
 	const installScriptPath = "/tmp/dalec/internal/zypper/install.sh"
 
 	runOpts := []llb.RunOption{
