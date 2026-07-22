@@ -50,6 +50,9 @@ func withNodeMod(g *SourceGenerator, worker llb.State, name string, opts ...llb.
 
 			installPath := filepath.Join(installBasePath, name, g.Subpath, path)
 			installCmd := installCmd + " --prefix " + installPath
+			if g.NodeMod.Registry != "" {
+				installCmd += " --registry=" + g.NodeMod.Registry
+			}
 
 			st := worker.Run(
 				ShArgs(installCmd),
