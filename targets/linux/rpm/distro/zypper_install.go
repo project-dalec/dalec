@@ -20,7 +20,11 @@ import (
 // zypper does not take a --releasever flag (the release is fixed by the base
 // image).
 func ZypperInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
-	return zypperCommand(cfg, append([]string{"install"}, pkgs...), nil)
+	// Packages are passed as positional args ("${@}") rather than baked into the
+	// subcommand so that install flags (--allow-downgrade, etc.) render before
+	// the package operands. zypper rejects install flags that appear after a
+	// package name ("'--allow-downgrade' is not a package name or capability").
+	return zypperCommand(cfg, []string{"install"}, pkgs)
 }
 
 func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []string) llb.RunOption {
