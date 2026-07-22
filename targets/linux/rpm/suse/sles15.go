@@ -21,8 +21,9 @@ const (
 
 // ConfigSLES15 is the dalec distro configuration for SUSE Linux Enterprise 15.
 // It builds rpms inside a SUSE base image using zypper. Cross-architecture
-// builds are not supported because zypper lacks dnf's --forcearch/--installroot
-// mechanism.
+// builds cannot use dnf's --forcearch/--installroot path because zypper lacks
+// that mechanism, so dalec falls back to running the worker on the requested
+// target platform (using binfmt/QEMU when available).
 var ConfigSLES15 = &distro.Config{
 	ImageRef:   sles15Ref,
 	ContextRef: sles15WorkerContextName,

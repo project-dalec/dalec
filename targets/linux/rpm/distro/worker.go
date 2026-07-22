@@ -159,10 +159,14 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 
 	// The cross-arch path below installs into a foreign-arch rootfs using dnf's
 	// --forcearch/--installroot. Package managers that lack that capability
-	// (e.g. zypper) cannot cross-compile this way, so fail fast rather than
-	// silently invoking dnf on an image that does not have it.
+	// (e.g. zypper) cannot cross-compile this way. For those distros, fall back
+	// to running package installation on the requested target platform directly;
+	// when binfmt/QEMU is configured this executes under emulation.
 	if cfg.CrossArchInstallUnsupported {
-		return dalec.ErrorState(llb.Scratch(), errors.Errorf("cross-architecture builds are not supported for %s", cfg.FullName))
+		return targetBase.Run(
+			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
+			cfg.Install(cfg.BuilderPackages, installOpts...),
+		).Root()
 	}
 
 	targetArch, err := rpmArchFromPlatform(targetPlat)
@@ -210,7 +214,10 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 	}
 
 	if cfg.CrossArchInstallUnsupported {
-		return dalec.ErrorState(llb.Scratch(), errors.Errorf("cross-architecture sysext builds are not supported for %s", cfg.FullName))
+		return worker.Run(
+			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
+			cfg.Install([]string{"erofs-utils"}, installOpts...),
+		).Root()
 	}
 
 	targetArch, err := rpmArchFromPlatform(targetPlat)

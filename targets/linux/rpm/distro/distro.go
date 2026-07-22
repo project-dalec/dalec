@@ -47,8 +47,9 @@ type Config struct {
 	// install packages into a foreign-architecture rootfs. The cross-arch worker
 	// path relies on dnf's --forcearch/--installroot combination, which zypper
 	// (SUSE/openSUSE) does not support. When true, worker builds for a
-	// non-native target platform fail fast with a clear error instead of
-	// silently invoking dnf.
+	// non-native target platform avoid the dnf cross-root path and instead run
+	// package installation on the requested target platform directly, relying on
+	// binfmt/QEMU when available.
 	CrossArchInstallUnsupported bool
 }
 

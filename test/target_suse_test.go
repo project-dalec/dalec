@@ -56,14 +56,6 @@ func TestSLES15(t *testing.T) {
 			VersionID: "15.7",
 		},
 		SupportsGomodVersionUpdate: true,
-		// SUSE workers only support native-architecture builds
-		// (CrossArchInstallUnsupported), so the cross-platform subtest asserts
-		// the fail-fast guard error instead of a successful cross-arch build.
-		CrossArchUnsupported: true,
-		Platforms: []ocispecs.Platform{
-			{OS: "linux", Architecture: "amd64"},
-		},
-		PackageOutputPath: suseTargetOutputPath,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testSuseExtra(ctx, t, cfg, suse.ConfigSLES15.ImageRef)
@@ -71,14 +63,6 @@ func TestSLES15(t *testing.T) {
 
 func testSuseExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distroImageRef string) {
 	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef)
-}
-
-// suseTargetOutputPath produces the built-rpm path for SUSE. Unlike the
-// el9/azl3 distros, SUSE rpms have an empty %{?dist} tag, so there is no dist
-// component in the file name.
-func suseTargetOutputPath(spec *dalec.Spec, platform ocispecs.Platform) string {
-	arch := suseRpmArch(platform.Architecture)
-	return fmt.Sprintf("/RPMS/%s/%s-%s-%s.%s.rpm", arch, spec.Name, spec.Version, spec.Revision, arch)
 }
 
 // suseListSignFiles lists the rpm artifacts expected to be signed for SUSE.
