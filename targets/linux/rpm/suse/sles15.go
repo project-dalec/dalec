@@ -37,5 +37,6 @@ var ConfigSLES15 = &distro.Config{
 	RepoPlatformConfig:          &defaultPlatformConfig,
 	InstallFunc:                 distro.ZypperInstall,
 	CrossArchInstallUnsupported: true,
+	ContainerBaseImageRequired:  true,
 	FullName:                    sles15FullName,
 }

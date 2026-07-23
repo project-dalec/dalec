@@ -44,7 +44,9 @@ func basePackages(name string) []dalec.Spec {
 			Description: "DALEC base packages for " + name,
 			Dependencies: &dalec.PackageDependencies{
 				Runtime: dalec.PackageDependencyList{
-					"tzdata": {},
+					// SUSE/openSUSE ship the tz database as "timezone"; there is
+					// no "tzdata" package in the SLE_BCI repos (unlike Fedora/RHEL).
+					"timezone": {},
 				},
 			},
 		},

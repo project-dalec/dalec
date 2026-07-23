@@ -21,6 +21,7 @@ const (
 )
 
 var specTmpl = template.Must(template.New("spec").Funcs(tmplFuncs).Parse(strings.TrimSpace(`
+{{.DistroMacros}}
 {{.DisableStrip}}
 Name: {{.Name}}
 Version: {{.Version}}
@@ -114,7 +115,7 @@ func (w *specWrapper) Provides() fmt.Stringer {
 	// Azure Linux 4.
 	//
 	// The package's own `%post` scriptlet creates the user/group via
-	// `adduser` / `groupadd`, so declaring matching `Provides:` lines is
+	// `useradd` / `groupadd`, so declaring matching `Provides:` lines is
 	// a truthful statement about what installing this package
 	// accomplishes and lets the resolver satisfy the synthetic Requires
 	// against ourselves. This is a no-op on targets whose rpm doesn't
@@ -215,7 +216,9 @@ func getUserPostRequires(users []dalec.AddUserConfig, groups []dalec.AddGroupCon
 	var out string
 
 	if len(users) > 0 {
-		out += "Requires(post): /usr/sbin/adduser, /usr/bin/getent\n"
+		// postUsers() now also invokes groupadd (to create a per-user group), so
+		// require it whenever there are users even if no standalone groups exist.
+		out += "Requires(post): /usr/sbin/useradd, /usr/sbin/groupadd, /usr/bin/getent\n"
 	}
 	if len(groups) > 0 {
 		out += "Requires(post): /usr/sbin/groupadd, /usr/bin/getent\n"
@@ -248,6 +251,19 @@ func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
 	return ""
 }
 
+// getCapabilityPostRequires ensures setcap is available at %post time when the
+// spec sets Linux capabilities on an artifact that also has an ownership change
+// (the case where getArtifactCapabilities emits a setcap call in the scriptlet).
+// dnf-based distro base images ship libcap (which provides /usr/sbin/setcap), so
+// this is normally already satisfied there; SUSE's bci-base does not, so the
+// dependency (satisfied by libcap-progs) must be declared explicitly.
+func (w *specWrapper) getCapabilityPostRequires() string {
+	if w.getArtifactCapabilities() == "" {
+		return ""
+	}
+	return "Requires(post): /usr/sbin/setcap\n"
+}
+
 func (w *specWrapper) Requires() fmt.Stringer {
 	b := &strings.Builder{}
 
@@ -260,6 +276,7 @@ func (w *specWrapper) Requires() fmt.Stringer {
 	b.WriteString(getSystemdRequires(artifacts.Systemd))
 	b.WriteString(getUserPostRequires(artifacts.Users, artifacts.Groups))
 	b.WriteString(getOwnershipPostRequires(artifacts))
+	b.WriteString(w.getCapabilityPostRequires())
 
 	deps := w.GetPackageDeps(w.Target)
 	buildDeps := deps.GetBuild()
@@ -657,7 +674,16 @@ func (w *specWrapper) postUsers() string {
 
 	b := &strings.Builder{}
 	for _, user := range artifacts.Users {
-		fmt.Fprintf(b, "getent passwd %s >/dev/null || adduser %s\n", user.Name, user.Name)
+		// Create an explicit per-user group and add the user to it. dnf-based
+		// distros' useradd would create a matching primary group automatically
+		// (USERGROUPS_ENAB yes), but SUSE defaults new users into the shared
+		// "users" group (USERGROUPS_ENAB no). Even `useradd -U` on SUSE writes the
+		// group with a locked password field ("testuser:!:") rather than the
+		// conventional "testuser:x:". Creating the group up front with groupadd
+		// (which writes "x" on every distro) and passing -g yields identical,
+		// cross-distro-consistent /etc/group and /etc/passwd entries.
+		fmt.Fprintf(b, "getent group %s >/dev/null || groupadd %s\n", user.Name, user.Name)
+		fmt.Fprintf(b, "getent passwd %s >/dev/null || useradd -g %s %s\n", user.Name, user.Name, user.Name)
 	}
 	return b.String()
 }
@@ -1205,6 +1231,51 @@ func (w *specWrapper) DisableStrip() string {
 	artifacts := w.Spec.GetArtifacts(w.Target)
 	if artifacts.DisableStrip {
 		return "%global __strip /bin/true"
+	}
+	return ""
+}
+
+// DistroMacros emits target-specific rpm macro overrides at the very top of the
+// spec (before the preamble). It is gated on the target key, so it is a no-op for
+// all non-SUSE distros.
+//
+//   - %{_libexecdir}: dalec's cross-distro contract installs libexec artifacts to
+//     /usr/libexec (the layout used by every dnf-based distro), but SUSE's rpm
+//     macros default it to /usr/lib. Override it so the produced package matches
+//     the other distros' file layout and the shared integration tests.
+//
+//   - %{_docdir}: SUSE defaults this to /usr/share/doc/packages, but dalec's
+//     cross-distro contract (and the shared integration tests) expect the dnf
+//     layout /usr/share/doc/<name>. Override it to /usr/share/doc.
+//
+//   - %{_licensedir}: SUSE's rpm does not define this macro at all (it would
+//     expand to the literal string "%_licensedir"), so license artifacts have
+//     nowhere to go. Define it to /usr/share/licenses to match the dnf distros.
+//
+//   - %{__os_install_post}: SUSE's default post-install processing runs the
+//     brp-suse policy scripts (from brp-check-suse). Those scripts (chkstat in
+//     brp-05-permissions, the find in brp-15-strip-debug) fail to operate on
+//     dalec's tmpfs --buildroot, flooding the log with "failed to open root
+//     directory" errors and, critically, never stripping the binaries. Point SUSE
+//     at the generic /usr/lib/rpm/brp-strip instead (the exact mechanism the
+//     dnf-based distros already use successfully in the same build environment).
+//     brp-strip honors %{__strip}, so the existing DisableStrip() override
+//     (%global __strip /bin/true) continues to disable stripping when requested.
+func (w *specWrapper) DistroMacros() string {
+	if strings.HasPrefix(w.Target, "sles") {
+		// NOTE: __os_install_post MUST use %define (not %global). %global expands
+		// its body eagerly at definition time; since DistroMacros renders above
+		// DisableStrip() in specTmpl, a %global here would bake in the default
+		// %{__strip} (/usr/bin/strip) before DisableStrip() sets it to /bin/true,
+		// so DisableStrip would have no effect. %define defers %{__strip} expansion
+		// until rpm invokes %{__os_install_post} at the end of %install, by which
+		// point DisableStrip()'s override is in place.
+		return "%global _libexecdir %{_exec_prefix}/libexec\n" +
+			"%global _docdir /usr/share/doc\n" +
+			"%global _licensedir /usr/share/licenses\n" +
+			"%define __os_install_post /usr/lib/rpm/brp-compress \\\n" +
+			"    /usr/lib/rpm/brp-strip %{__strip} \\\n" +
+			"%{nil}"
 	}
 	return ""
 }

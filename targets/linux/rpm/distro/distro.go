@@ -51,6 +51,21 @@ type Config struct {
 	// package installation on the requested target platform directly, relying on
 	// binfmt/QEMU when available.
 	CrossArchInstallUnsupported bool
+
+	// ContainerBaseImageRequired indicates the distro cannot bootstrap a
+	// container filesystem from scratch because its package repositories publish
+	// no installable release / os-release / base-filesystem package. SUSE's
+	// public SLE_BCI repo is such a case: the only providers of
+	// `distribution-release` and `/etc/os-release` (e.g. `sles-release`) are
+	// `@System`-only and not installable, so a from-scratch install produces a
+	// container with no `/etc/os-release` and cannot satisfy the implicit
+	// `distribution-release` dependency pulled in by packages such as
+	// `systemd` (via `aaa_base`). When true and the spec declares no base
+	// image, the container is built on top of the distro's base image
+	// (cfg.ImageRef, e.g. bci-base) instead of llb.Scratch(), so
+	// `/etc/os-release`, `aaa_base` and the core utilities (grep, coreutils,
+	// ...) are already present.
+	ContainerBaseImageRequired bool
 }
 
 func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
