@@ -32,7 +32,6 @@ func withNodeMod(g *SourceGenerator, worker llb.State, name string, opts ...llb.
 	return func(in llb.State) llb.State {
 		workDir := "/work/src"
 		joinedWorkDir := filepath.Join(workDir, name, g.Subpath)
-		const installCmd = "npm install"
 		const installBasePath = "/work/download"
 
 		paths := g.NodeMod.Paths
@@ -49,13 +48,18 @@ func withNodeMod(g *SourceGenerator, worker llb.State, name string, opts ...llb.
 			// without having to do an additional copy to move the files around.
 
 			installPath := filepath.Join(installBasePath, name, g.Subpath, path)
-			installCmd := installCmd + " --prefix " + installPath
+			// Build an explicit argv (no shell) so each value is passed as a
+			// single literal argument. Running through `sh -c` would let
+			// characters in the registry URL such as &, ;, or $ be interpreted
+			// as shell syntax, truncating the value or executing unintended
+			// commands.
+			args := []string{"npm", "install", "--prefix", installPath}
 			if g.NodeMod.Registry != "" {
-				installCmd += " --registry=" + g.NodeMod.Registry
+				args = append(args, "--registry="+g.NodeMod.Registry)
 			}
 
 			st := worker.Run(
-				ShArgs(installCmd),
+				llb.Args(args),
 				llb.Dir(filepath.Join(joinedWorkDir, path)),
 				WithConstraints(opts...),
 				llb.AddMount(workDir, in, llb.Readonly),
