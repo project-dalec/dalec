@@ -401,6 +401,9 @@ type GeneratorNodeMod struct {
 	// Paths is the list of paths to run the generator on. Used to generate multi-module in a single source.
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 
+	// Registry specifies a custom npm registry URL to resolve packages from.
+	Registry string `yaml:"registry,omitempty" json:"registry,omitempty"`
+
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
 
