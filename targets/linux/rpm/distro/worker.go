@@ -142,7 +142,12 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 		DnfInstallWithConstraints(opts),
 	}
 
-	if samePlatform(targetPlat, buildPlat) {
+	// A same-platform build and a distro whose package manager cannot install
+	// into a foreign-arch rootfs (CrossArchInstallUnsupported, e.g. zypper) both
+	// install the builder packages directly on the target platform. See the
+	// CrossArchInstallUnsupported field docs on [Config] for why the cross-root
+	// dnf path below is skipped in that case.
+	if cfg.CrossArchInstallUnsupported || samePlatform(targetPlat, buildPlat) {
 		if slices.Contains(cfg.BuilderPackages, "dnf") {
 			// Install dnf first since this will be bootstrapped with a different package manager
 			// This keeps the package cache for the bootstrap mananager separate from the other base packages we use.
@@ -194,7 +199,7 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 		DnfInstallWithConstraints(opts),
 	}
 
-	if samePlatform(targetPlat, buildPlat) {
+	if cfg.CrossArchInstallUnsupported || samePlatform(targetPlat, buildPlat) {
 		return worker.Run(
 			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
 			cfg.Install([]string{"erofs-utils"}, installOpts...),

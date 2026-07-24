@@ -13,6 +13,7 @@ import (
 	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
 	"github.com/project-dalec/dalec/targets/linux/rpm/rockylinux"
+	"github.com/project-dalec/dalec/targets/linux/rpm/suse"
 	"github.com/project-dalec/dalec/targets/windows"
 )
 
@@ -39,6 +40,8 @@ func init() {
 
 	registerRoutes(azlinux.AzLinux3TargetKey, azlinux.Azlinux3Config.Routes)
 	registerRoutes(azlinux.AzLinux4TargetKey, azlinux.Azlinux4Config.Routes)
+
+	registerRoutes(suse.SLES15TargetKey, suse.ConfigSLES15.Routes)
 
 	registerRoutes(flatcar.TargetKey, flatcar.DefaultConfig.Routes)
 

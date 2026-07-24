@@ -8,6 +8,7 @@ import (
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/packaging/linux/rpm"
 	"github.com/project-dalec/dalec/targets/linux"
 )
 
@@ -42,6 +43,23 @@ type Config struct {
 
 	// erofs-utils 1.7+ is required for tar support.
 	SysextSupported bool
+
+	// CrossArchInstallUnsupported indicates the distro's package manager cannot
+	// install packages into a foreign-architecture rootfs. The cross-arch worker
+	// path relies on dnf's --forcearch/--installroot combination, which zypper
+	// (SUSE/openSUSE) does not support. When true, worker builds for a
+	// non-native target platform avoid the dnf cross-root path and instead run
+	// package installation on the requested target platform directly, relying on
+	// binfmt/QEMU when available.
+	CrossArchInstallUnsupported bool
+
+	// RPMMacros are distro-specific rpm macro overrides emitted at the very top
+	// of every generated spec (before the preamble). They let a distro express
+	// its rpm macro differences as data instead of the template layer hard-coding
+	// per-distro knowledge. See [github.com/project-dalec/dalec/targets/linux/rpm/suse]
+	// for an example (SUSE overrides _libexecdir/_docdir/_licensedir and
+	// __os_install_post to match the dnf-based distros' file layout and stripping).
+	RPMMacros []rpm.SpecMacro
 }
 
 func (cfg *Config) PackageCacheMount(root string) llb.RunOption {

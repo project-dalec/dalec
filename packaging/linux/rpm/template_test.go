@@ -725,7 +725,8 @@ cp -r src/simple.service %{buildroot}/%{_unitdir}/phony.service
 
 		got := w.Post().String()
 		want := `%post
-getent passwd testuser >/dev/null || adduser testuser
+getent group testuser >/dev/null || groupadd testuser
+getent passwd testuser >/dev/null || useradd -g testuser testuser
 
 `
 
@@ -992,7 +993,7 @@ OrderWithRequires(postun): systemd
 		w := specWrapper{Spec: spec}
 
 		got := w.Requires().String()
-		want := "Requires(post): /usr/sbin/adduser, /usr/bin/getent\n"
+		want := "Requires(post): /usr/sbin/useradd, /usr/sbin/groupadd, /usr/bin/getent\n"
 		assert.Equal(t, got, want)
 	})
 

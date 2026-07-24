@@ -21,6 +21,7 @@ const (
 )
 
 var specTmpl = template.Must(template.New("spec").Funcs(tmplFuncs).Parse(strings.TrimSpace(`
+{{.DistroMacros}}
 {{.DisableStrip}}
 Name: {{.Name}}
 Version: {{.Version}}
@@ -65,10 +66,30 @@ var tmplFuncs = map[string]any{
 	"optionalField": optionalField,
 }
 
+// SpecMacro is a single rpm macro override that a distro can request be emitted
+// at the very top of the generated spec (before the preamble). It lets distro
+// configs express their macro differences as data instead of the template layer
+// hard-coding per-distro knowledge.
+//
+// Define controls how the macro is written:
+//
+//   - false (default) emits "%global Name Value", which expands Value eagerly at
+//     definition time. Use this for plain path/string overrides.
+//   - true emits "%define Name Value", which defers expansion of any macros in
+//     Value until the macro is actually used. Use this when Value references
+//     another macro that may be redefined later in the spec (e.g. __os_install_post
+//     referencing %{__strip}, which DisableStrip() overrides).
+type SpecMacro struct {
+	Name   string
+	Value  string
+	Define bool
+}
+
 type specWrapper struct {
 	*dalec.Spec
 	Target       string
 	SourceFilter dalec.SourceFilterConfig
+	Macros       []SpecMacro
 }
 
 func (w *specWrapper) Changelog() (fmt.Stringer, error) {
@@ -114,7 +135,7 @@ func (w *specWrapper) Provides() fmt.Stringer {
 	// Azure Linux 4.
 	//
 	// The package's own `%post` scriptlet creates the user/group via
-	// `adduser` / `groupadd`, so declaring matching `Provides:` lines is
+	// `useradd` / `groupadd`, so declaring matching `Provides:` lines is
 	// a truthful statement about what installing this package
 	// accomplishes and lets the resolver satisfy the synthetic Requires
 	// against ourselves. This is a no-op on targets whose rpm doesn't
@@ -215,7 +236,9 @@ func getUserPostRequires(users []dalec.AddUserConfig, groups []dalec.AddGroupCon
 	var out string
 
 	if len(users) > 0 {
-		out += "Requires(post): /usr/sbin/adduser, /usr/bin/getent\n"
+		// postUsers() now also invokes groupadd (to create a per-user group), so
+		// require it whenever there are users even if no standalone groups exist.
+		out += "Requires(post): /usr/sbin/useradd, /usr/sbin/groupadd, /usr/bin/getent\n"
 	}
 	if len(groups) > 0 {
 		out += "Requires(post): /usr/sbin/groupadd, /usr/bin/getent\n"
@@ -248,6 +271,19 @@ func getOwnershipPostRequires(artifacts dalec.Artifacts) string {
 	return ""
 }
 
+// getCapabilityPostRequires ensures setcap is available at %post time when the
+// spec sets Linux capabilities on an artifact that also has an ownership change
+// (the case where getArtifactCapabilities emits a setcap call in the scriptlet).
+// dnf-based distro base images ship libcap (which provides /usr/sbin/setcap), so
+// this is normally already satisfied there; SUSE's bci-base does not, so the
+// dependency (satisfied by libcap-progs) must be declared explicitly.
+func (w *specWrapper) getCapabilityPostRequires() string {
+	if w.getArtifactCapabilities() == "" {
+		return ""
+	}
+	return "Requires(post): /usr/sbin/setcap\n"
+}
+
 func (w *specWrapper) Requires() fmt.Stringer {
 	b := &strings.Builder{}
 
@@ -260,6 +296,7 @@ func (w *specWrapper) Requires() fmt.Stringer {
 	b.WriteString(getSystemdRequires(artifacts.Systemd))
 	b.WriteString(getUserPostRequires(artifacts.Users, artifacts.Groups))
 	b.WriteString(getOwnershipPostRequires(artifacts))
+	b.WriteString(w.getCapabilityPostRequires())
 
 	deps := w.GetPackageDeps(w.Target)
 	buildDeps := deps.GetBuild()
@@ -657,7 +694,16 @@ func (w *specWrapper) postUsers() string {
 
 	b := &strings.Builder{}
 	for _, user := range artifacts.Users {
-		fmt.Fprintf(b, "getent passwd %s >/dev/null || adduser %s\n", user.Name, user.Name)
+		// Create an explicit per-user group and add the user to it. dnf-based
+		// distros' useradd would create a matching primary group automatically
+		// (USERGROUPS_ENAB yes), but SUSE defaults new users into the shared
+		// "users" group (USERGROUPS_ENAB no). Even `useradd -U` on SUSE writes the
+		// group with a locked password field ("testuser:!:") rather than the
+		// conventional "testuser:x:". Creating the group up front with groupadd
+		// (which writes "x" on every distro) and passing -g yields identical,
+		// cross-distro-consistent /etc/group and /etc/passwd entries.
+		fmt.Fprintf(b, "getent group %s >/dev/null || groupadd %s\n", user.Name, user.Name)
+		fmt.Fprintf(b, "getent passwd %s >/dev/null || useradd -g %s %s\n", user.Name, user.Name, user.Name)
 	}
 	return b.String()
 }
@@ -1209,6 +1255,26 @@ func (w *specWrapper) DisableStrip() string {
 	return ""
 }
 
+// DistroMacros emits distro-specific rpm macro overrides at the very top of the
+// spec (before the preamble). The macros are supplied by the distro config (see
+// [github.com/project-dalec/dalec/targets/linux/rpm/distro.Config.RPMMacros]) so
+// the template layer stays distro-agnostic; it is a no-op when no macros are set.
+func (w *specWrapper) DistroMacros() string {
+	if len(w.Macros) == 0 {
+		return ""
+	}
+
+	b := &strings.Builder{}
+	for _, m := range w.Macros {
+		directive := "%global"
+		if m.Define {
+			directive = "%define"
+		}
+		fmt.Fprintf(b, "%s %s %s\n", directive, m.Name, m.Value)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (w *specWrapper) DisableAutoReq() string {
 	artifacts := w.Spec.GetArtifacts(w.Target)
 	if artifacts.DisableAutoRequires {
@@ -1223,7 +1289,13 @@ func WriteSpec(spec *dalec.Spec, target string, w io.Writer) error {
 }
 
 func WriteSpecWithSourceFilter(spec *dalec.Spec, target string, filter dalec.SourceFilterConfig, w io.Writer) error {
-	s := &specWrapper{Spec: spec, Target: target, SourceFilter: filter}
+	return WriteSpecWithMacros(spec, target, filter, nil, w)
+}
+
+// WriteSpecWithMacros is like [WriteSpecWithSourceFilter] but also emits the
+// provided distro-specific rpm macro overrides at the top of the spec.
+func WriteSpecWithMacros(spec *dalec.Spec, target string, filter dalec.SourceFilterConfig, macros []SpecMacro, w io.Writer) error {
+	s := &specWrapper{Spec: spec, Target: target, SourceFilter: filter, Macros: macros}
 
 	err := specTmpl.Execute(w, s)
 	if err != nil {
