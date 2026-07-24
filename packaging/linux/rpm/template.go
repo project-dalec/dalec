@@ -66,10 +66,30 @@ var tmplFuncs = map[string]any{
 	"optionalField": optionalField,
 }
 
+// SpecMacro is a single rpm macro override that a distro can request be emitted
+// at the very top of the generated spec (before the preamble). It lets distro
+// configs express their macro differences as data instead of the template layer
+// hard-coding per-distro knowledge.
+//
+// Define controls how the macro is written:
+//
+//   - false (default) emits "%global Name Value", which expands Value eagerly at
+//     definition time. Use this for plain path/string overrides.
+//   - true emits "%define Name Value", which defers expansion of any macros in
+//     Value until the macro is actually used. Use this when Value references
+//     another macro that may be redefined later in the spec (e.g. __os_install_post
+//     referencing %{__strip}, which DisableStrip() overrides).
+type SpecMacro struct {
+	Name   string
+	Value  string
+	Define bool
+}
+
 type specWrapper struct {
 	*dalec.Spec
 	Target       string
 	SourceFilter dalec.SourceFilterConfig
+	Macros       []SpecMacro
 }
 
 func (w *specWrapper) Changelog() (fmt.Stringer, error) {
@@ -1235,49 +1255,24 @@ func (w *specWrapper) DisableStrip() string {
 	return ""
 }
 
-// DistroMacros emits target-specific rpm macro overrides at the very top of the
-// spec (before the preamble). It is gated on the target key, so it is a no-op for
-// all non-SUSE distros.
-//
-//   - %{_libexecdir}: dalec's cross-distro contract installs libexec artifacts to
-//     /usr/libexec (the layout used by every dnf-based distro), but SUSE's rpm
-//     macros default it to /usr/lib. Override it so the produced package matches
-//     the other distros' file layout and the shared integration tests.
-//
-//   - %{_docdir}: SUSE defaults this to /usr/share/doc/packages, but dalec's
-//     cross-distro contract (and the shared integration tests) expect the dnf
-//     layout /usr/share/doc/<name>. Override it to /usr/share/doc.
-//
-//   - %{_licensedir}: SUSE's rpm does not define this macro at all (it would
-//     expand to the literal string "%_licensedir"), so license artifacts have
-//     nowhere to go. Define it to /usr/share/licenses to match the dnf distros.
-//
-//   - %{__os_install_post}: SUSE's default post-install processing runs the
-//     brp-suse policy scripts (from brp-check-suse). Those scripts (chkstat in
-//     brp-05-permissions, the find in brp-15-strip-debug) fail to operate on
-//     dalec's tmpfs --buildroot, flooding the log with "failed to open root
-//     directory" errors and, critically, never stripping the binaries. Point SUSE
-//     at the generic /usr/lib/rpm/brp-strip instead (the exact mechanism the
-//     dnf-based distros already use successfully in the same build environment).
-//     brp-strip honors %{__strip}, so the existing DisableStrip() override
-//     (%global __strip /bin/true) continues to disable stripping when requested.
+// DistroMacros emits distro-specific rpm macro overrides at the very top of the
+// spec (before the preamble). The macros are supplied by the distro config (see
+// [github.com/project-dalec/dalec/targets/linux/rpm/distro.Config.RPMMacros]) so
+// the template layer stays distro-agnostic; it is a no-op when no macros are set.
 func (w *specWrapper) DistroMacros() string {
-	if strings.HasPrefix(w.Target, "sles") {
-		// NOTE: __os_install_post MUST use %define (not %global). %global expands
-		// its body eagerly at definition time; since DistroMacros renders above
-		// DisableStrip() in specTmpl, a %global here would bake in the default
-		// %{__strip} (/usr/bin/strip) before DisableStrip() sets it to /bin/true,
-		// so DisableStrip would have no effect. %define defers %{__strip} expansion
-		// until rpm invokes %{__os_install_post} at the end of %install, by which
-		// point DisableStrip()'s override is in place.
-		return "%global _libexecdir %{_exec_prefix}/libexec\n" +
-			"%global _docdir /usr/share/doc\n" +
-			"%global _licensedir /usr/share/licenses\n" +
-			"%define __os_install_post /usr/lib/rpm/brp-compress \\\n" +
-			"    /usr/lib/rpm/brp-strip %{__strip} \\\n" +
-			"%{nil}"
+	if len(w.Macros) == 0 {
+		return ""
 	}
-	return ""
+
+	b := &strings.Builder{}
+	for _, m := range w.Macros {
+		directive := "%global"
+		if m.Define {
+			directive = "%define"
+		}
+		fmt.Fprintf(b, "%s %s %s\n", directive, m.Name, m.Value)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (w *specWrapper) DisableAutoReq() string {
@@ -1294,7 +1289,13 @@ func WriteSpec(spec *dalec.Spec, target string, w io.Writer) error {
 }
 
 func WriteSpecWithSourceFilter(spec *dalec.Spec, target string, filter dalec.SourceFilterConfig, w io.Writer) error {
-	s := &specWrapper{Spec: spec, Target: target, SourceFilter: filter}
+	return WriteSpecWithMacros(spec, target, filter, nil, w)
+}
+
+// WriteSpecWithMacros is like [WriteSpecWithSourceFilter] but also emits the
+// provided distro-specific rpm macro overrides at the top of the spec.
+func WriteSpecWithMacros(spec *dalec.Spec, target string, filter dalec.SourceFilterConfig, macros []SpecMacro, w io.Writer) error {
+	s := &specWrapper{Spec: spec, Target: target, SourceFilter: filter, Macros: macros}
 
 	err := specTmpl.Execute(w, s)
 	if err != nil {

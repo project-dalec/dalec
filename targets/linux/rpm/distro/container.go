@@ -28,16 +28,6 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	skipBase := bi != nil
 	rootfs := bi.ToState(sOpt, opts...)
 
-	// Some distros (SUSE) cannot bootstrap a container filesystem from scratch
-	// because their public repos publish no installable release/os-release/base
-	// package. When the spec declares no base image, build on top of the
-	// distro's base image so /etc/os-release, aaa_base and core utilities are
-	// present; the base is already provisioned, so skip the base virtual package.
-	if bi == nil && cfg.ContainerBaseImageRequired {
-		rootfs = frontend.GetBaseImage(sOpt, cfg.ImageRef, opts...)
-		skipBase = true
-	}
-
 	installTimeRepos := spec.GetInstallRepos(targetKey)
 	repoMounts, keyPaths := cfg.RepoMounts(installTimeRepos, sOpt, opts...)
 	importRepos := []DnfInstallOpt{

@@ -29,7 +29,8 @@ func TestSLES15(t *testing.T) {
 			FormatDepEqual: func(v, _ string) string {
 				return v
 			},
-			// SUSE rpms carry no %{?dist} tag, so sign-file names have no dist component.
+			// SUSE builds carry a custom .sles15 %{dist} tag so the produced rpms
+			// are distinguishable from other distros' rpms of the same NVR.
 			ListExpectedSignFiles: suseListSignFiles,
 			PackageOverrides: map[string]string{
 				"rust":  "rust cargo",
@@ -45,6 +46,9 @@ func TestSLES15(t *testing.T) {
 			Targets: "/etc/systemd/system",
 		},
 		Libdir: "/usr/lib64",
+		// openSUSE Leap / SLE 15 keep %{_libexecdir} at /usr/lib (only Tumbleweed
+		// migrated to the FHS 3.0 /usr/libexec), so libexec artifacts land there.
+		LibexecDir: "/usr/lib",
 		Worker: workerConfig{
 			ContextName:    suse.ConfigSLES15.ContextRef,
 			CreateRepo:     createZypperRepo(suse.ConfigSLES15),
@@ -66,9 +70,10 @@ func testSuseExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distr
 }
 
 // suseListSignFiles lists the rpm artifacts expected to be signed for SUSE.
-// SUSE has no %{?dist} tag, so the file names contain no dist component.
+// SUSE builds set a custom .sles15 %{dist} tag (see suse.ConfigSLES15), so the
+// file names include a .sles15 dist component.
 func suseListSignFiles(spec *dalec.Spec, platform ocispecs.Platform) []string {
-	base := fmt.Sprintf("%s-%s-%s", spec.Name, spec.Version, spec.Revision)
+	base := fmt.Sprintf("%s-%s-%s.sles15", spec.Name, spec.Version, spec.Revision)
 	arch := suseRpmArch(platform.Architecture)
 
 	return []string{

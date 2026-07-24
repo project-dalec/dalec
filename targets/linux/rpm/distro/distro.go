@@ -8,6 +8,7 @@ import (
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
+	"github.com/project-dalec/dalec/packaging/linux/rpm"
 	"github.com/project-dalec/dalec/targets/linux"
 )
 
@@ -52,20 +53,13 @@ type Config struct {
 	// binfmt/QEMU when available.
 	CrossArchInstallUnsupported bool
 
-	// ContainerBaseImageRequired indicates the distro cannot bootstrap a
-	// container filesystem from scratch because its package repositories publish
-	// no installable release / os-release / base-filesystem package. SUSE's
-	// public SLE_BCI repo is such a case: the only providers of
-	// `distribution-release` and `/etc/os-release` (e.g. `sles-release`) are
-	// `@System`-only and not installable, so a from-scratch install produces a
-	// container with no `/etc/os-release` and cannot satisfy the implicit
-	// `distribution-release` dependency pulled in by packages such as
-	// `systemd` (via `aaa_base`). When true and the spec declares no base
-	// image, the container is built on top of the distro's base image
-	// (cfg.ImageRef, e.g. bci-base) instead of llb.Scratch(), so
-	// `/etc/os-release`, `aaa_base` and the core utilities (grep, coreutils,
-	// ...) are already present.
-	ContainerBaseImageRequired bool
+	// RPMMacros are distro-specific rpm macro overrides emitted at the very top
+	// of every generated spec (before the preamble). They let a distro express
+	// its rpm macro differences as data instead of the template layer hard-coding
+	// per-distro knowledge. See [github.com/project-dalec/dalec/targets/linux/rpm/suse]
+	// for an example (SUSE overrides _libexecdir/_docdir/_licensedir and
+	// __os_install_post to match the dnf-based distros' file layout and stripping).
+	RPMMacros []rpm.SpecMacro
 }
 
 func (cfg *Config) PackageCacheMount(root string) llb.RunOption {

@@ -142,7 +142,12 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 		DnfInstallWithConstraints(opts),
 	}
 
-	if samePlatform(targetPlat, buildPlat) {
+	// A same-platform build and a distro whose package manager cannot install
+	// into a foreign-arch rootfs (CrossArchInstallUnsupported, e.g. zypper) both
+	// install the builder packages directly on the target platform. See the
+	// CrossArchInstallUnsupported field docs on [Config] for why the cross-root
+	// dnf path below is skipped in that case.
+	if cfg.CrossArchInstallUnsupported || samePlatform(targetPlat, buildPlat) {
 		if slices.Contains(cfg.BuilderPackages, "dnf") {
 			// Install dnf first since this will be bootstrapped with a different package manager
 			// This keeps the package cache for the bootstrap mananager separate from the other base packages we use.
@@ -151,18 +156,6 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 				cfg.Install([]string{"dnf"}, installOpts...),
 			).Root()
 		}
-		return targetBase.Run(
-			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
-			cfg.Install(cfg.BuilderPackages, installOpts...),
-		).Root()
-	}
-
-	// The cross-arch path below installs into a foreign-arch rootfs using dnf's
-	// --forcearch/--installroot. Package managers that lack that capability
-	// (e.g. zypper) cannot cross-compile this way. For those distros, fall back
-	// to running package installation on the requested target platform directly;
-	// when binfmt/QEMU is configured this executes under emulation.
-	if cfg.CrossArchInstallUnsupported {
 		return targetBase.Run(
 			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
 			cfg.Install(cfg.BuilderPackages, installOpts...),
@@ -206,14 +199,7 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 		DnfInstallWithConstraints(opts),
 	}
 
-	if samePlatform(targetPlat, buildPlat) {
-		return worker.Run(
-			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
-			cfg.Install([]string{"erofs-utils"}, installOpts...),
-		).Root()
-	}
-
-	if cfg.CrossArchInstallUnsupported {
+	if cfg.CrossArchInstallUnsupported || samePlatform(targetPlat, buildPlat) {
 		return worker.Run(
 			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
 			cfg.Install([]string{"erofs-utils"}, installOpts...),
