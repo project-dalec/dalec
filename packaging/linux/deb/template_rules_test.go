@@ -1,6 +1,8 @@
 package deb
 
 import (
+	"maps"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -149,83 +151,193 @@ func TestRules_OverrideSystemd(t *testing.T) {
 }
 
 func TestDepends(t *testing.T) {
-	control := &controlWrapper{
-		Spec: &dalec.Spec{},
-	}
-
-	buf := &strings.Builder{}
-	control.depends(buf, nil)
-
-	expect := `
+	withDebhelperDependencies := `
 Depends: ${misc:Depends},
-         ${shlibs:Depends}
-`
-	actual := strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
-
-	buf.Reset()
-
-	// Test again with non-nil deps
-	control.depends(buf, &dalec.PackageDependencies{})
-	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
-
-	buf.Reset()
-
-	// Test again with non-nil runtime deps
-	control.depends(buf, &dalec.PackageDependencies{
-		Runtime: map[string]dalec.PackageConstraints{},
-	})
-	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
-
-	buf.Reset()
-
-	// Test again with other runtime deps
-	control.depends(buf, &dalec.PackageDependencies{
-		Runtime: map[string]dalec.PackageConstraints{
-			"foo": {},
-			"bar": {},
-		},
-	})
-
-	expect = `
+         ${shlibs:Depends}`
+	withRuntimeDependencies := `
 Depends: ${misc:Depends},
          ${shlibs:Depends},
          bar,
-         foo
-`
-	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+         foo`
 
-	buf.Reset()
-
-	// Test again with other runtime deps and shlibs specified
-	control.depends(buf, &dalec.PackageDependencies{
-		Runtime: map[string]dalec.PackageConstraints{
-			"foo":               {},
-			"bar":               {},
-			"${shlibs:Depends}": {},
+	tests := []struct {
+		name                string
+		runtimeDependencies dalec.PackageDependencyList
+		disableAutoRequires bool
+		expected            string
+	}{
+		{
+			name:     "nil runtime dependencies add debhelper dependencies",
+			expected: withDebhelperDependencies,
 		},
-	})
-
-	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
-
-	buf.Reset()
-
-	// Test again with other runtime deps and shlibs and misc depends specified
-	control.depends(buf, &dalec.PackageDependencies{
-		Runtime: map[string]dalec.PackageConstraints{
-			"foo":               {},
-			"bar":               {},
-			"${shlibs:Depends}": {},
-			"${misc:Depends}":   {},
+		{
+			name:                "empty runtime dependencies add debhelper dependencies",
+			runtimeDependencies: dalec.PackageDependencyList{},
+			expected:            withDebhelperDependencies,
 		},
-	})
+		{
+			name: "package runtime dependencies are retained",
+			runtimeDependencies: dalec.PackageDependencyList{
+				"foo": {},
+				"bar": {},
+			},
+			expected: withRuntimeDependencies,
+		},
+		{
+			name: "existing shlibs dependency is not duplicated",
+			runtimeDependencies: dalec.PackageDependencyList{
+				"foo":               {},
+				"bar":               {},
+				"${shlibs:Depends}": {},
+			},
+			expected: withRuntimeDependencies,
+		},
+		{
+			name: "existing debhelper dependencies are not duplicated",
+			runtimeDependencies: dalec.PackageDependencyList{
+				"foo":               {},
+				"bar":               {},
+				"${shlibs:Depends}": {},
+				"${misc:Depends}":   {},
+			},
+			expected: withRuntimeDependencies,
+		},
+		{
+			name:                "disabled automatic requirements omit shlibs dependency",
+			disableAutoRequires: true,
+			expected:            "Depends: ${misc:Depends}",
+		},
+		{
+			name: "disabled automatic requirements retain explicit runtime dependencies",
+			runtimeDependencies: dalec.PackageDependencyList{
+				"foo": {},
+				"bar": {},
+			},
+			disableAutoRequires: true,
+			expected: `
+Depends: ${misc:Depends},
+         bar,
+         foo`,
+		},
+	}
 
-	actual = strings.TrimSpace(buf.String())
-	assert.Check(t, cmp.Equal(actual, strings.TrimSpace(expect)))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			buf := &strings.Builder{}
+			original := maps.Clone(test.runtimeDependencies)
+
+			writeDepends(buf, test.runtimeDependencies, test.disableAutoRequires)
+
+			assert.Check(t, cmp.Equal(strings.TrimSpace(buf.String()), strings.TrimSpace(test.expected)))
+			assert.Assert(t, reflect.DeepEqual(test.runtimeDependencies, original), "runtime dependencies were mutated")
+		})
+	}
+}
+
+func TestRules_OverridePerms(t *testing.T) {
+	tests := []struct {
+		name      string
+		artifacts dalec.Artifacts
+		expected  string
+	}{
+		{
+			name: "default permissions emit no override",
+			artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{"example": {}},
+			},
+		},
+		{
+			name: "artifact permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Binaries: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "config file permissions emit an override",
+			artifacts: dalec.Artifacts{
+				ConfigFiles: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "manpage permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Manpages: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "header permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Headers: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "license permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Licenses: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "documentation permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Docs: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "library permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Libs: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "libexec permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Libexec: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "data file permissions emit an override",
+			artifacts: dalec.Artifacts{
+				DataDirs: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "config directory permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Directories: &dalec.CreateArtifactDirectories{
+					Config: map[string]dalec.ArtifactDirConfig{"example": {Mode: 0o750}},
+				},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+		{
+			name: "state directory permissions emit an override",
+			artifacts: dalec.Artifacts{
+				Directories: &dalec.CreateArtifactDirectories{
+					State: map[string]dalec.ArtifactDirConfig{"example": {Mode: 0o700}},
+				},
+			},
+			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			w := newRulesWrapper(test.artifacts)
+
+			actual := w.OverridePerms().String()
+
+			assert.Equal(t, actual, test.expected)
+		})
+	}
 }
 
 func TestRules_OverrideStrip(t *testing.T) {

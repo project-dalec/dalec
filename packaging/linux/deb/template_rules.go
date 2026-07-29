@@ -93,10 +93,7 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 		return false
 	}
 
-	checkArtifactPerms := func(artifacts *dalec.Artifacts) bool {
-		if artifacts == nil {
-			return false
-		}
+	checkArtifactPerms := func(artifacts dalec.Artifacts) bool {
 		return checkPerms(artifacts.Binaries) ||
 			checkPerms(artifacts.ConfigFiles) ||
 			checkPerms(artifacts.Manpages) ||
@@ -111,16 +108,11 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 			checkDirPerms(artifacts.Directories.GetState())
 	}
 
-	artifacts := w.GetArtifacts(w.target)
-	fixPerms := checkArtifactPerms(&artifacts)
-
-	// Also check subpackage artifacts
-	if !fixPerms {
-		for _, pkg := range dalec.GetSubPackagesForTarget(w.Spec, w.target) {
-			if checkArtifactPerms(pkg.Artifacts) {
-				fixPerms = true
-				break
-			}
+	var fixPerms bool
+	for _, pkg := range resolvePackages(w.Spec, w.target) {
+		if checkArtifactPerms(pkg.artifacts) {
+			fixPerms = true
+			break
 		}
 	}
 
@@ -156,30 +148,16 @@ func groupUnitsByBaseName(ls map[string]dalec.SystemdUnitConfig) map[string]map[
 func (w *rulesWrapper) OverrideSystemd() (fmt.Stringer, error) {
 	b := &strings.Builder{}
 
-	artifacts := w.GetArtifacts(w.target)
-	units := artifacts.Systemd.GetUnits()
-
-	// Collect subpackage units
-	type pkgUnits struct {
-		pkgName string
-		units   map[string]dalec.SystemdUnitConfig
-	}
-	var subPkgUnits []pkgUnits
-
-	for key, pkg := range dalec.GetSubPackagesForTarget(w.Spec, w.target) {
-		if pkg.Artifacts == nil {
-			continue
-		}
-		subUnits := pkg.Artifacts.Systemd.GetUnits()
-		if len(subUnits) > 0 {
-			subPkgUnits = append(subPkgUnits, pkgUnits{
-				pkgName: pkg.ResolvedName(w.Spec.Name, key),
-				units:   subUnits,
-			})
+	packages := resolvePackages(w.Spec, w.target)
+	var hasUnits bool
+	for _, pkg := range packages {
+		if len(pkg.artifacts.Systemd.GetUnits()) > 0 {
+			hasUnits = true
+			break
 		}
 	}
 
-	if len(units) == 0 && len(subPkgUnits) == 0 {
+	if !hasUnits {
 		return b, nil
 	}
 
@@ -190,56 +168,33 @@ func (w *rulesWrapper) OverrideSystemd() (fmt.Stringer, error) {
 	// package's postinst, not always in the primary package's postinst.
 	var customEnablePartials []customSystemdPartial
 
-	// Primary package units
-	grouped := groupUnitsByBaseName(units)
-	var primaryNeedsCustom bool
-	for basename, grouping := range dalec.SortedMapIter(grouped) {
-		needsCustomEnable := requiresCustomEnable(grouping)
-		if needsCustomEnable {
-			primaryNeedsCustom = true
-		}
-
-		firstKey := maps.Keys(grouping)[0]
-		enable := grouping[firstKey].Enable
-
-		b.WriteString("\tdh_installsystemd --name=" + basename)
-		if !enable || needsCustomEnable {
-			b.WriteString(" --no-enable")
-		}
-		b.WriteString("\n")
-	}
-
-	if primaryNeedsCustom {
-		customEnablePartials = append(customEnablePartials, customSystemdPartial{
-			pkgName:   w.Spec.Name,
-			isPrimary: true,
-		})
-	}
-
-	// Subpackage units
-	for _, su := range subPkgUnits {
-		grouped := groupUnitsByBaseName(su.units)
-
-		var subNeedsCustom bool
+	for _, pkg := range packages {
+		grouped := groupUnitsByBaseName(pkg.artifacts.Systemd.GetUnits())
+		var needsCustomPartial bool
 		for basename, grouping := range dalec.SortedMapIter(grouped) {
 			needsCustomEnable := requiresCustomEnable(grouping)
 			if needsCustomEnable {
-				subNeedsCustom = true
+				needsCustomPartial = true
 			}
 
 			firstKey := maps.Keys(grouping)[0]
 			enable := grouping[firstKey].Enable
 
-			b.WriteString("\tdh_installsystemd -p" + su.pkgName + " --name=" + basename)
+			b.WriteString("\tdh_installsystemd")
+			if !pkg.primary {
+				b.WriteString(" -p" + pkg.name)
+			}
+			b.WriteString(" --name=" + basename)
 			if !enable || needsCustomEnable {
 				b.WriteString(" --no-enable")
 			}
 			b.WriteString("\n")
 		}
 
-		if subNeedsCustom {
+		if needsCustomPartial {
 			customEnablePartials = append(customEnablePartials, customSystemdPartial{
-				pkgName: su.pkgName,
+				pkgName:   pkg.name,
+				isPrimary: pkg.primary,
 			})
 		}
 	}
@@ -270,18 +225,13 @@ func (w *rulesWrapper) OverrideStrip() fmt.Stringer {
 }
 
 func (w *rulesWrapper) OverrideAutoRequires() fmt.Stringer {
-	artifacts := w.Spec.GetArtifacts(w.target)
 	buf := &strings.Builder{}
 
-	packages := resolveSubPackages(w.Spec, w.target)
-	disabled := make([]string, 0, 1+len(packages))
-	if artifacts.DisableAutoRequires {
-		disabled = append(disabled, w.Spec.Name)
-	}
-
-	for _, resolved := range packages {
-		if resolved.pkg.Artifacts != nil && resolved.pkg.Artifacts.DisableAutoRequires {
-			disabled = append(disabled, resolved.name)
+	packages := resolvePackages(w.Spec, w.target)
+	disabled := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		if pkg.artifacts.DisableAutoRequires {
+			disabled = append(disabled, pkg.name)
 		}
 	}
 
@@ -290,7 +240,7 @@ func (w *rulesWrapper) OverrideAutoRequires() fmt.Stringer {
 	}
 
 	buf.WriteString("override_dh_shlibdeps:\n")
-	if len(disabled) == 1+len(packages) {
+	if len(disabled) == len(packages) {
 		return buf
 	}
 

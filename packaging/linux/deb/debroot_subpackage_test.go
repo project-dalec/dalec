@@ -30,6 +30,26 @@ func TestDebrootSubPackageInstallFile(t *testing.T) {
 							Binaries: map[string]dalec.ArtifactConfig{
 								"mylib-cli": {},
 							},
+							ConfigFiles: map[string]dalec.ArtifactConfig{
+								"config.yaml": {Name: "renamed.conf", SubPath: "example"},
+							},
+							Headers: map[string]dalec.ArtifactConfig{
+								"include/example.h": {Name: "renamed.h", SubPath: "example"},
+							},
+							Systemd: &dalec.SystemdConfiguration{
+								Dropins: map[string]dalec.SystemdDropinConfig{
+									"override.conf": {Name: "renamed-override.conf", Unit: "example.service"},
+								},
+							},
+							DataDirs: map[string]dalec.ArtifactConfig{
+								"assets/data": {Name: "renamed-data", SubPath: "example"},
+							},
+							Libexec: map[string]dalec.ArtifactConfig{
+								"helper": {Name: "renamed-helper", SubPath: "example"},
+							},
+							Libs: map[string]dalec.ArtifactConfig{
+								"libexample.so": {Name: "librenamed.so", SubPath: "example"},
+							},
 						},
 					},
 				},
@@ -45,12 +65,46 @@ func TestDebrootSubPackageInstallFile(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Assert(t, mkfile != nil, "expected example-libs.install to be generated")
 
-	t.Run("an absolute artifact destination remains rooted in the supplemental package staging directory", func(t *testing.T) {
-		assert.Assert(t, cmp.Contains(
-			string(mkfile.Data),
-			"do_install debian/example-libs/usr/bin debian/example-libs/usr/bin/mylib-cli mylib-cli\n",
-		))
-	})
+	content := string(mkfile.Data)
+	tests := []struct {
+		name     string
+		expected string
+	}{
+		{
+			name:     "binaries install under usr bin",
+			expected: "do_install debian/example-libs/usr/bin debian/example-libs/usr/bin/mylib-cli mylib-cli\n",
+		},
+		{
+			name:     "config files install under etc",
+			expected: "do_install debian/example-libs/etc/example debian/example-libs/etc/example/renamed.conf config.yaml\n",
+		},
+		{
+			name:     "headers install under usr include",
+			expected: "do_install debian/example-libs/usr/include/example debian/example-libs/usr/include/example/renamed.h include/example.h\n",
+		},
+		{
+			name:     "systemd dropins install under their unit",
+			expected: "do_install debian/example-libs/lib/systemd/system/example.service.d debian/example-libs/lib/systemd/system/example.service.d/renamed-override.conf override.conf\n",
+		},
+		{
+			name:     "data files install under usr share",
+			expected: "do_install debian/example-libs/usr/share/example debian/example-libs/usr/share/example/renamed-data assets/data\n",
+		},
+		{
+			name:     "libexec files install under usr libexec",
+			expected: "do_install debian/example-libs/usr/libexec/example debian/example-libs/usr/libexec/example/renamed-helper helper\n",
+		},
+		{
+			name:     "libraries install under usr lib",
+			expected: "do_install debian/example-libs/usr/lib/example debian/example-libs/usr/lib/example/librenamed.so libexample.so\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Assert(t, cmp.Contains(content, test.expected))
+		})
+	}
 }
 
 func TestDebrootSubPackageOptArtifact(t *testing.T) {
@@ -195,6 +249,37 @@ func TestDebrootSubPackagePostinst(t *testing.T) {
 							Users: []dalec.AddUserConfig{
 								{Name: "svcuser"},
 							},
+							Groups: []dalec.AddGroupConfig{
+								{Name: "svcgroup"},
+							},
+							Binaries: map[string]dalec.ArtifactConfig{
+								"svc-bin": {
+									Name:    "svc",
+									SubPath: "service",
+									User:    "svcuser",
+									Group:   "svcgroup",
+									LinuxCapabilities: []dalec.ArtifactCapability{
+										{Name: "cap_net_bind_service", Effective: true, Permitted: true},
+									},
+								},
+								"uncapped": {},
+							},
+							Directories: &dalec.CreateArtifactDirectories{
+								Config: map[string]dalec.ArtifactDirConfig{
+									"example": {User: "svcuser", Group: "svcgroup"},
+								},
+								State: map[string]dalec.ArtifactDirConfig{
+									"example": {User: "svcuser", Group: "svcgroup"},
+								},
+							},
+							Links: []dalec.ArtifactSymlinkConfig{
+								{
+									Source: "/usr/bin/svc",
+									Dest:   "/usr/bin/svc-compat",
+									User:   "svcuser",
+									Group:  "svcgroup",
+								},
+							},
 						},
 					},
 				},
@@ -211,8 +296,31 @@ func TestDebrootSubPackagePostinst(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Assert(t, mkfile != nil, "expected example-svc.postinst to be generated")
 	assert.Equal(t, int32(0o700), mkfile.Mode)
-	assert.Assert(t, bytes.Contains(mkfile.Data, []byte("#DEBHELPER#")))
-	assert.Assert(t, bytes.Contains(mkfile.Data, []byte("useradd svcuser")))
+
+	content := string(mkfile.Data)
+	tests := []struct {
+		name     string
+		expected string
+	}{
+		{name: "debhelper marker is retained", expected: "#DEBHELPER#"},
+		{name: "package users are created", expected: "useradd svcuser"},
+		{name: "package groups are created", expected: "groupadd --system svcgroup"},
+		{name: "artifact user ownership is applied", expected: "chown -R svcuser \"$DESTDIR/usr/bin/service/svc\""},
+		{name: "artifact group ownership is applied", expected: "chgrp -R svcgroup \"$DESTDIR/usr/bin/service/svc\""},
+		{name: "config directory user ownership is applied", expected: "chown -R svcuser \"$DESTDIR/etc/example\""},
+		{name: "config directory group ownership is applied", expected: "chgrp -R svcgroup \"$DESTDIR/etc/example\""},
+		{name: "state directory user ownership is applied", expected: "chown -R svcuser \"$DESTDIR/var/lib/example\""},
+		{name: "state directory group ownership is applied", expected: "chgrp -R svcgroup \"$DESTDIR/var/lib/example\""},
+		{name: "symlink user ownership is applied without dereferencing", expected: "chown -h svcuser \"$DESTDIR/usr/bin/svc-compat\""},
+		{name: "symlink group ownership is applied without dereferencing", expected: "chgrp -h svcgroup \"$DESTDIR/usr/bin/svc-compat\""},
+		{name: "artifact capabilities are applied", expected: "setcap 'cap_net_bind_service=ep' \"$DESTDIR/usr/bin/service/svc\""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Assert(t, cmp.Contains(content, test.expected))
+		})
+	}
 }
 
 func TestDebrootSubPackageNoPostinstWhenEmpty(t *testing.T) {
@@ -394,7 +502,7 @@ func TestDebrootSubPackageFixPerms(t *testing.T) {
 	})
 }
 
-func TestDebrootSubPackageDocsFile(t *testing.T) {
+func TestDebrootSubPackageDocumentationFiles(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
@@ -412,6 +520,16 @@ func TestDebrootSubPackageDocsFile(t *testing.T) {
 						Artifacts: &dalec.Artifacts{
 							Docs: map[string]dalec.ArtifactConfig{
 								"README.md": {},
+								"guide.md":  {Name: "renamed-guide.md", SubPath: "guides"},
+							},
+							Licenses: map[string]dalec.ArtifactConfig{
+								"LICENSE": {},
+								"COPYING": {Name: "renamed-license", SubPath: "licenses"},
+							},
+							Manpages: map[string]dalec.ArtifactConfig{
+								"example.1":     {},
+								"admin.8":       {Name: "renamed.8", SubPath: "admin"},
+								"man1/scoped.1": {SubPath: "man1"},
 							},
 						},
 					},
@@ -424,10 +542,31 @@ func TestDebrootSubPackageDocsFile(t *testing.T) {
 	def, err := st.Marshal(ctx)
 	assert.NilError(t, err)
 
-	mkfile, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "example-doc.docs"))
-	assert.NilError(t, err)
-	assert.Assert(t, mkfile != nil, "expected example-doc.docs to be generated")
-	assert.Assert(t, cmp.Contains(string(mkfile.Data), "README.md"))
+	t.Run("docs and licenses without path changes use the package docs file", func(t *testing.T) {
+		mkfile, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "example-doc.docs"))
+		assert.NilError(t, err)
+		assert.Assert(t, mkfile != nil, "expected example-doc.docs to be generated")
+		assert.Assert(t, cmp.Contains(string(mkfile.Data), "README.md\n"))
+		assert.Assert(t, cmp.Contains(string(mkfile.Data), "LICENSE\n"))
+	})
+
+	t.Run("manpages without path changes use the package manpages file", func(t *testing.T) {
+		mkfile, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "example-doc.manpages"))
+		assert.NilError(t, err)
+		assert.Assert(t, mkfile != nil, "expected example-doc.manpages to be generated")
+		assert.Equal(t, string(mkfile.Data), "example.1\nman1/scoped.1\n")
+	})
+
+	t.Run("renamed documentation artifacts install under the supplemental package", func(t *testing.T) {
+		mkfile, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "example-doc.install"))
+		assert.NilError(t, err)
+		assert.Assert(t, mkfile != nil, "expected example-doc.install to be generated")
+
+		content := string(mkfile.Data)
+		assert.Assert(t, cmp.Contains(content, "do_install debian/example-doc/usr/share/doc/manpages/example-doc/admin debian/example-doc/usr/share/doc/manpages/example-doc/admin/renamed.8 admin.8\n"))
+		assert.Assert(t, cmp.Contains(content, "do_install debian/example-doc/usr/share/doc/example-doc/guides debian/example-doc/usr/share/doc/example-doc/guides/renamed-guide.md guide.md\n"))
+		assert.Assert(t, cmp.Contains(content, "do_install debian/example-doc/usr/share/doc/example-doc/licenses debian/example-doc/usr/share/doc/example-doc/licenses/renamed-license COPYING\n"))
+	})
 }
 
 func TestDebrootMultipleSubPackages(t *testing.T) {
@@ -627,6 +766,7 @@ func TestDebrootSubPackageRulesOverrideSystemd(t *testing.T) {
 				"testdistro": {
 					Packages: map[string]dalec.SubPackage{
 						"svc": {
+							Name:        "custom-svc",
 							Description: "Service package",
 							Artifacts: &dalec.Artifacts{
 								Systemd: &dalec.SystemdConfiguration{
@@ -652,7 +792,7 @@ func TestDebrootSubPackageRulesOverrideSystemd(t *testing.T) {
 		content := string(mkfile.Data)
 		assert.Assert(t, cmp.Contains(content, "override_dh_installsystemd"))
 		// Should use -p flag for subpackage
-		assert.Assert(t, cmp.Contains(content, "-pexample-svc"))
+		assert.Assert(t, cmp.Contains(content, "-pcustom-svc"))
 		assert.Assert(t, cmp.Contains(content, "--name=mysvc"))
 	})
 
@@ -675,6 +815,7 @@ func TestDebrootSubPackageRulesOverrideSystemd(t *testing.T) {
 				"testdistro": {
 					Packages: map[string]dalec.SubPackage{
 						"svc": {
+							Name:        "custom-svc",
 							Description: "Service package",
 							Artifacts: &dalec.Artifacts{
 								Systemd: &dalec.SystemdConfiguration{
@@ -701,14 +842,73 @@ func TestDebrootSubPackageRulesOverrideSystemd(t *testing.T) {
 		// Primary unit: no -p flag
 		assert.Assert(t, cmp.Contains(content, "dh_installsystemd --name=primary\n"))
 		// Subpackage unit: -p flag, --no-enable
-		assert.Assert(t, cmp.Contains(content, "-pexample-svc --name=subsvc --no-enable"))
+		assert.Assert(t, cmp.Contains(content, "-pcustom-svc --name=subsvc --no-enable"))
 	})
 }
 
 func TestDebrootSubPackageCustomSystemdPostinst(t *testing.T) {
 	t.Parallel()
 
-	t.Run("subpackage mixed enable generates custom postinst", func(t *testing.T) {
+	t.Run("primary and supplemental packages receive isolated custom postinst partials", func(t *testing.T) {
+		ctx := t.Context()
+		spec := &dalec.Spec{
+			Name:        "example",
+			Description: "Example package",
+			Version:     "1.0.0",
+			Revision:    "1",
+			License:     "Apache-2.0",
+			Artifacts: dalec.Artifacts{
+				Systemd: &dalec.SystemdConfiguration{
+					Units: map[string]dalec.SystemdUnitConfig{
+						"primary.service": {Enable: true},
+						"primary.socket":  {Enable: false},
+					},
+				},
+			},
+			Targets: map[string]dalec.Target{
+				"testdistro": {
+					Packages: map[string]dalec.SubPackage{
+						"svc": {
+							Name:        "custom-svc",
+							Description: "Service package",
+							Artifacts: &dalec.Artifacts{
+								Systemd: &dalec.SystemdConfiguration{
+									Units: map[string]dalec.SystemdUnitConfig{
+										"supplemental.service": {Enable: true},
+										"supplemental.socket":  {Enable: false},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		st := Debroot(ctx, dalec.SourceOpts{}, spec, llb.Scratch(), llb.Scratch(), "testdistro", "", "", SourcePkgConfig{})
+		def, err := st.Marshal(ctx)
+		assert.NilError(t, err)
+
+		primary, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "dalec/"+customSystemdPostinstFile))
+		assert.NilError(t, err)
+		assert.Assert(t, primary != nil, "expected a primary custom systemd postinst partial")
+		assert.Assert(t, cmp.Contains(string(primary.Data), "primary.service"))
+		assert.Assert(t, !bytes.Contains(primary.Data, []byte("supplemental.service")))
+
+		supplemental, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "dalec/custom-svc."+customSystemdPostinstFile))
+		assert.NilError(t, err)
+		assert.Assert(t, supplemental != nil, "expected a supplemental custom systemd postinst partial")
+		assert.Assert(t, cmp.Contains(string(supplemental.Data), "supplemental.service"))
+		assert.Assert(t, !bytes.Contains(supplemental.Data, []byte("primary.service")))
+
+		rules, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "rules"))
+		assert.NilError(t, err)
+		assert.Assert(t, rules != nil, "expected Debian rules to be generated")
+		assert.Assert(t, cmp.Contains(string(rules.Data), "cat debian/dalec/"+customSystemdPostinstFile+" >> debian/postinst"))
+		assert.Assert(t, cmp.Contains(string(rules.Data), "cat debian/dalec/custom-svc."+customSystemdPostinstFile+" >> debian/custom-svc.postinst"))
+	})
+
+	t.Run("a subpackage enables its service without enabling its socket", func(t *testing.T) {
 		ctx := t.Context()
 		spec := &dalec.Spec{
 			Name:        "example",
@@ -760,7 +960,7 @@ func TestDebrootSubPackageCustomSystemdPostinst(t *testing.T) {
 		assert.Assert(t, primaryFile == nil, "subpackage units must not be routed into the primary custom systemd postinst partial")
 	})
 
-	t.Run("no mixed enable no custom postinst file", func(t *testing.T) {
+	t.Run("a subpackage only enabling its service does not generate a custom postinst", func(t *testing.T) {
 		ctx := t.Context()
 		spec := &dalec.Spec{
 			Name:        "example",
