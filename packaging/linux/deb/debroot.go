@@ -161,18 +161,17 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "dalec/"+partial.partialFile()), 0o600, partial.content), opts...))
 	}
 
-	postinst := generatePostinst(spec, target)
-	if len(postinst) > 0 {
-		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, "postinst"), 0o700, postinst), opts...))
-	}
-
-	// Generate postinst scripts for subpackages
-	for key, pkg := range dalec.GetSubPackagesForTarget(spec, target) {
-		resolvedName := pkg.ResolvedName(spec.Name, key)
-		subPostinst := generateSubPackagePostinst(pkg.Artifacts, resolvedName)
-		if len(subPostinst) > 0 {
-			states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, resolvedName+".postinst"), 0o700, subPostinst), opts...))
+	for _, pkg := range resolvePackages(spec, target) {
+		postinst := generatePostinst(pkg)
+		if len(postinst) == 0 {
+			continue
 		}
+
+		name := pkg.name + ".postinst"
+		if pkg.primary {
+			name = "postinst"
+		}
+		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, name), 0o700, postinst), opts...))
 	}
 
 	patchDir := dalecDir.File(llb.Mkdir(filepath.Join(dir, "dalec/patches"), 0o755), opts...)
@@ -185,14 +184,13 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 	return dalec.MergeAtPath(in, states, "/", opts...)
 }
 
-func generatePostinst(spec *dalec.Spec, target string) []byte {
+func generatePostinst(pkg resolvedPackage) []byte {
 	buf := bytes.NewBuffer(nil)
 
-	artifacts := spec.GetArtifacts(target)
-	writeUsersPostInst(buf, artifacts.Users)
-	writeGroupsPostInst(buf, artifacts.Groups)
-	writeArtifactOwnershipPostInst(buf, &artifacts, spec.Name)
-	writeArtifactCapabilitiesPostInst(buf, &artifacts)
+	writeUsersPostInst(buf, pkg.artifacts.Users)
+	writeGroupsPostInst(buf, pkg.artifacts.Groups)
+	writeArtifactOwnershipPostInst(buf, &pkg.artifacts, pkg.name)
+	writeArtifactCapabilitiesPostInst(buf, &pkg.artifacts)
 
 	if buf.Len() == 0 {
 		return nil
@@ -207,45 +205,12 @@ func generatePostinst(spec *dalec.Spec, target string) []byte {
 	return dt
 }
 
-// generateSubPackagePostinst generates a postinst script for a subpackage.
-// Returns nil if no postinst actions are needed.
-func generateSubPackagePostinst(artifacts *dalec.Artifacts, pkgName string) []byte {
-	if artifacts == nil {
-		return nil
-	}
-
-	buf := bytes.NewBuffer(nil)
-
-	writeUsersPostInst(buf, artifacts.Users)
-	writeGroupsPostInst(buf, artifacts.Groups)
-	writeArtifactOwnershipPostInst(buf, artifacts, pkgName)
-	writeArtifactCapabilitiesPostInst(buf, artifacts)
-
-	if buf.Len() == 0 {
-		return nil
-	}
-
-	dt := []byte("#!/usr/bin/env sh\nset -e\n\n#DEBHELPER#\n\n")
-	dt = append(dt, buf.Bytes()...)
-
-	return dt
-}
-
 func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) []byte {
 	buf := bytes.NewBuffer(nil)
 	writeScriptHeader(buf, cfg)
 
-	// Fix permissions for the primary package
-	artifacts := spec.GetArtifacts(target)
-	writePackagePerms(buf, spec, &artifacts, spec.Name)
-
-	// Fix permissions for subpackages
-	for key, pkg := range dalec.GetSubPackagesForTarget(spec, target) {
-		if pkg.Artifacts == nil {
-			continue
-		}
-		resolvedName := pkg.ResolvedName(spec.Name, key)
-		writePackagePerms(buf, spec, pkg.Artifacts, resolvedName)
+	for _, pkg := range resolvePackages(spec, target) {
+		writePackagePerms(buf, spec, pkg)
 	}
 
 	return buf.Bytes()
@@ -253,8 +218,9 @@ func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) [
 
 // writePackagePerms writes chmod commands for a single package's artifacts.
 // spec is needed for inline source permission lookups.
-func writePackagePerms(buf *bytes.Buffer, spec *dalec.Spec, artifacts *dalec.Artifacts, pkgName string) {
-	basePath := filepath.Join("debian", pkgName)
+func writePackagePerms(buf *bytes.Buffer, spec *dalec.Spec, pkg resolvedPackage) {
+	basePath := filepath.Join("debian", pkg.name)
+	artifacts := &pkg.artifacts
 
 	checkAndWritePerms := func(cfgs map[string]dalec.ArtifactConfig, dir string) {
 		if cfgs == nil {
@@ -303,10 +269,10 @@ func writePackagePerms(buf *bytes.Buffer, spec *dalec.Spec, artifacts *dalec.Art
 
 	checkAndWritePerms(artifacts.Binaries, BinariesPath)
 	checkAndWritePerms(artifacts.ConfigFiles, ConfigFilesPath)
-	checkAndWritePerms(artifacts.Manpages, filepath.Join(ManpagesPath, pkgName))
+	checkAndWritePerms(artifacts.Manpages, filepath.Join(ManpagesPath, pkg.name))
 	checkAndWritePerms(artifacts.Headers, HeadersPath)
-	checkAndWritePerms(artifacts.Licenses, filepath.Join(LicensesPath, pkgName))
-	checkAndWritePerms(artifacts.Docs, filepath.Join(DocsPath, pkgName))
+	checkAndWritePerms(artifacts.Licenses, filepath.Join(LicensesPath, pkg.name))
+	checkAndWritePerms(artifacts.Docs, filepath.Join(DocsPath, pkg.name))
 	checkAndWritePerms(artifacts.Libs, LibsPath)
 	checkAndWritePerms(artifacts.Libexec, LibexecPath)
 	checkAndWritePerms(artifacts.Opt, OptPath)
@@ -438,25 +404,19 @@ func createBuildScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 }
 
 func createInstallScripts(worker llb.State, spec *dalec.Spec, dir, target string, opts ...llb.ConstraintsOpt) []llb.State {
-	artifacts := spec.GetArtifacts(target)
 	base := llb.Scratch().File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...)
+	var states []llb.State
 
-	states := createInstallScriptsForPackage(worker, base, &artifacts, spec.Name, dir, opts...)
-
-	for key, pkg := range dalec.GetSubPackagesForTarget(spec, target) {
-		resolvedName := pkg.ResolvedName(spec.Name, key)
-		var pkgArtifacts dalec.Artifacts
-		if pkg.Artifacts != nil {
-			pkgArtifacts = *pkg.Artifacts
-		}
-		states = append(states, createInstallScriptsForPackage(worker, base, &pkgArtifacts, resolvedName, dir, opts...)...)
+	for _, pkg := range resolvePackages(spec, target) {
+		states = append(states, createInstallScriptsForPackage(worker, base, pkg, dir, opts...)...)
 	}
 
 	return states
 }
 
-func createInstallScriptsForPackage(worker llb.State, base llb.State, artifacts *dalec.Artifacts, pkgName, dir string, opts ...llb.ConstraintsOpt) []llb.State {
+func createInstallScriptsForPackage(worker llb.State, base llb.State, pkg resolvedPackage, dir string, opts ...llb.ConstraintsOpt) []llb.State {
 	var states []llb.State
+	artifacts := &pkg.artifacts
 
 	installBuf := bytes.NewBuffer(nil)
 	writeInstallHeader := sync.OnceFunc(func() {
@@ -467,7 +427,7 @@ func createInstallScriptsForPackage(worker llb.State, base llb.State, artifacts 
 		writeInstallHeader()
 
 		name = strings.TrimSuffix(name, "*")
-		dest := filepath.Join("debian", pkgName, destDir, name)
+		dest := filepath.Join("debian", pkg.name, destDir, name)
 		fmt.Fprintln(installBuf, "do_install", filepath.Dir(dest), dest, src)
 	}
 
@@ -485,13 +445,13 @@ func createInstallScriptsForPackage(worker llb.State, base llb.State, artifacts 
 	for key, cfg := range dalec.SortedMapIter(artifacts.Manpages) {
 		if cfg.Name != "" || (cfg.SubPath != "" && cfg.SubPath != filepath.Base(filepath.Dir(key))) {
 			resolved := cfg.ResolveName(key)
-			writeInstall(key, filepath.Join(ManpagesPath, pkgName, cfg.SubPath), resolved)
+			writeInstall(key, filepath.Join(ManpagesPath, pkg.name, cfg.SubPath), resolved)
 			continue
 		}
 		fmt.Fprintln(manpagesBuf, key)
 	}
 	if manpagesBuf.Len() > 0 {
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkgName+".manpages"), 0o640, manpagesBuf.Bytes()), opts...))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkg.name+".manpages"), 0o640, manpagesBuf.Bytes()), opts...))
 	}
 
 	if artifacts.Directories != nil {
@@ -505,14 +465,14 @@ func createInstallScriptsForPackage(worker llb.State, base llb.State, artifacts 
 			fmt.Fprintln(buf, filepath.Join("/var/lib", name))
 		}
 
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkgName+".dirs"), 0o640, buf.Bytes()), opts...))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkg.name+".dirs"), 0o640, buf.Bytes()), opts...))
 	}
 
 	docsBuf := bytes.NewBuffer(nil)
 	for key, cfg := range dalec.SortedMapIter(artifacts.Docs) {
 		resolved := cfg.ResolveName(key)
 		if resolved != key || cfg.SubPath != "" {
-			writeInstall(key, filepath.Join(DocsPath, pkgName, cfg.SubPath), resolved)
+			writeInstall(key, filepath.Join(DocsPath, pkg.name, cfg.SubPath), resolved)
 		} else {
 			fmt.Fprintln(docsBuf, key)
 		}
@@ -521,14 +481,14 @@ func createInstallScriptsForPackage(worker llb.State, base llb.State, artifacts 
 	for key, cfg := range dalec.SortedMapIter(artifacts.Licenses) {
 		resolved := cfg.ResolveName(key)
 		if resolved != key || cfg.SubPath != "" {
-			writeInstall(key, filepath.Join(LicensesPath, pkgName, cfg.SubPath), resolved)
+			writeInstall(key, filepath.Join(LicensesPath, pkg.name, cfg.SubPath), resolved)
 		} else {
 			fmt.Fprintln(docsBuf, key)
 		}
 	}
 
 	if docsBuf.Len() > 0 {
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkgName+".docs"), 0o640, docsBuf.Bytes()), opts...))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkg.name+".docs"), 0o640, docsBuf.Bytes()), opts...))
 	}
 
 	for key, cfg := range dalec.SortedMapIter(artifacts.Headers) {
@@ -541,8 +501,8 @@ func createInstallScriptsForPackage(worker llb.State, base llb.State, artifacts 
 	// https://manpages.debian.org/testing/debhelper/dh_installsystemd.1.en.html#FILES
 	for key, cfg := range dalec.SortedMapIter(artifacts.Systemd.GetUnits()) {
 		name, suffix := cfg.SplitName(key)
-		if name != pkgName {
-			name = pkgName + "." + name
+		if name != pkg.name {
+			name = pkg.name + "." + name
 		}
 
 		name = name + "." + suffix
@@ -593,11 +553,11 @@ func createInstallScriptsForPackage(worker llb.State, base llb.State, artifacts 
 			dst := strings.TrimPrefix(l.Dest, "/")
 			fmt.Fprintln(buf, src, dst)
 		}
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkgName+".links"), 0o644, buf.Bytes()), opts...))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkg.name+".links"), 0o644, buf.Bytes()), opts...))
 	}
 
 	if installBuf.Len() > 0 {
-		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkgName+".install"), 0o700, installBuf.Bytes()), opts...))
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, pkg.name+".install"), 0o700, installBuf.Bytes()), opts...))
 	}
 
 	return states

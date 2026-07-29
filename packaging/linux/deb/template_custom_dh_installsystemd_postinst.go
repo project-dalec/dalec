@@ -65,33 +65,16 @@ func (p customSystemdPartial) postinstTarget() string {
 func customDHInstallSystemdPostinst(spec *dalec.Spec, target string) ([]customSystemdPartial, error) {
 	var partials []customSystemdPartial
 
-	// Primary package units
-	artifacts := spec.GetArtifacts(target)
-	buf := bytes.NewBuffer(nil)
-	if err := writeCustomEnableForUnits(buf, artifacts.Systemd.GetUnits()); err != nil {
-		return nil, err
-	}
-	if buf.Len() > 0 {
-		partials = append(partials, customSystemdPartial{
-			pkgName:   spec.Name,
-			isPrimary: true,
-			content:   buf.Bytes(),
-		})
-	}
-
-	// Subpackage units — each gets its own snippet keyed by resolved name.
-	for key, pkg := range dalec.GetSubPackagesForTarget(spec, target) {
-		if pkg.Artifacts == nil {
-			continue
+	for _, pkg := range resolvePackages(spec, target) {
+		buf := bytes.NewBuffer(nil)
+		if err := writeCustomEnableForUnits(buf, pkg.artifacts.Systemd.GetUnits()); err != nil {
+			return nil, errors.Wrapf(err, "package %s", pkg.name)
 		}
-		subBuf := bytes.NewBuffer(nil)
-		if err := writeCustomEnableForUnits(subBuf, pkg.Artifacts.Systemd.GetUnits()); err != nil {
-			return nil, errors.Wrapf(err, "subpackage %s", key)
-		}
-		if subBuf.Len() > 0 {
+		if buf.Len() > 0 {
 			partials = append(partials, customSystemdPartial{
-				pkgName: pkg.ResolvedName(spec.Name, key),
-				content: subBuf.Bytes(),
+				pkgName:   pkg.name,
+				isPrimary: pkg.primary,
+				content:   buf.Bytes(),
 			})
 		}
 	}
