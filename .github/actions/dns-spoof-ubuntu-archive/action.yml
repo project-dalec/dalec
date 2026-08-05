@@ -1,9 +1,92 @@
-name: Setup DNS spoofing to azure.archive.ubuntu.com
-description: 'Redirects DNS requests from archive.ubuntu.com to azure.archive.ubuntu.com'
+name: Setup DNS spoofing to a failover ubuntu archive proxy
+description: 'Redirects archive.ubuntu.com/security.ubuntu.com to a local nginx reverse proxy that fails over between ubuntu mirrors'
 
 runs:
   using: 'composite'
   steps:
+    - name: Install nginx
+      shell: bash
+      run: |
+        set -ex -o pipefail
+        # Installed and started before the spoof is active so nginx resolves its
+        # upstreams via the runner's normal DNS rather than back through dnsmasq.
+        sudo apt-get update && sudo apt-get install -y nginx
+
+    - name: Configure nginx reverse proxy
+      shell: bash
+      run: |
+        set -euxo pipefail
+
+        # Reverse proxy for archive.ubuntu.com / security.ubuntu.com. Ubuntu
+        # mirrors serve by path on any vhost, so forwarding the original Host and
+        # proxying to azure (primary) with us.archive as a backup lets us fail
+        # over on the connect/timeout/5xx failures that plain DNS can't cover.
+        #
+        # Logs go to files rather than /dev/stdout|stderr: under systemd those
+        # device paths aren't openable and nginx fails to start (while nginx -t,
+        # run from this shell, still passes).
+        sudo tee /etc/nginx/nginx.conf >/dev/null <<'NGINX'
+        worker_processes auto;
+        error_log /var/log/nginx/error.log warn;
+        pid /run/nginx.pid;
+
+        events {
+          worker_connections 1024;
+        }
+
+        http {
+          access_log /var/log/nginx/access.log;
+
+          # Keep upstream connections warm -- APT opens many small requests per run.
+          upstream ubuntu_archive {
+            server azure.archive.ubuntu.com:80 max_fails=2 fail_timeout=10s;
+            server us.archive.ubuntu.com:80 backup;
+            keepalive 16;
+          }
+
+          server {
+            listen 80 default_server;
+            server_name archive.ubuntu.com security.ubuntu.com;
+
+            # Connect/read budgets so a sick primary fails over quickly
+            # instead of hanging the whole apt run.
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+
+            location / {
+              proxy_pass http://ubuntu_archive;
+
+              # Ubuntu mirrors serve by path on any vhost, so forwarding the
+              # original Host (archive.ubuntu.com / security.ubuntu.com) works.
+              proxy_set_header Host $host;
+              proxy_http_version 1.1;
+              proxy_set_header Connection "";
+
+              # The actual failover: retry the SAME request on a backup mirror
+              # when the primary errors, times out, or returns 5xx/429.
+              proxy_next_upstream error timeout http_500 http_502 http_503 http_504 http_429 non_idempotent;
+              proxy_next_upstream_tries 2;
+              proxy_next_upstream_timeout 20s;
+
+              # Don't rewrite redirects to the upstream's name; keep them on
+              # archive.ubuntu.com so APT stays pointed at the proxy.
+              proxy_redirect off;
+            }
+          }
+        }
+        NGINX
+
+        sudo nginx -t
+        if ! sudo systemctl restart nginx; then
+          echo "::group::nginx failed to start"
+          sudo systemctl status nginx --no-pager --full || true
+          sudo journalctl -xeu nginx.service --no-pager || true
+          sudo ss -ltnp || true
+          echo "::endgroup::"
+          exit 1
+        fi
+
     - name: Add dnsmasq config
       id: dnsmasq-config
       shell: bash
@@ -14,16 +97,18 @@ runs:
         LISTEN_IP="$(hostname -I | awk '{ print $1 }')"
         echo "DNSMASQ_IP=${LISTEN_IP}" >> "${GITHUB_OUTPUT}"
 
-        # Lookup a v4 A record for azure's mirror
-        # We'll use this as the reply to archive.ubuntu.com requests
-        AZURE_MIRROR_IP="$(getent ahostsv4 azure.archive.ubuntu.com | awk '{print $1}' | head -1)"
-
+        # Point archive.ubuntu.com / security.ubuntu.com at the local nginx proxy.
         sudo mkdir -p /etc/dnsmasq.d
         cat <<EOF | sudo tee /etc/dnsmasq.d/apt-mirror.conf
         listen-address=${LISTEN_IP}
         bind-interfaces
-        address=/archive.ubuntu.com/${AZURE_MIRROR_IP}
-        address=/security.ubuntu.com/${AZURE_MIRROR_IP}
+        address=/archive.ubuntu.com/${LISTEN_IP}
+        address=/security.ubuntu.com/${LISTEN_IP}
+        # dnsmasq also matches subdomains, so without these the mirror hostnames
+        # the proxy dials would resolve back to the proxy. More-specific server=
+        # rules win and forward them to real DNS, breaking the loop.
+        server=/azure.archive.ubuntu.com/127.0.0.53
+        server=/us.archive.ubuntu.com/127.0.0.53
         server=127.0.0.53
         log-queries
         EOF
