@@ -22,6 +22,7 @@ func TestAlmalinux9(t *testing.T) {
 				return v
 			},
 			ListExpectedSignFiles: azlinuxListSignFiles("el9"),
+			Subpackages:           rpmSubpackageTests(),
 			PackageOverrides: map[string]string{
 				"rust":  "rust cargo",
 				"bazel": noPackageAvailable,
@@ -59,6 +60,7 @@ func TestAlmalinux8(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	cfg := testLinuxConfig{
 		Target: targetConfig{
+			Key:       "almalinux8",
 			Package:   "almalinux8/rpm",
 			Container: "almalinux8/container",
 			DepsOnly:  "almalinux8/container/depsonly",
@@ -67,6 +69,7 @@ func TestAlmalinux8(t *testing.T) {
 				return v
 			},
 			ListExpectedSignFiles: azlinuxListSignFiles("el8"),
+			Subpackages:           rpmSubpackageTests(),
 			PackageOverrides: map[string]string{
 				"rust":  "rust cargo",
 				"bazel": noPackageAvailable,
