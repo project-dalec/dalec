@@ -1,16 +1,11 @@
 package distro
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/client/llb/sourceresolver"
 	"github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/solver/pb"
-	"github.com/opencontainers/go-digest"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/internal/test"
 )
@@ -623,35 +618,11 @@ func Test_Building_container(t *testing.T) {
 	})
 }
 
-// testClient should implement client.Client interface for testing purposes.
 type testClient struct {
+	client.Client
 	buildOpts client.BuildOpts
 }
 
 func (tc *testClient) BuildOpts() client.BuildOpts {
 	return tc.buildOpts
-}
-
-func (tc *testClient) Solve(ctx context.Context, req client.SolveRequest) (*client.Result, error) {
-	return nil, nil
-}
-
-func (tc *testClient) Inputs(ctx context.Context) (map[string]llb.State, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (tc *testClient) NewContainer(ctx context.Context, req client.NewContainerRequest) (client.Container, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (tc *testClient) ResolveImageConfig(ctx context.Context, ref string, opt sourceresolver.Opt) (string, digest.Digest, []byte, error) {
-	return "", "", nil, errors.New("not implemented")
-}
-
-func (tc *testClient) ResolveSourceMetadata(ctx context.Context, op *pb.SourceOp, opt sourceresolver.Opt) (*sourceresolver.MetaResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (tc *testClient) Warn(ctx context.Context, dgst digest.Digest, msg string, opts client.WarnOpts) error {
-	return errors.New("not implemented")
 }

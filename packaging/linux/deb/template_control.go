@@ -114,7 +114,7 @@ func AppendConstraints(deps dalec.PackageDependencyList) []string {
 	return out
 }
 
-func (w *controlWrapper) depends(buf *strings.Builder, depsSpec *dalec.PackageDependencies) {
+func writeDepends(buf *strings.Builder, rtDeps dalec.PackageDependencyList, disableAutoRequires bool) {
 	// Add in deps vars that will get resolved by debbuild
 	// In some cases these are not necessary (maybe even most), but when they are
 	// it is important.
@@ -131,11 +131,9 @@ func (w *controlWrapper) depends(buf *strings.Builder, depsSpec *dalec.PackageDe
 		miscDeps = "${misc:Depends}"
 	)
 
-	rtDeps := depsSpec.GetRuntime()
 	needsClone := rtDeps != nil
 
-	artifacts := w.Spec.GetArtifacts(w.Target)
-	if !artifacts.DisableAutoRequires {
+	if !disableAutoRequires {
 		if _, exists := rtDeps[shlibsDeps]; !exists {
 			if needsClone {
 				rtDeps = maps.Clone(rtDeps)
@@ -172,13 +170,21 @@ func multiline(field string, values []string) string {
 	return fmt.Sprintf("%s: %s", field, strings.Join(values, ",\n"+strings.Repeat(" ", len(field)+2)))
 }
 
-func (w *controlWrapper) recommends(buf *strings.Builder, depsSpec *dalec.PackageDependencies) {
-	if depsSpec == nil || len(depsSpec.Recommends) == 0 {
+func writeRecommends(buf *strings.Builder, recommends dalec.PackageDependencyList) {
+	if len(recommends) == 0 {
 		return
 	}
 
-	deps := AppendConstraints(depsSpec.Recommends)
+	deps := AppendConstraints(recommends)
 	fmt.Fprintln(buf, multiline("Recommends", deps))
+}
+
+func writeRelationship(buf *strings.Builder, field string, dependencies dalec.PackageDependencyList) {
+	if len(dependencies) == 0 {
+		return
+	}
+
+	fmt.Fprintln(buf, multiline(field, AppendConstraints(dependencies)))
 }
 
 func (w *controlWrapper) BuildDeps() fmt.Stringer {
@@ -196,48 +202,67 @@ func (w *controlWrapper) BuildDeps() fmt.Stringer {
 func (w *controlWrapper) AllRuntimeDeps() fmt.Stringer {
 	b := &strings.Builder{}
 
-	deps := w.Spec.GetPackageDeps(w.Target)
-	w.depends(b, deps)
-	w.recommends(b, deps)
+	pkg := resolvePrimaryPackage(w.Spec, w.Target)
+	writeDepends(b, pkg.runtimeDependencies, pkg.artifacts.DisableAutoRequires)
+	writeRecommends(b, pkg.recommends)
 
 	return b
 }
 
 func (w *controlWrapper) Replaces() fmt.Stringer {
 	b := &strings.Builder{}
-	replaces := w.Spec.GetReplaces(w.Target)
-	if len(replaces) == 0 {
-		return b
-	}
-
-	ls := AppendConstraints(replaces)
-
-	fmt.Fprintln(b, multiline("Replaces", ls))
+	writeRelationship(b, "Replaces", resolvePrimaryPackage(w.Spec, w.Target).replaces)
 	return b
 }
 
 func (w *controlWrapper) Conflicts() fmt.Stringer {
 	b := &strings.Builder{}
-	conflicts := w.Spec.GetConflicts(w.Target)
-	if len(conflicts) == 0 {
-		return b
-	}
-
-	ls := AppendConstraints(conflicts)
-	fmt.Fprintln(b, multiline("Conflicts", ls))
+	writeRelationship(b, "Conflicts", resolvePrimaryPackage(w.Spec, w.Target).conflicts)
 	return b
 }
 
 func (w *controlWrapper) Provides() fmt.Stringer {
 	b := &strings.Builder{}
-	provides := w.Spec.GetProvides(w.Target)
-	if len(provides) == 0 {
+	writeRelationship(b, "Provides", resolvePrimaryPackage(w.Spec, w.Target).provides)
+	return b
+}
+
+func (w *controlWrapper) SubPackages() fmt.Stringer {
+	b := &strings.Builder{}
+
+	packages := resolvePackages(w.Spec, w.Target)
+	if len(packages) == 1 {
 		return b
 	}
 
-	ls := AppendConstraints(provides)
-	fmt.Fprintln(b, multiline("Provides", ls))
+	// Separate the primary package stanza from the first subpackage stanza with a
+	// blank line. Debian control paragraphs must be blank-line separated;
+	// without this, dpkg parses the subpackage fields as part of the primary
+	// stanza and fails (duplicate "Package" field).
+	b.WriteString("\n")
+
+	for _, pkg := range packages[1:] {
+		w.writeSubPackageStanza(b, &pkg)
+	}
+
 	return b
+}
+
+func (w *controlWrapper) writeSubPackageStanza(b *strings.Builder, pkg *resolvedPackage) {
+	fmt.Fprintf(b, "Package: %s\n", pkg.name)
+	fmt.Fprintf(b, "Architecture: %s\n", w.Architecture())
+	fmt.Fprintln(b, "Section: -")
+
+	writeDepends(b, pkg.runtimeDependencies, pkg.artifacts.DisableAutoRequires)
+	writeRecommends(b, pkg.recommends)
+	writeRelationship(b, "Replaces", pkg.replaces)
+	writeRelationship(b, "Conflicts", pkg.conflicts)
+	writeRelationship(b, "Provides", pkg.provides)
+
+	if pkg.description != "" {
+		fmt.Fprintf(b, "Description: %s\n", pkg.description)
+	}
+	fmt.Fprintln(b)
 }
 
 var (

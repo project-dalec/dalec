@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -74,9 +75,6 @@ func (w *rulesWrapper) Envs() fmt.Stringer {
 func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 	b := &strings.Builder{}
 
-	artifacts := w.GetArtifacts(w.target)
-
-	var fixPerms bool
 	checkPerms := func(cfgs map[string]dalec.ArtifactConfig) bool {
 		for _, cfg := range cfgs {
 			if cfg.Permissions.Perm() != 0 {
@@ -95,18 +93,28 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 		return false
 	}
 
-	fixPerms = checkPerms(artifacts.Binaries) ||
-		checkPerms(artifacts.ConfigFiles) ||
-		checkPerms(artifacts.Manpages) ||
-		checkPerms(artifacts.Headers) ||
-		checkPerms(artifacts.Licenses) ||
-		checkPerms(artifacts.Docs) ||
-		checkPerms(artifacts.Libs) ||
-		checkPerms(artifacts.Libexec) ||
-		checkPerms(artifacts.Opt) ||
-		checkPerms(artifacts.DataDirs) ||
-		checkDirPerms(artifacts.Directories.GetConfig()) ||
-		checkDirPerms(artifacts.Directories.GetState())
+	checkArtifactPerms := func(artifacts dalec.Artifacts) bool {
+		return checkPerms(artifacts.Binaries) ||
+			checkPerms(artifacts.ConfigFiles) ||
+			checkPerms(artifacts.Manpages) ||
+			checkPerms(artifacts.Headers) ||
+			checkPerms(artifacts.Licenses) ||
+			checkPerms(artifacts.Docs) ||
+			checkPerms(artifacts.Libs) ||
+			checkPerms(artifacts.Libexec) ||
+			checkPerms(artifacts.Opt) ||
+			checkPerms(artifacts.DataDirs) ||
+			checkDirPerms(artifacts.Directories.GetConfig()) ||
+			checkDirPerms(artifacts.Directories.GetState())
+	}
+
+	var fixPerms bool
+	for _, pkg := range resolvePackages(w.Spec, w.target) {
+		if checkArtifactPerms(pkg.artifacts) {
+			fixPerms = true
+			break
+		}
+	}
 
 	if fixPerms {
 		// Normally this should be `execute_after_dh_fixperms`, however this doesn't
@@ -115,7 +123,7 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 		// our extra script.
 		b.WriteString("override_dh_fixperms:\n")
 		b.WriteString("\tdh_fixperms\n")
-		b.WriteString("\tDESTDIR=debian/$(shell dh_listpackages) debian/dalec/fix_perms.sh\n\n")
+		b.WriteString("\tdebian/dalec/fix_perms.sh\n\n")
 	}
 
 	return b
@@ -140,55 +148,62 @@ func groupUnitsByBaseName(ls map[string]dalec.SystemdUnitConfig) map[string]map[
 func (w *rulesWrapper) OverrideSystemd() (fmt.Stringer, error) {
 	b := &strings.Builder{}
 
-	artifacts := w.GetArtifacts(w.target)
+	packages := resolvePackages(w.Spec, w.target)
+	var hasUnits bool
+	for _, pkg := range packages {
+		if len(pkg.artifacts.Systemd.GetUnits()) > 0 {
+			hasUnits = true
+			break
+		}
+	}
 
-	units := artifacts.Systemd.GetUnits()
-
-	if len(units) == 0 {
+	if !hasUnits {
 		return b, nil
 	}
 
 	b.WriteString("override_dh_installsystemd:\n")
 
-	grouped := groupUnitsByBaseName(units)
-	sorted := dalec.SortMapKeys(grouped)
+	// Track which packages need a custom-enable snippet appended to their own
+	// maintainer script. The snippet for a package's units must land in that
+	// package's postinst, not always in the primary package's postinst.
+	var customEnablePartials []customSystemdPartial
 
-	var includeCustomEnable bool
-	for _, basename := range sorted {
-		grouping := grouped[basename]
+	for _, pkg := range packages {
+		grouped := groupUnitsByBaseName(pkg.artifacts.Systemd.GetUnits())
+		var needsCustomPartial bool
+		for basename, grouping := range dalec.SortedMapIter(grouped) {
+			needsCustomEnable := requiresCustomEnable(grouping)
+			if needsCustomEnable {
+				needsCustomPartial = true
+			}
 
-		needsCustomEnable := requiresCustomEnable(grouping)
-		if needsCustomEnable {
-			includeCustomEnable = true
+			firstKey := maps.Keys(grouping)[0]
+			enable := grouping[firstKey].Enable
+
+			b.WriteString("\tdh_installsystemd")
+			if !pkg.primary {
+				b.WriteString(" -p" + pkg.name)
+			}
+			b.WriteString(" --name=" + basename)
+			if !enable || needsCustomEnable {
+				b.WriteString(" --no-enable")
+			}
+			b.WriteString("\n")
 		}
 
-		// dh_installsystemd does not want the suffix of the file, so trim it off
-		// here.
-		// Otherwise it will _silently_ fail, *yay*.
-		// We also need to check if there are multiple units with the same base name
-		// with different `Enable` options set.
-		// `dh_installsystemd` cannot deal with this, in those cases we'll write a
-		// custom postinst/postrm script.
-		//
-		// We also only need to do this once per basename, so we don't need to
-		// iterate over every unit.
-
-		// Get the first key which we'll use to check if the unit is enabled.
-		// Either all units are enabled or not enabled OR we need to do custom enable
-		firstKey := maps.Keys(grouping)[0]
-		enable := grouping[firstKey].Enable
-
-		b.WriteString("\tdh_installsystemd --name=" + basename)
-		if !enable || needsCustomEnable {
-			b.WriteString(" --no-enable")
+		if needsCustomPartial {
+			customEnablePartials = append(customEnablePartials, customSystemdPartial{
+				pkgName:   pkg.name,
+				isPrimary: pkg.primary,
+			})
 		}
-		b.WriteString("\n")
 	}
 
-	if includeCustomEnable {
-		b.WriteString("\t[ -f debian/postinst ] || (echo '#!/bin/sh' > debian/postinst; echo 'set -e' >> debian/postinst)\n")
-		b.WriteString("\t[ -x debian/postinst ] || chmod +x debian/postinst\n")
-		b.WriteString("\tcat debian/dalec/" + customSystemdPostinstFile + " >> debian/postinst\n")
+	for _, partial := range customEnablePartials {
+		target := partial.postinstTarget()
+		b.WriteString("\t[ -f " + target + " ] || (echo '#!/bin/sh' > " + target + "; echo 'set -e' >> " + target + ")\n")
+		b.WriteString("\t[ -x " + target + " ] || chmod +x " + target + "\n")
+		b.WriteString("\tcat debian/dalec/" + partial.partialFile() + " >> " + target + "\n")
 	}
 
 	return b, nil
@@ -210,16 +225,31 @@ func (w *rulesWrapper) OverrideStrip() fmt.Stringer {
 }
 
 func (w *rulesWrapper) OverrideAutoRequires() fmt.Stringer {
-	artifacts := w.Spec.GetArtifacts(w.target)
-
 	buf := &strings.Builder{}
 
-	if artifacts.DisableAutoRequires {
-		// DisableAutoRequires drops the auto-discovered ${shlibs:Depends} from the
-		// control file, but dh_shlibdeps still runs and can fail on unrelated ELF
-		// fixtures. With auto-requires disabled its output is discarded anyway, so
-		// skip it entirely.
-		buf.WriteString("override_dh_shlibdeps:\n")
+	packages := resolvePackages(w.Spec, w.target)
+	disabled := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		if pkg.artifacts.DisableAutoRequires {
+			disabled = append(disabled, pkg.name)
+		}
 	}
+
+	if len(disabled) == 0 {
+		return buf
+	}
+
+	buf.WriteString("override_dh_shlibdeps:\n")
+	if len(disabled) == len(packages) {
+		return buf
+	}
+
+	sort.Strings(disabled)
+	buf.WriteString("\tdh_shlibdeps")
+	for _, name := range disabled {
+		fmt.Fprintf(buf, " -N%s", name)
+	}
+	buf.WriteString("\n")
+
 	return buf
 }
