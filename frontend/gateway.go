@@ -3,6 +3,7 @@ package frontend
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"sync"
 	"sync/atomic"
 
@@ -14,7 +15,9 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 )
 
 const (
@@ -128,6 +131,14 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 			return st, err
 		},
 		GitCredHelperOpt: withCredHelper(c),
+		Glob: func(st llb.State, pattern string) ([]string, error) {
+			fsys, err := bkfs.FromState(ctx, &st, c)
+			if err != nil {
+				return nil, err
+			}
+
+			return fs.Glob(fsys, pattern)
+		},
 	}
 	if dc != nil {
 		sOpt.BuildArgs = dalec.DuplicateMap(dc.BuildArgs)
