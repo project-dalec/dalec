@@ -799,6 +799,12 @@ EOF
 	t.Run("minimal_container", func(t *testing.T) {
 		skip.If(t, testConfig.Target.MinimalContainer == "", "skipping test as it is not supported for this config")
 		t.Parallel()
+
+		if strings.HasSuffix(testConfig.Target.Package, "/rpm") {
+			testRPMMinimalContainer(ctx, t, testConfig)
+			return
+		}
+
 		testContainerTarget(ctx, t, testConfig, testConfig.Target.MinimalContainer)
 
 		t.Run("cleanup", func(t *testing.T) {
@@ -1524,6 +1530,10 @@ index 0000000..5260cb1
 				Sysext: map[string]dalec.PackageConstraints{
 					"zsh":  {Version: []string{">= 3", "< 99"}},
 					"zstd": {Version: []string{">= 1.5.0"}},
+				},
+				Test: map[string]dalec.PackageConstraints{
+					"bash": {},
+					"grep": {},
 				},
 			},
 
@@ -3411,6 +3421,10 @@ func Value() string {
 			Dependencies: &dalec.PackageDependencies{
 				Runtime: map[string]dalec.PackageConstraints{
 					"coreutils": {},
+				},
+				Test: map[string]dalec.PackageConstraints{
+					"bash": {},
+					"grep": {},
 				},
 			},
 			Tests: []*dalec.TestSpec{
@@ -5730,6 +5744,11 @@ func testPrebuiltPackages(ctx context.Context, t *testing.T, testConfig testLinu
 			Vendor:      "Dalec",
 			Packager:    "Dalec",
 			Description: "Test using pre-built packages",
+			Dependencies: &dalec.PackageDependencies{
+				Test: dalec.PackageDependencyList{
+					"bash": {},
+				},
+			},
 			Sources: map[string]dalec.Source{
 				"hello": {
 					Inline: &dalec.SourceInline{
@@ -6103,6 +6122,56 @@ func testDepsOnly(ctx context.Context, t *testing.T, testConfig testLinuxConfig)
 			// never builds the package, so no artifacts are installed.
 			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/usr/bin/my-script"})
 			assert.ErrorContains(t, err, "no such file")
+		})
+	})
+}
+
+func testRPMMinimalContainer(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	t.Helper()
+
+	target := testConfig.Target.MinimalContainer
+
+	t.Run("rpm_database_remains_queryable", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{})
+		spec.Dependencies.Test = map[string]dalec.PackageConstraints{
+			"rpm": {},
+		}
+		spec.Tests = []*dalec.TestSpec{
+			{
+				Name: "RPM database remains queryable after minimization",
+				Steps: []dalec.TestStep{
+					{Command: "rpm -qa >/dev/null"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+			solveT(ctx, t, gwc, sr)
+		})
+	})
+
+	t.Run("squash_produces_single_layer", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+			res := solveT(ctx, t, gwc, sr)
+
+			dt, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+			assert.Assert(t, ok, "missing image config in result metadata")
+
+			var img dalec.DockerImageSpec
+			assert.NilError(t, json.Unmarshal(dt, &img))
+
+			assert.Check(t, len(img.RootFS.DiffIDs) <= 1,
+				"expected squashed image to have at most 1 layer, got %d", len(img.RootFS.DiffIDs))
 		})
 	})
 }
