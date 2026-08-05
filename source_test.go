@@ -332,9 +332,9 @@ func TestSourceHTTP(t *testing.T) {
 func TestSourceFilterAtPath(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	filter := SourceFilterConfig{GlobalExcludes: []string{"nested/bad.txt", "*.tmp"}}
-	st := llb.Scratch().File(llb.Mkfile("src/nested/bad.txt", 0o644, nil)).With(SourceFilterAtPath("src", filter))
+	ctx := t.Context()
+	sOpt := sourceFilterOpts("nested/bad.txt", "*.tmp")
+	st := llb.Scratch().File(llb.Mkfile("src/nested/bad.txt", 0o644, nil)).With(sourceFilterAtPath(sOpt, "src"))
 
 	def, err := st.Marshal(ctx)
 	assert.NilError(t, err)
@@ -361,9 +361,9 @@ func TestSourceFilterAtPath(t *testing.T) {
 func TestSourceFilter(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	filter := SourceFilterConfig{GlobalExcludes: []string{"bad.txt"}}
-	st := llb.Scratch().File(llb.Mkfile("bad.txt", 0o644, nil)).With(SourceFilter(filter))
+	ctx := t.Context()
+	sOpt := sourceFilterOpts("bad.txt")
+	st := llb.Scratch().File(llb.Mkfile("bad.txt", 0o644, nil)).With(sourceFilter(sOpt))
 
 	def, err := st.Marshal(ctx)
 	assert.NilError(t, err)
@@ -384,15 +384,15 @@ func TestSourceFilter(t *testing.T) {
 	if cp == nil {
 		t.Fatal("expected copy action")
 	}
-	assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, filter.GlobalExcludes))
+	assert.Check(t, cmp.DeepEqual(cp.ExcludePatterns, []string{"bad.txt"}))
 }
 
 func TestSourceFilterEmptyNoop(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	base := llb.Scratch().File(llb.Mkfile("keep.txt", 0o644, nil))
-	filtered := base.With(SourceFilter(SourceFilterConfig{}))
+	filtered := base.With(sourceFilter(sourceFilterOpts()))
 
 	baseDef, err := base.Marshal(ctx)
 	assert.NilError(t, err)
@@ -400,6 +400,33 @@ func TestSourceFilterEmptyNoop(t *testing.T) {
 	assert.NilError(t, err)
 
 	assert.Check(t, cmp.DeepEqual(filteredDef.Def, baseDef.Def))
+}
+
+func TestSourceFilterPropagatesConstraints(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	const pgName = "filter sources"
+
+	st := llb.Scratch().File(llb.Mkfile("bad.txt", 0o644, nil)).
+		With(sourceFilter(sourceFilterOpts("bad.txt"), ProgressGroup(pgName)))
+
+	def, err := st.Marshal(ctx)
+	assert.NilError(t, err)
+
+	var found bool
+	for _, meta := range def.Metadata {
+		if meta.ProgressGroup.GetName() == pgName {
+			found = true
+		}
+	}
+	assert.Check(t, found, "expected the filter op to carry the caller's progress group")
+}
+
+func sourceFilterOpts(excludes ...string) SourceOpts {
+	return SourceOpts{SourceFilter: func() (SourceFilterConfig, error) {
+		return SourceFilterConfig{GlobalExcludes: excludes}, nil
+	}}
 }
 
 func TestNodeModDepsSourceFilter(t *testing.T) {
