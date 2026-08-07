@@ -68,7 +68,7 @@ func (c *Config) HandleBuildroot(ctx context.Context, client gwclient.Client) (*
 
 		worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, pg, pc))
 
-		br := rpm.BuildRoot(worker, spec, sOpt, targetKey, pg)
+		br := rpm.BuildRootWithMacros(worker, spec, sOpt, targetKey, c.RPMMacros, pg)
 
 		def, err := br.Marshal(ctx, pc)
 		if err != nil {
@@ -137,7 +137,7 @@ func (c *Config) HandleSources(ctx context.Context, client gwclient.Client) (*gw
 func (c *Config) HandleSpec(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		pc := dalec.Platform(platform)
-		st := rpm.RPMSpec(spec, llb.Scratch(), targetKey, "", pc)
+		st := rpm.RPMSpecWithMacros(spec, llb.Scratch(), targetKey, "", dalec.SourceFilterConfig{}, c.RPMMacros, pc)
 
 		def, err := st.Marshal(ctx, pc)
 		if err != nil {

@@ -143,7 +143,7 @@ func testAzlinuxExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, di
 		testAzlinuxBaseDeps(ctx, t, cfg.Target)
 	})
 
-	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef)
+	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef, false)
 }
 
 func testAzlinuxCaCertsOverride(ctx context.Context, t *testing.T, target targetConfig) {

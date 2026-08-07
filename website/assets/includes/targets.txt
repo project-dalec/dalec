@@ -88,6 +88,13 @@ rockylinux9/rpm/debug/buildroot  Outputs an rpm buildroot suitable for passing t
 rockylinux9/rpm/debug/sources    Outputs all the sources specified in the spec file in the format given to rpmbuild.
 rockylinux9/rpm/debug/spec       Outputs the generated RPM spec file
 rockylinux9/worker               Builds the base worker image responsible for building the rpm
+sles15/container (default)       Builds a container image for SUSE Linux Enterprise 15
+sles15/container/depsonly        Builds a container image with only the runtime dependencies installed.
+sles15/rpm                       Builds an rpm and src.rpm.
+sles15/rpm/debug/buildroot       Outputs an rpm buildroot suitable for passing to rpmbuild.
+sles15/rpm/debug/sources         Outputs all the sources specified in the spec file in the format given to rpmbuild.
+sles15/rpm/debug/spec            Outputs the generated RPM spec file
+sles15/worker                    Builds the base worker image responsible for building the rpm
 trixie/container                 Builds a container image.
 trixie/deb (default)             Builds a deb package.
 trixie/dsc                       Builds a Debian source package.

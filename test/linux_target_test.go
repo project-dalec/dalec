@@ -108,9 +108,13 @@ type testLinuxConfig struct {
 		Units   string
 		Targets string
 	}
-	Libdir  string
-	Worker  workerConfig
-	Release OSRelease
+	Libdir string
+	// LibexecDir is the distro's %{_libexecdir}. dnf-based distros (and openSUSE
+	// Tumbleweed) use the FHS 3.0 path /usr/libexec; openSUSE Leap / SLE 15 still
+	// use /usr/lib. Defaults to /usr/libexec when empty.
+	LibexecDir string
+	Worker     workerConfig
+	Release    OSRelease
 
 	SupportsGomodVersionUpdate bool
 }
@@ -3453,7 +3457,13 @@ func Value() string {
 	t.Run("test libexec file installation", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
-		testArtifactFileInstallation(ctx, t, testConfig, "/usr/libexec", func(cfg map[string]dalec.ArtifactConfig) dalec.Artifacts {
+		// %{_libexecdir} is distro-dependent: dnf-based distros (and Tumbleweed)
+		// use /usr/libexec, while openSUSE Leap / SLE 15 use /usr/lib.
+		libexecDir := testConfig.LibexecDir
+		if libexecDir == "" {
+			libexecDir = "/usr/libexec"
+		}
+		testArtifactFileInstallation(ctx, t, testConfig, libexecDir, func(cfg map[string]dalec.ArtifactConfig) dalec.Artifacts {
 			return dalec.Artifacts{Libexec: cfg}
 		})
 	})

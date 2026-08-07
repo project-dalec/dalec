@@ -55,7 +55,7 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dale
 		return dalec.ErrorState(worker, err)
 	}
 
-	br := rpm.BuildRoot(worker, spec, sOpt, targetKey, opts...)
+	br := rpm.BuildRootWithMacros(worker, spec, sOpt, targetKey, c.RPMMacros, opts...)
 
 	specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
 

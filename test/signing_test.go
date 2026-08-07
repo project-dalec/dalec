@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -652,8 +653,8 @@ find /tmp/rpms/RPMS -name "*.rpm" -exec rpmsign --addsign {} \;
 // The distroImageRef parameter is the image reference for the distro's base
 // image (e.g., azlinux.Azlinux3Ref), which is used as the custom base image
 // in the spec.
-func testSignedRPMCustomBaseImage(ctx context.Context, t *testing.T, targetCfg targetConfig, distroImageRef string) {
-	t.Run("signed rpm with custom base image", func(t *testing.T) {
+func testSignedRPMCustomBaseImage(ctx context.Context, t *testing.T, targetCfg targetConfig, distroImageRef string, installKeyRequired bool, workerCfg ...workerConfig) {
+	run := func(t *testing.T, withKey, withCollisionRepo bool) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
 
@@ -690,13 +691,95 @@ func testSignedRPMCustomBaseImage(ctx context.Context, t *testing.T, targetCfg t
 				},
 			}
 
-			containerSr := newSolveRequest(
+			containerOpts := []srOpt{
 				withSpec(ctx, t, spec),
 				withBuildTarget(targetCfg.Container),
 				withBuildContext(ctx, t, dalec.GenericPkg, signedPkgSt),
-			)
+			}
+			if withKey {
+				const keyContext = "signed-rpm-public-key"
+				spec.Dependencies = &dalec.PackageDependencies{
+					ExtraRepos: []dalec.PackageRepositoryConfig{
+						{
+							Keys: map[string]dalec.Source{
+								"dalec-signing-key.asc": {
+									Context: &dalec.SourceContext{Name: keyContext},
+									Path:    "public.asc",
+								},
+							},
+							Envs: []string{"install"},
+						},
+					},
+				}
+				containerOpts = append(containerOpts, withBuildContext(ctx, t, keyContext, gpgKey))
+			}
 
-			solveT(ctx, t, client, containerSr)
+			if withCollisionRepo {
+				collisionSpec := newSimpleSpec()
+				collisionSpec.Sources["foo"].Inline.File.Contents = "#!/usr/bin/env bash\necho \"collision package\"\n"
+
+				collisionSr := newSolveRequest(
+					withSpec(ctx, t, collisionSpec),
+					withBuildTarget(targetCfg.Package),
+				)
+				collisionPkg := reqToState(ctx, client, collisionSr, t)
+				repoPath := filepath.Join("/opt/repo", createRepoSuffix())
+				repoWorker := w.With(workerCfg[0].CreateRepo(collisionPkg, repoPath))
+				repoState := llb.Scratch().File(
+					llb.Copy(repoWorker, repoPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}),
+				)
+				const repoContext = "signed-rpm-collision-repo"
+				spec.Dependencies = &dalec.PackageDependencies{
+					ExtraRepos: []dalec.PackageRepositoryConfig{
+						{
+							Config: map[string]dalec.Source{
+								"collision.repo": {
+									Inline: &dalec.SourceInline{
+										File: &dalec.SourceInlineFile{
+											Contents: fmt.Sprintf(`[collision]
+name=Collision Repository
+baseurl=file://%s
+enabled=1
+gpgcheck=0
+priority=1
+`, repoPath),
+										},
+									},
+								},
+							},
+							Data: []dalec.SourceMount{
+								{
+									Dest: repoPath,
+									Spec: dalec.Source{
+										Context: &dalec.SourceContext{Name: repoContext},
+									},
+								},
+							},
+							Envs: []string{"install"},
+						},
+					},
+				}
+				containerOpts = append(containerOpts, withBuildContext(ctx, t, repoContext, repoState))
+			}
+
+			containerSr := newSolveRequest(containerOpts...)
+			res := solveT(ctx, t, client, containerSr)
+			if withCollisionRepo {
+				got, err := maybeReadFile(ctx, "/usr/bin/foo", res)
+				assert.NilError(t, err)
+				assert.Assert(t, strings.Contains(string(got), "hello, world!"),
+					"expected the mounted Dalec RPM, got %q", string(got))
+			}
 		})
+	}
+
+	t.Run("signed rpm with custom base image", func(t *testing.T) {
+		run(t, installKeyRequired, false)
 	})
+
+	if len(workerCfg) > 0 {
+		t.Run("signed rpm without key selects mounted package over same NEVRA", func(t *testing.T) {
+			run(t, false, true)
+		})
+	}
 }

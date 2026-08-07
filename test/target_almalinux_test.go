@@ -99,5 +99,5 @@ func TestAlmalinux8(t *testing.T) {
 }
 
 func testAlmalinuxExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distroImageRef string) {
-	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef)
+	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef, false)
 }
