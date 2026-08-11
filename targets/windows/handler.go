@@ -12,19 +12,22 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets/linux/deb/distro"
+	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 )
 
 const (
 	DefaultTargetKey              = "windowscross"
 	outputKey                     = "windows"
 	workerImgRef                  = "docker.io/library/ubuntu:jammy"
+	windowsCacheIdentity          = ubuntu.JammyVersionID + "-mingw-w64"
 	WindowscrossWorkerContextName = "dalec-windowscross-worker"
 )
 
 var distroConfig = &distro.Config{
 	ImageRef:       workerImgRef,
 	AptCachePrefix: aptCachePrefix,
-	VersionID:      "ubuntu22.04",
+	VersionID:      ubuntu.JammyVersionID,
+	CacheIdentity:  windowsCacheIdentity,
 	ContextRef:     WindowscrossWorkerContextName,
 	BuilderPackages: []string{
 		"aptitude",
@@ -42,18 +45,39 @@ var distroConfig = &distro.Config{
 	},
 }
 
+type routeHandlers struct {
+	distro *distro.Config
+}
+
 // Routes returns the flat routes for the Windows target, prefixed with the given prefix.
 func Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
+	return RoutesWithConfig(prefix, spec, distroConfig)
+}
+
+func BuildCacheIdentity() string {
+	return distroConfig.BuildCacheIdentity()
+}
+
+func RoutesWithCacheIdentity(cacheIdentity string) func(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
+	cfg := *distroConfig
+	cfg.SetBuildCacheIdentity(cacheIdentity)
+	return func(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
+		return RoutesWithConfig(prefix, spec, &cfg)
+	}
+}
+
+func RoutesWithConfig(prefix string, spec *dalec.Spec, cfg *distro.Config) ([]frontend.Route, error) {
 	_, specDefined := spec.Targets[prefix]
 	specDefined = specDefined && len(spec.Targets) > 0
 
 	defaultPlatform := platforms.DefaultSpec()
 	defaultPlatform.OS = "windows"
+	handlers := routeHandlers{distro: cfg}
 
 	return []frontend.Route{
 		{
 			FullPath: prefix,
-			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handleContainer),
+			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handlers.handleContainer),
 			Info: frontend.Target{
 				Target: bktargets.Target{
 					Name:        prefix,
@@ -64,7 +88,7 @@ func Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
 		},
 		{
 			FullPath: prefix + "/zip",
-			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handleZip),
+			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handlers.handleZip),
 			Info: frontend.Target{
 				Target: bktargets.Target{
 					Name:        prefix + "/zip",
@@ -75,7 +99,7 @@ func Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
 		},
 		{
 			FullPath: prefix + "/container",
-			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handleContainer),
+			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handlers.handleContainer),
 			Info: frontend.Target{
 				Target: bktargets.Target{
 					Name:        prefix + "/container",
@@ -87,7 +111,7 @@ func Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
 		},
 		{
 			FullPath: prefix + "/worker",
-			Handler:  handleWorker,
+			Handler:  handlers.handleWorker,
 			Info: frontend.Target{
 				Target: bktargets.Target{
 					Name:        prefix + "/worker",
@@ -99,7 +123,7 @@ func Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, error) {
 	}, nil
 }
 
-func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+func (h routeHandlers) handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		sOpt, err := frontend.SourceOptFromClient(ctx, client, nil)
 		if err != nil {
@@ -108,7 +132,7 @@ func handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result
 
 		pg := dalec.ProgressGroup("Handle windows worker")
 
-		st := distroConfig.Worker(sOpt, pg)
+		st := h.distro.Worker(sOpt, pg)
 		def, err := st.Marshal(ctx)
 		if err != nil {
 			return nil, nil, err
