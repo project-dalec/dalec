@@ -172,7 +172,7 @@ func BuildDebBinaryOnly(worker llb.State, spec *dalec.Spec, debroot llb.State, d
 	return st
 }
 
-func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersionID string, opts ...llb.ConstraintsOpt) llb.State {
+func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, cacheIdentity string, opts ...llb.ConstraintsOpt) llb.State {
 	dirName := filepath.Join("/work", spec.Name+"_"+spec.Version+"-"+spec.Revision)
 	buildRootRel := spec.Name + "-" + spec.Version
 	st := worker.
@@ -186,7 +186,7 @@ func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersio
 					dalec.WithCacheDirConstraints(opts...),
 				}
 				for _, cache := range spec.Build.Caches {
-					cache.ToRunOption(worker, distroVersionID, opts...).SetRunOption(ei)
+					cache.ToRunOption(worker, cacheIdentity, opts...).SetRunOption(ei)
 				}
 			}),
 		).AddMount("/tmp/out", llb.Scratch())

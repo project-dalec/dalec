@@ -17,6 +17,11 @@ type Config struct {
 	ImageRef   string
 	ContextRef string
 
+	// CacheIdentity identifies the build environment for user build-cache
+	// namespacing. This is separate from CacheName, which is used for package
+	// manager metadata caches.
+	CacheIdentity string
+
 	// The release version of the distro
 	ReleaseVer string
 
@@ -60,6 +65,14 @@ type Config struct {
 	// for an example (SUSE overrides _libexecdir/_docdir/_licensedir and
 	// __os_install_post to match the dnf-based distros' file layout and stripping).
 	RPMMacros []rpm.SpecMacro
+}
+
+func (cfg *Config) BuildCacheIdentity() string {
+	return cfg.CacheIdentity
+}
+
+func (cfg *Config) SetBuildCacheIdentity(identity string) {
+	cfg.CacheIdentity = identity
 }
 
 func (cfg *Config) PackageCacheMount(root string) llb.RunOption {

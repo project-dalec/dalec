@@ -18,6 +18,7 @@ var (
 		ImageRef:           nobleRef,
 		AptCachePrefix:     NobleAptCachePrefix,
 		VersionID:          nobleVersionID,
+		CacheIdentity:      nobleVersionID,
 		ContextRef:         NobleWorkerContextName,
 		DefaultOutputImage: nobleRef,
 		BuilderPackages:    builderPackages,
