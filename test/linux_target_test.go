@@ -214,6 +214,12 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		testSourceRPMTarget(ctx, t, testConfig.Target)
 	})
 
+	t.Run("source-package-excludes-gomod-zip-cache", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		testSourcePackageExcludesGomodZipCache(ctx, t, testConfig.Target)
+	})
+
 	t.Run("patch-applies-to-gitattributes-binary-file", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)

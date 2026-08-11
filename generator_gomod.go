@@ -6,6 +6,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/goccy/go-yaml/ast"
@@ -282,7 +283,40 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 		})
 	}
 
-	deps = deps.With(sourceFilter(sOpt, opts...))
+	deps = deps.With(func(in llb.State) llb.State {
+		// gomodZipCacheExclude matches the module zip archives the go
+		// command keeps under $GOMODCACHE/cache/download, rooted at the go
+		// module cache (gomodCacheDir). "go mod download" always extracts a
+		// module's contents directly under $GOMODCACHE/<module>@<version> in
+		// addition to keeping this zip copy around, so the extracted
+		// sources are already present elsewhere in the cache. Excluding the
+		// zip avoids duplicating that content (e.g. in generated source
+		// packages) while keeping the extracted sources and the small
+		// .mod/.info/.ziphash metadata files intact.
+		const gomodZipCacheExclude = "cache/download/**/*.zip"
+
+		excludes, err := sOpt.sourceFilterExcludes()
+		if err != nil {
+			return ErrorState(in, err)
+		}
+		// Always filter out the go module proxy's cached zip archives,
+		// regardless of any build-time source filter config, since they
+		// only duplicate content already extracted into the module cache.
+		//
+		// The mandatory pattern is appended last (rather than first) because
+		// exclude patterns are matched in order with support for "!"
+		// negation (like a .dockerignore file): a later pattern can
+		// re-include a path an earlier pattern excluded. Putting it last
+		// ensures a configured source filter cannot inadvertently negate it.
+		//
+		// excludes is cloned before appending because sOpt.SourceFilter is
+		// memoized (e.g. via sync.OnceValues in the frontend), so this same
+		// backing slice can be shared and read concurrently by other
+		// generators/build targets using the same SourceOpts; appending to
+		// it directly could race on or corrupt that shared slice.
+		all := append(slices.Clone(excludes), gomodZipCacheExclude)
+		return in.With(SourceFilter(SourceFilterConfig{GlobalExcludes: all}, opts...))
+	})
 	return &deps
 }
 
