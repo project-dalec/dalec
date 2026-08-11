@@ -431,7 +431,7 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 		rpmSpec := rpm.RPMSpecWithMacros(spec, in, targetKey, "", dalec.SourceFilterConfig{}, cfg.RPMMacros, opts...)
 
 		specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
-		cacheInfo := rpm.CacheInfo{TargetKey: targetKey, Caches: spec.Build.Caches}
+		cacheInfo := rpm.CacheInfo{CacheIdentity: cfg.BuildCacheIdentity(), Caches: spec.Build.Caches}
 		rpmDir := rpm.Build(rpmSpec, in, specPath, cacheInfo, opts...)
 
 		const rpmMountDir = "/tmp/internal/dalec/deps/install/rpms"
