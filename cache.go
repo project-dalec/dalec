@@ -18,7 +18,6 @@ const (
 	cacheMountUnset   = ""
 
 	BazelDefaultSocketID = "bazel-default" // Default ID for bazel socket
-
 )
 
 // getSccacheSource returns a Source for downloading and verifying sccache using SourceHTTP
@@ -260,17 +259,11 @@ func (c *CacheDir) ToRunOption(cacheIdentity string, opts ...CacheDirOption) llb
 		}
 
 		if !c.NoAutoNamespace {
-			platform := ei.Platform
-
-			if platform == nil {
-				platform = info.Platform
-			}
-
-			if platform == nil {
-				p := platforms.DefaultSpec()
-				platform = &p
-			}
-			key = fmt.Sprintf("%s-%s-%s", cacheIdentity, platforms.Format(*platform), key)
+			key = PersistentCacheID{
+				Environment: cacheIdentity,
+				Platform:    execCacheIDPlatform(ei, info.Platform),
+				Key:         key,
+			}.String()
 		}
 
 		llb.AddMount(c.Dest, llb.Scratch(), llb.AsPersistentCacheDir(key, sharing)).SetRunOption(ei)
@@ -356,20 +349,12 @@ func (c *GoBuildCache) ToRunOption(cacheIdentity string, opts ...GoBuildCacheOpt
 			opt.SetGoBuildCacheOption(&info)
 		}
 
-		platform := ei.Platform
-
-		if platform == nil {
-			platform = info.Platform
-		}
-		if platform == nil {
-			p := platforms.DefaultSpec()
-			platform = &p
-		}
-
-		key := fmt.Sprintf("%s-%s-dalec-gobuildcache", cacheIdentity, platforms.Format(*platform))
-		if c.Scope != "" {
-			key = fmt.Sprintf("%s-%s", key, c.Scope)
-		}
+		key := PersistentCacheID{
+			Environment: cacheIdentity,
+			Platform:    execCacheIDPlatform(ei, info.Platform),
+			Type:        cacheTypeGoBuild,
+			Key:         c.Scope,
+		}.String()
 		llb.AddMount(goBuildCacheDir, llb.Scratch(), llb.AsPersistentCacheDir(key, llb.CacheMountShared)).SetRunOption(ei)
 		llb.AddEnv("GOCACHE", goBuildCacheDir).SetRunOption(ei)
 	})
@@ -443,10 +428,12 @@ func (c *SCCache) ToRunOption(cacheIdentity string, opts ...SCCacheOption) llb.R
 			platform = &p
 		}
 
-		key := fmt.Sprintf("%s-%s-dalec-rustsccache", cacheIdentity, platforms.Format(*platform))
-		if c.Scope != "" {
-			key = fmt.Sprintf("%s-%s", key, c.Scope)
-		}
+		key := PersistentCacheID{
+			Environment: cacheIdentity,
+			Platform:    FormatCacheIDPlatform(*platform),
+			Type:        cacheTypeRustSccache,
+			Key:         c.Scope,
+		}.String()
 
 		// Set up cache mount for sccache compilation cache
 		llb.AddMount(sccacheCacheDir, llb.Scratch(), llb.AsPersistentCacheDir(key, llb.CacheMountShared)).SetRunOption(ei)
@@ -549,10 +536,12 @@ func (c *BazelCache) ToRunOption(worker llb.State, cacheIdentity string, opts ..
 			platform = &p
 		}
 
-		key := fmt.Sprintf("%s-%s-dalec-bazelcache", cacheIdentity, platforms.Format(*platform))
-		if c.Scope != "" {
-			key = fmt.Sprintf("%s-%s", key, c.Scope)
-		}
+		key := PersistentCacheID{
+			Environment: cacheIdentity,
+			Platform:    FormatCacheIDPlatform(*platform),
+			Type:        cacheTypeBazel,
+			Key:         c.Scope,
+		}.String()
 
 		// See bazelrc https://bazel.build/run/bazelrc for more information on the bazelrc file
 

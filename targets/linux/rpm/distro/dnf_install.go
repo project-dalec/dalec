@@ -358,9 +358,9 @@ func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch 
 		var installCfg dnfInstallConfig
 		dnfInstallOptions(&installCfg, installOpts)
 
-		cacheKey := cfg.CacheName
+		var cachePlatform string
 		if cfg.CacheAddPlatform {
-			cacheKey += "-" + targetArch
+			cachePlatform = targetArch
 		}
 		// Cross-arch installs always use dnf --forcearch --installroot
 		runOpts := []llb.RunOption{
@@ -372,15 +372,11 @@ func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch 
 			if d == "" {
 				continue
 			}
-			k := cacheKey
-			if len(cfg.CacheDir) > 1 {
-				k = cacheKey + "-" + filepath.Base(d)
-			}
 			runOpts = append(runOpts,
 				llb.AddMount(
 					joinUnderRoot(rootfsPath, d),
 					llb.Scratch(),
-					llb.AsPersistentCacheDir(k, llb.CacheMountLocked),
+					llb.AsPersistentCacheDir(cfg.packageCacheID(cachePlatform, d), llb.CacheMountLocked),
 				),
 			)
 		}
