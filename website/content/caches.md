@@ -55,7 +55,9 @@ caches:
       no_auto_namespace: true
 ```
 
-This will disable the automatic namespacing and use the key you provide as-is.
+This will disable the automatic environment/platform namespacing and use the key
+you provide as-is. If `BUILDKIT_CACHE_MOUNT_NS` is set for the build, that global
+namespace is still applied, so `my_key` becomes `<namespace>/my_key`.
 
 
 ## Gobuild Cache

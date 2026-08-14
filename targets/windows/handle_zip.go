@@ -198,8 +198,12 @@ func (h routeHandlers) buildBinaries(ctx context.Context, spec *dalec.Spec, work
 		// As such, this must come before the env vars from the spec are set.
 		llb.AddEnv("GOOS", "windows"),
 		dalec.RunOptFunc(func(ei *llb.ExecInfo) {
+			cacheOpts := []dalec.CacheConfigOption{
+				dalec.WithCacheDirConstraints(opts...),
+				dalec.WithCacheNamespace(sOpt.CacheNamespace),
+			}
 			for _, c := range spec.Build.Caches {
-				c.ToRunOption(worker, h.distro.BuildCacheIdentity(), dalec.WithCacheDirConstraints(opts...)).SetRunOption(ei)
+				c.ToRunOption(worker, h.distro.BuildCacheIdentity(), cacheOpts...).SetRunOption(ei)
 			}
 		}),
 		dalec.RunOptFunc(func(ei *llb.ExecInfo) {

@@ -63,7 +63,7 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dale
 	specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
 
 	builder := worker.With(dalec.SetBuildNetworkMode(spec))
-	cacheInfo := rpm.CacheInfo{CacheIdentity: c.BuildCacheIdentity(), Caches: spec.Build.Caches}
+	cacheInfo := rpm.CacheInfo{CacheIdentity: c.BuildCacheIdentity(), CacheNamespace: sOpt.CacheNamespace, Caches: spec.Build.Caches}
 
 	if needsAutoGocache(spec, targetKey) {
 		addGoCache(&cacheInfo)

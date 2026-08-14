@@ -7,6 +7,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/internal/test"
 	"gotest.tools/v3/assert"
 )
 
@@ -72,4 +73,40 @@ func TestDownloadDepsProducesDeterministicLLB(t *testing.T) {
 	}
 
 	requireDeterministicLLB(ctx, t, build)
+}
+
+func TestPackageCacheMountAppliesNamespace(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		CacheName: "azlinux3-tdnf-cache",
+		CacheDir:  []string{"/var/cache/tdnf"},
+	}
+
+	st := llb.Scratch().Run(
+		dalec.ShArgs("true"),
+		cfg.PackageCacheMount("", "ci"),
+	).Root()
+
+	for _, op := range test.LLBOpsFromState(t.Context(), t, st) {
+		exec := op.Op.GetExec()
+		if exec == nil {
+			continue
+		}
+		for _, mount := range exec.Mounts {
+			if mount.Dest != "/var/cache/tdnf" {
+				continue
+			}
+			if mount.CacheOpt == nil {
+				t.Fatal("expected RPM package cache mount to have cache options")
+			}
+			const want = "ci/azlinux3-tdnf-cache"
+			if mount.CacheOpt.ID != want {
+				t.Fatalf("expected RPM package cache mount ID %q, got %q", want, mount.CacheOpt.ID)
+			}
+			return
+		}
+	}
+
+	t.Fatal("expected RPM package cache mount")
 }

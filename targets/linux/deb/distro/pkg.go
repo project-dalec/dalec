@@ -54,7 +54,7 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dale
 	builder := worker.With(dalec.SetBuildNetworkMode(spec))
 
 	buildOpts := append(opts, spec.Build.Steps.GetSourceLocation(builder))
-	st := deb.BuildDeb(builder, spec, srcPkg, cacheIdentity, append(buildOpts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))...)
+	st := deb.BuildDeb(builder, spec, srcPkg, cacheIdentity, sOpt.CacheNamespace, append(buildOpts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))...)
 
 	// Filter out everything except the .deb files
 	filtered := llb.Scratch().File(

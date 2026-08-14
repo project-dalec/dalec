@@ -6,6 +6,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-dalec/dalec/internal/test"
 	internaltest "github.com/project-dalec/dalec/internal/test"
 )
 
@@ -50,6 +51,14 @@ func TestPersistentCacheIDString(t *testing.T) {
 				Key: "/tmp/cache",
 			},
 			want: "/tmp/cache",
+		},
+		{
+			name: "namespace with user key only",
+			id: PersistentCacheID{
+				Namespace: "ci",
+				Key:       "user-cache",
+			},
+			want: "ci/user-cache",
 		},
 	}
 
@@ -98,4 +107,140 @@ func TestCacheDirAutoNamespaceIncludesGenericCacheType(t *testing.T) {
 	}
 
 	t.Fatalf("expected generic cache type %q in auto-namespaced cache ID", cacheTypeGeneric)
+}
+
+func TestBuildkitCacheMountNamespaceIsKnownBuildArg(t *testing.T) {
+	t.Parallel()
+
+	if !knownArg(BuildArgBuildkitCacheMountNS) {
+		t.Fatalf("expected %s to be a known build arg", BuildArgBuildkitCacheMountNS)
+	}
+}
+
+func TestCacheMountNamespaceAppliedToCacheConfig(t *testing.T) {
+	t.Parallel()
+
+	cache := CacheConfig{
+		GoBuild: &GoBuildCache{
+			Scope: "scope",
+		},
+	}
+	platform := ocispecs.Platform{
+		OS:           "linux",
+		Architecture: "amd64",
+	}
+
+	st := llb.Scratch().Run(
+		ShArgs("true"),
+		cache.ToRunOption(
+			llb.Scratch(),
+			"azlinux3.0",
+			WithCacheNamespace("ci"),
+			WithGoCacheConstraints(llb.Platform(platform)),
+		),
+	).Root()
+
+	assertCacheMountIDs(t, st, "ci/azlinux3.0-linux/amd64-dalec-gobuildcache-scope")
+}
+
+func TestCacheMountNamespaceAppliedToCacheDir(t *testing.T) {
+	t.Parallel()
+
+	cache := CacheConfig{
+		Dir: &CacheDir{
+			Key:  "user-cache",
+			Dest: "/tmp/cache",
+		},
+	}
+	platform := ocispecs.Platform{
+		OS:           "linux",
+		Architecture: "amd64",
+	}
+
+	st := llb.Scratch().Run(
+		ShArgs("true"),
+		cache.ToRunOption(
+			llb.Scratch(),
+			"azlinux3.0",
+			WithCacheNamespace("ci"),
+			WithCacheDirConstraints(llb.Platform(platform)),
+		),
+	).Root()
+
+	assertCacheMountIDs(t, st, "ci/azlinux3.0-linux/amd64-dalec-genericcache-user-cache")
+}
+
+func TestCacheMountNamespaceAppliedToCacheDirWithoutAutoNamespace(t *testing.T) {
+	t.Parallel()
+
+	cache := CacheConfig{
+		Dir: &CacheDir{
+			Key:             "user-cache",
+			Dest:            "/tmp/cache",
+			NoAutoNamespace: true,
+		},
+	}
+
+	st := llb.Scratch().Run(
+		ShArgs("true"),
+		cache.ToRunOption(
+			llb.Scratch(),
+			"azlinux3.0",
+			WithCacheNamespace("ci"),
+		),
+	).Root()
+
+	assertCacheMountIDs(t, st, "ci/user-cache")
+}
+
+func TestCacheMountNamespaceAppliedToAptCache(t *testing.T) {
+	t.Parallel()
+
+	st := llb.Scratch().Run(
+		ShArgs("true"),
+		WithMountedAptCacheNamespace("jammy", "ci"),
+	).Root()
+
+	assertCacheMountIDs(t, st,
+		"ci/jammy-dalec-var-cache-apt",
+		"ci/jammy-dalec-var-lib-apt",
+	)
+}
+
+func TestAptCacheMountUsesCentralizedIDWithoutNamespace(t *testing.T) {
+	t.Parallel()
+
+	st := llb.Scratch().Run(
+		ShArgs("true"),
+		WithMountedAptCache("jammy"),
+	).Root()
+
+	assertCacheMountIDs(t, st,
+		"jammy-dalec-var-cache-apt",
+		"jammy-dalec-var-lib-apt",
+	)
+}
+
+func assertCacheMountIDs(t *testing.T, st llb.State, want ...string) {
+	t.Helper()
+
+	got := map[string]struct{}{}
+	for _, op := range test.LLBOpsFromState(t.Context(), t, st) {
+		exec := op.Op.GetExec()
+		if exec == nil {
+			continue
+		}
+		for _, mount := range exec.Mounts {
+			if mount.CacheOpt == nil {
+				continue
+			}
+			got[mount.CacheOpt.ID] = struct{}{}
+		}
+	}
+
+	for _, id := range want {
+		if _, ok := got[id]; !ok {
+			t.Fatalf("expected cache mount ID %q, got %v", id, got)
+		}
+	}
 }

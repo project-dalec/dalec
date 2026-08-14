@@ -90,15 +90,26 @@ const (
 // WithMountedAptCache gives an [llb.RunOption] that mounts the apt cache directories.
 // cacheIdentity should be distinct per distro version.
 func WithMountedAptCache(cacheIdentity string, opts ...llb.ConstraintsOpt) llb.RunOption {
-	return withMountedAptCache(cacheIdentity, "", opts...)
+	return WithMountedAptCacheNamespace(cacheIdentity, "", opts...)
+}
+
+// WithMountedAptCacheNamespace mounts apt cache directories under a global namespace.
+func WithMountedAptCacheNamespace(cacheIdentity, namespace string, opts ...llb.ConstraintsOpt) llb.RunOption {
+	return withMountedAptCache(cacheIdentity, namespace, "", opts...)
 }
 
 // WithMountedAptCacheForPlatform mounts platform-scoped apt cache directories.
 func WithMountedAptCacheForPlatform(cacheIdentity string, platform ocispecs.Platform, opts ...llb.ConstraintsOpt) llb.RunOption {
-	return withMountedAptCache(cacheIdentity, FormatSafeCacheIDPlatform(platform), opts...)
+	return WithMountedAptCacheForPlatformNamespace(cacheIdentity, "", platform, opts...)
 }
 
-func withMountedAptCache(cacheIdentity, platform string, opts ...llb.ConstraintsOpt) llb.RunOption {
+// WithMountedAptCacheForPlatformNamespace mounts platform-scoped apt cache directories
+// under a global namespace.
+func WithMountedAptCacheForPlatformNamespace(cacheIdentity, namespace string, platform ocispecs.Platform, opts ...llb.ConstraintsOpt) llb.RunOption {
+	return withMountedAptCache(cacheIdentity, namespace, FormatSafeCacheIDPlatform(platform), opts...)
+}
+
+func withMountedAptCache(cacheIdentity, namespace, platform string, opts ...llb.ConstraintsOpt) llb.RunOption {
 	return runOptionFunc(func(ei *llb.ExecInfo) {
 		// This is in the "official" docker image for ubuntu/debian.
 		// This file prevents us from actually caching anything.
@@ -112,6 +123,7 @@ func withMountedAptCache(cacheIdentity, platform string, opts ...llb.Constraints
 			"/var/cache/apt",
 			llb.Scratch(),
 			llb.AsPersistentCacheDir(PersistentCacheID{
+				Namespace:   namespace,
 				Environment: cacheIdentity,
 				Platform:    platform,
 				Type:        cacheTypeAptVarCache,
@@ -122,6 +134,7 @@ func withMountedAptCache(cacheIdentity, platform string, opts ...llb.Constraints
 			"/var/lib/apt",
 			llb.Scratch(),
 			llb.AsPersistentCacheDir(PersistentCacheID{
+				Namespace:   namespace,
 				Environment: cacheIdentity,
 				Platform:    platform,
 				Type:        cacheTypeAptVarLib,

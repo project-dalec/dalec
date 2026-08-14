@@ -72,6 +72,7 @@ type CacheConfig struct {
 }
 
 type CacheInfo struct {
+	Namespace   string
 	DirInfo     CacheDirInfo
 	GoBuild     GoBuildCacheInfo
 	RustSCCache SCCacheInfo
@@ -79,6 +80,7 @@ type CacheInfo struct {
 }
 
 type CacheDirInfo struct {
+	Namespace string
 	// Platform sets the platform used to generate part of the cache key when
 	// CacheDir.NoAutoNamespace is set to false.
 	Platform *ocispecs.Platform
@@ -104,6 +106,12 @@ func (f CacheDirOptionFunc) SetCacheDirOption(info *CacheDirInfo) {
 	f(info)
 }
 
+func WithCacheNamespace(namespace string) CacheConfigOption {
+	return CacheConfigOptionFunc(func(info *CacheInfo) {
+		info.Namespace = namespace
+	})
+}
+
 func WithCacheDirConstraints(opts ...llb.ConstraintsOpt) CacheConfigOption {
 	return CacheConfigOptionFunc(func(info *CacheInfo) {
 		var c llb.Constraints
@@ -122,6 +130,7 @@ func (c *CacheConfig) ToRunOption(worker llb.State, cacheIdentity string, opts .
 				opt.SetCacheConfigOption(&cacheInfo)
 			}
 			*info = cacheInfo.DirInfo
+			info.Namespace = cacheInfo.Namespace
 		}))
 	}
 
@@ -132,6 +141,7 @@ func (c *CacheConfig) ToRunOption(worker llb.State, cacheIdentity string, opts .
 				opt.SetCacheConfigOption(&cacheInfo)
 			}
 			*info = cacheInfo.GoBuild
+			info.Namespace = cacheInfo.Namespace
 		}))
 	}
 
@@ -142,6 +152,7 @@ func (c *CacheConfig) ToRunOption(worker llb.State, cacheIdentity string, opts .
 				opt.SetCacheConfigOption(&cacheInfo)
 			}
 			*info = cacheInfo.RustSCCache
+			info.Namespace = cacheInfo.Namespace
 		}))
 	}
 
@@ -152,6 +163,7 @@ func (c *CacheConfig) ToRunOption(worker llb.State, cacheIdentity string, opts .
 				opt.SetCacheConfigOption(&cacheInfo)
 			}
 			*info = cacheInfo.Bazel
+			info.Namespace = cacheInfo.Namespace
 		}))
 	}
 
@@ -228,6 +240,7 @@ type CacheDir struct {
 	// NoAutoNamespace disables the automatic prefixing of the cache key with the
 	// build environment identity and CPU architecture, which may be auto-injected
 	// to prevent common issues that would cause an invalid cache.
+	// It does not disable the global BUILDKIT_CACHE_MOUNT_NS prefix.
 	NoAutoNamespace bool `json:"no_auto_namespace" yaml:"no_auto_namespace"`
 }
 
@@ -258,8 +271,14 @@ func (c *CacheDir) ToRunOption(cacheIdentity string, opts ...CacheDirOption) llb
 			opt.SetCacheDirOption(&info)
 		}
 
-		if !c.NoAutoNamespace {
+		if c.NoAutoNamespace {
 			key = PersistentCacheID{
+				Namespace: info.Namespace,
+				Key:       key,
+			}.String()
+		} else {
+			key = PersistentCacheID{
+				Namespace:   info.Namespace,
 				Environment: cacheIdentity,
 				Platform:    execCacheIDPlatform(ei, info.Platform),
 				Type:        cacheTypeGeneric,
@@ -314,7 +333,8 @@ func (c *GoBuildCache) validate() error {
 }
 
 type GoBuildCacheInfo struct {
-	Platform *ocispecs.Platform
+	Namespace string
+	Platform  *ocispecs.Platform
 }
 
 type GoBuildCacheOption interface {
@@ -351,6 +371,7 @@ func (c *GoBuildCache) ToRunOption(cacheIdentity string, opts ...GoBuildCacheOpt
 		}
 
 		key := PersistentCacheID{
+			Namespace:   info.Namespace,
 			Environment: cacheIdentity,
 			Platform:    execCacheIDPlatform(ei, info.Platform),
 			Type:        cacheTypeGoBuild,
@@ -384,7 +405,8 @@ func (c *SCCache) validate() error {
 }
 
 type SCCacheInfo struct {
-	Platform *ocispecs.Platform
+	Namespace string
+	Platform  *ocispecs.Platform
 }
 
 type SCCacheOption interface {
@@ -430,6 +452,7 @@ func (c *SCCache) ToRunOption(cacheIdentity string, opts ...SCCacheOption) llb.R
 		}
 
 		key := PersistentCacheID{
+			Namespace:   info.Namespace,
 			Environment: cacheIdentity,
 			Platform:    FormatCacheIDPlatform(*platform),
 			Type:        cacheTypeRustSccache,
@@ -473,7 +496,9 @@ fi`),
 		// Set up RUSTC_WRAPPER to point at the absolute sccache binary path (no PATH update needed)
 		llb.AddEnv("RUSTC_WRAPPER", sccacheBinary).SetRunOption(ei)
 	})
-} // BazelCache sets up a cache for bazel builds.
+}
+
+// BazelCache sets up a cache for bazel builds.
 // Currently this only supports setting up a *local* bazel cache.
 //
 // BazelCache relies on the *system* bazelrc file to configure the default cache location.
@@ -494,6 +519,7 @@ func (c *BazelCache) validate() error {
 }
 
 type BazelCacheInfo struct {
+	Namespace   string
 	Platform    *ocispecs.Platform
 	constraints *llb.Constraints
 }
@@ -538,6 +564,7 @@ func (c *BazelCache) ToRunOption(worker llb.State, cacheIdentity string, opts ..
 		}
 
 		key := PersistentCacheID{
+			Namespace:   info.Namespace,
 			Environment: cacheIdentity,
 			Platform:    FormatCacheIDPlatform(*platform),
 			Type:        cacheTypeBazel,

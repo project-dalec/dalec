@@ -75,20 +75,21 @@ func (cfg *Config) SetBuildCacheIdentity(identity string) {
 	cfg.CacheIdentity = identity
 }
 
-func (cfg *Config) packageCacheID(platform, dir string) string {
+func (cfg *Config) packageCacheID(namespace, platform, dir string) string {
 	key := ""
 	if len(cfg.CacheDir) > 1 {
 		key = filepath.Base(dir)
 	}
 
 	return dalec.PersistentCacheID{
+		Namespace:   namespace,
 		Environment: cfg.CacheName,
 		Platform:    platform,
 		Key:         key,
 	}.String()
 }
 
-func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
+func (cfg *Config) PackageCacheMount(root, namespace string) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 		var platform string
 		if cfg.CacheAddPlatform {
@@ -115,7 +116,7 @@ func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
 			llb.AddMount(
 				joinUnderRoot(root, d),
 				llb.Scratch(),
-				llb.AsPersistentCacheDir(cfg.packageCacheID(platform, d), llb.CacheMountLocked),
+				llb.AsPersistentCacheDir(cfg.packageCacheID(namespace, platform, d), llb.CacheMountLocked),
 			).SetRunOption(ei)
 		}
 
@@ -126,7 +127,7 @@ func (c *Config) Install(pkgs []string, opts ...DnfInstallOpt) llb.RunOption {
 	var cfg dnfInstallConfig
 	dnfInstallOptions(&cfg, opts)
 
-	return dalec.WithRunOptions(c.InstallFunc(&cfg, c.ReleaseVer, pkgs), c.PackageCacheMount(cfg.root))
+	return dalec.WithRunOptions(c.InstallFunc(&cfg, c.ReleaseVer, pkgs), c.PackageCacheMount(cfg.root, cfg.cacheNamespace))
 }
 
 // Routes returns the flat routes for this RPM distro config, prefixed with the given prefix.
