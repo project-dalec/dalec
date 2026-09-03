@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -14,17 +13,15 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets"
-	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
 )
 
 const (
 	outputDir       = "/tmp/output"
 	buildScriptName = "_build.sh"
 	aptCachePrefix  = "jammy-windowscross"
-	distroVersionID = ubuntu.JammyVersionID
 )
 
-func handleZip(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+func (h routeHandlers) handleZip(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		sOpt, err := frontend.SourceOptFromClient(ctx, client, nil)
 		if err != nil {
@@ -32,9 +29,9 @@ func handleZip(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 		}
 
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
-		worker := distroConfig.Worker(sOpt, pg)
+		worker := h.distro.Worker(sOpt, pg)
 
-		bin := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
+		bin := h.buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
 
 		st := getZipLLB(worker, platform, spec, bin, pg)
 
@@ -152,13 +149,13 @@ func addGoCache(spec *dalec.Spec, targetKey string) {
 	})
 }
 
-func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, client gwclient.Client, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
+func (h routeHandlers) buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, client gwclient.Client, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))
 
 	deps := spec.GetPackageDeps(targetKey).GetBuild()
 	if len(deps) > 0 {
 		opts := append(opts, deps.GetSourceLocation(worker))
-		worker = worker.With(distroConfig.InstallBuildDeps(ctx, sOpt, spec, targetKey, opts...))
+		worker = worker.With(h.distro.InstallBuildDeps(ctx, sOpt, spec, targetKey, opts...))
 	}
 
 	// Preprocess the spec to generate patches for gomod edits and other generators
@@ -195,7 +192,7 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 		llb.AddEnv("GOOS", "windows"),
 		dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 			for _, c := range spec.Build.Caches {
-				c.ToRunOption(worker, path.Join(distroVersionID, targetKey), dalec.WithCacheDirConstraints(opts...)).SetRunOption(ei)
+				c.ToRunOption(worker, h.distro.BuildCacheIdentity(), dalec.WithCacheDirConstraints(opts...)).SetRunOption(ei)
 			}
 		}),
 		dalec.RunOptFunc(func(ei *llb.ExecInfo) {

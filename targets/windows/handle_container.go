@@ -35,7 +35,7 @@ var defaultPlatform = ocispecs.Platform{
 	Architecture: runtime.GOARCH,
 }
 
-func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+func (h routeHandlers) handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	dc, err := dockerui.NewClient(client)
 	if err != nil {
 		return nil, err
@@ -130,9 +130,9 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 		}
 
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
-		worker := distroConfig.Worker(sOpt, pg)
+		worker := h.distro.Worker(sOpt, pg)
 
-		bin := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
+		bin := h.buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
 
 		bi := bases[idx]
 

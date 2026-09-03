@@ -3,7 +3,6 @@ package distro
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -63,19 +62,6 @@ func debArchFromPlatform(p ocispecs.Platform) (string, error) {
 	default:
 		return "", errors.Errorf("unsupported platform arch for deb: %q", p.Architecture)
 	}
-}
-
-// aptCacheKeyForCross returns a platform-scoped apt cache key for cross-architecture builds.
-// When building a target image on a different build platform, the shared apt cache must be
-// separated by target platform to avoid mixing build-arch and target-arch .deb artifacts.
-func aptCacheKeyForCross(prefix string, target ocispecs.Platform) string {
-	if prefix == "" {
-		return prefix
-	}
-	// platforms.Format => e.g. "linux/arm64"
-	s := platforms.Format(target)
-	s = strings.NewReplacer("/", "_", ":", "_").Replace(s)
-	return prefix + "-" + s
 }
 
 func (cfg *Config) HandleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
@@ -200,14 +186,13 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 	// Build platform container (tools run here), pinned to build platform.
 	buildBase := frontend.GetBaseImage(buildSOpt, cfg.ImageRef, buildOpts...).Platform(buildPlat)
 	const rootfsMount = "/tmp/dalec/rootfs"
-	cacheKey := aptCacheKeyForCross(cfg.AptCachePrefix, targetPlat)
 
 	es := buildBase.Run(
 		dalec.WithConstraints(append(opts, llb.Platform(buildPlat))...),
 		llb.AddMount(rootfsMount, targetBase),
 		AptInstallIntoRoot(rootfsMount, cfg.BuilderPackages, targetArch, buildPlat),
 		aptProxyConfig(sOpt),
-		dalec.WithMountedAptCache(cacheKey),
+		dalec.WithMountedAptCacheForPlatform(cfg.AptCachePrefix, targetPlat),
 	)
 
 	return es.GetMount(rootfsMount).Platform(targetPlat)
@@ -247,7 +232,6 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 	buildOpts := append(append([]llb.ConstraintsOpt{}, opts...), llb.Platform(buildPlat))
 
 	const rootfsMount = "/tmp/dalec/rootfs"
-	cacheKey := aptCacheKeyForCross(cfg.AptCachePrefix, targetPlat)
 
 	buildBase := frontend.GetBaseImage(buildSOpt, cfg.ImageRef, buildOpts...).Platform(buildPlat)
 	es := buildBase.Run(
@@ -255,7 +239,7 @@ func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsO
 		llb.AddMount(rootfsMount, worker),
 		AptInstallIntoRoot(rootfsMount, []string{"erofs-utils"}, targetArch, buildPlat),
 		aptProxyConfig(sOpts),
-		dalec.WithMountedAptCache(cacheKey),
+		dalec.WithMountedAptCacheForPlatform(cfg.AptCachePrefix, targetPlat),
 	)
 
 	return es.GetMount(rootfsMount).Platform(targetPlat)

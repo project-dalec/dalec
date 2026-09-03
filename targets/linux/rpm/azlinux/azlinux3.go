@@ -7,6 +7,7 @@ import (
 
 const (
 	AzLinux3TargetKey     = "azlinux3"
+	azlinux3CacheIdentity = "azlinux3.0"
 	tdnfCacheNameAzlinux3 = "azlinux3-tdnf-cache"
 
 	// Azlinux3Ref is the image ref used for the base worker image
@@ -61,6 +62,7 @@ var Azlinux3Config = &distro.Config{
 	ImageRef:   Azlinux3Ref,
 	ContextRef: Azlinux3WorkerContextName,
 
+	CacheIdentity:    azlinux3CacheIdentity,
 	CacheName:        tdnfCacheNameAzlinux3,
 	CacheDir:         []string{"/var/cache/tdnf", "/var/cache/dnf"},
 	CacheAddPlatform: true,

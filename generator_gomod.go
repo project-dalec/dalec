@@ -24,6 +24,10 @@ const (
 	BuildArgDalecGomodProxy = "DALEC_GOMOD_PROXY"
 )
 
+func gomodProxyCacheID() string {
+	return PersistentCacheID{Type: GomodCacheKey}.String()
+}
+
 func (g *GeneratorGomod) processBuildArgs(args map[string]string, allowArg func(key string) bool) error {
 	var errs []error
 	lex := shell.NewLex('\\')
@@ -122,7 +126,7 @@ func withGomod(gomodOpts gomodGeneratorOpts) func(llb.State) llb.State {
 				llb.AddEnv("GIT_SSH_COMMAND", "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"),
 				llb.Dir(filepath.Join(joinedWorkDir, path)),
 				srcMount,
-				llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
+				llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(gomodProxyCacheID(), llb.CacheMountShared)),
 				WithConstraints(opts...),
 				g.Gomod._sourceMap.GetLocation(in),
 			}
