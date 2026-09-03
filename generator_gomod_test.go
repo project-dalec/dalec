@@ -3,12 +3,14 @@ package dalec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/patternmatcher"
 )
 
 func TestGomodReplaceUnmarshal(t *testing.T) {
@@ -301,6 +303,99 @@ func TestGomodEditArgs_DropRequire(t *testing.T) {
 	}
 }
 
+func TestGomodDepsExcludesModuleZipCache(t *testing.T) {
+	t.Parallel()
+
+	t.Run("with no configured source filter, the zip cache is still excluded", func(t *testing.T) {
+		t.Parallel()
+
+		spec := testGomodProxySpec()
+		st := spec.GomodDeps(testGomodProxySourceOpts(""), llb.Scratch())
+		if st == nil {
+			t.Fatal("gomod generator succeeded but returned nil state")
+		}
+
+		excludes := gomodDepsCopyExcludes(context.Background(), t, *st)
+		if !slices.Contains(excludes, "cache/download/**/*.zip") {
+			t.Fatalf("expected gomod deps to exclude module zip cache, got %v", excludes)
+		}
+	})
+
+	t.Run("with a configured source filter, both the zip cache and the configured excludes apply", func(t *testing.T) {
+		t.Parallel()
+
+		spec := testGomodProxySpec()
+		sOpt := testGomodProxySourceOpts("")
+		sOpt.SourceFilter = func() (SourceFilterConfig, error) {
+			return SourceFilterConfig{GlobalExcludes: []string{"**/testdata/**"}}, nil
+		}
+
+		st := spec.GomodDeps(sOpt, llb.Scratch())
+		if st == nil {
+			t.Fatal("gomod generator succeeded but returned nil state")
+		}
+
+		excludes := gomodDepsCopyExcludes(context.Background(), t, *st)
+		if !slices.Contains(excludes, "cache/download/**/*.zip") {
+			t.Fatalf("expected gomod deps to still exclude module zip cache, got %v", excludes)
+		}
+		if !slices.Contains(excludes, "**/testdata/**") {
+			t.Fatalf("expected gomod deps to include configured excludes, got %v", excludes)
+		}
+	})
+
+	t.Run("a failing source filter is surfaced as an error state", func(t *testing.T) {
+		t.Parallel()
+
+		spec := testGomodProxySpec()
+		sOpt := testGomodProxySourceOpts("")
+		sOpt.SourceFilter = func() (SourceFilterConfig, error) {
+			return SourceFilterConfig{}, errors.New("boom")
+		}
+
+		st := spec.GomodDeps(sOpt, llb.Scratch())
+		if st == nil {
+			t.Fatal("gomod generator succeeded but returned nil state")
+		}
+
+		_, err := st.Marshal(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("expected marshal to surface source filter error, got %v", err)
+		}
+	})
+
+	t.Run("a configured source filter cannot re-include the zip cache via negation", func(t *testing.T) {
+		t.Parallel()
+
+		// Exclude patterns are matched in order with support for "!"
+		// negation (like a .dockerignore file). If a downstream config
+		// negated the zip pattern and that negation were applied after the
+		// mandatory exclude, it would re-include the zip cache. The
+		// mandatory pattern must be the effective, final word.
+		spec := testGomodProxySpec()
+		sOpt := testGomodProxySourceOpts("")
+		sOpt.SourceFilter = func() (SourceFilterConfig, error) {
+			return SourceFilterConfig{GlobalExcludes: []string{"!cache/download/**/*.zip"}}, nil
+		}
+
+		st := spec.GomodDeps(sOpt, llb.Scratch())
+		if st == nil {
+			t.Fatal("gomod generator succeeded but returned nil state")
+		}
+
+		excludes := gomodDepsCopyExcludes(context.Background(), t, *st)
+
+		const zipPath = "cache/download/github.com/pkg/errors/@v/v0.9.1.zip"
+		matched, err := patternmatcher.Matches(zipPath, excludes)
+		if err != nil {
+			t.Fatalf("failed to evaluate exclude patterns: %v", err)
+		}
+		if !matched {
+			t.Fatalf("expected zip cache path %q to still be excluded despite a negated configured pattern, got excludes %v", zipPath, excludes)
+		}
+	})
+}
+
 func TestGomodDepsUsesGomodProxy(t *testing.T) {
 	t.Parallel()
 
@@ -453,5 +548,32 @@ func gomodPatchExecEnv(ctx context.Context, t *testing.T, st llb.State) []string
 	}
 
 	t.Fatal("expected gomod patch exec")
+	return nil
+}
+
+// gomodDepsCopyExcludes returns the ExcludePatterns of the final source-filter
+// copy applied by [Spec.GomodDeps]. That copy is identified as the one whose
+// destination is the state root ("/") and whose CopyDirContentsOnly is set,
+// matching what [SourceFilter] produces.
+func gomodDepsCopyExcludes(ctx context.Context, t *testing.T, st llb.State) []string {
+	t.Helper()
+
+	for _, op := range sourceOpsFromState(ctx, t, st) {
+		fileOp := op.GetFile()
+		if fileOp == nil {
+			continue
+		}
+		for _, action := range fileOp.Actions {
+			cp := action.GetCopy()
+			if cp == nil {
+				continue
+			}
+			if cp.Dest == "/" && cp.DirCopyContents {
+				return cp.ExcludePatterns
+			}
+		}
+	}
+
+	t.Fatal("expected gomod deps source-filter copy")
 	return nil
 }
