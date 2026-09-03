@@ -20,7 +20,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0
 	github.com/moby/buildkit v0.31.2
 	github.com/moby/docker-image-spec v1.3.1
-	github.com/moby/go-archive v0.2.1
+	github.com/moby/go-archive v0.3.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
@@ -37,7 +37,7 @@ require (
 	golang.org/x/sys v0.46.0
 	golang.org/x/tools v0.45.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.11
 	gotest.tools/v3 v3.5.2
 )
