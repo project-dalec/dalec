@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
 
@@ -121,7 +121,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
 
@@ -156,7 +156,7 @@ jobs:
           docker version
           docker info
 
-      - uses: docker/login-action@06fb636fac595d6fb4b28a5dfcb21a6f5091859c # v4.5.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         name: Login to GHCR
         with:
           registry: ghcr.io
@@ -372,7 +372,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
 
@@ -418,7 +418,7 @@ jobs:
       FRONTEND_REF: localhost:5000/dalec/frontend
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
 
@@ -433,7 +433,7 @@ jobs:
       - name: Setup source policy
         if: inputs.source_policy
         uses: ./.github/actions/setup-source-policy
-      - uses: docker/login-action@06fb636fac595d6fb4b28a5dfcb21a6f5091859c # v4.5.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         name: Login to GHCR
         with:
           registry: ghcr.io
@@ -509,7 +509,7 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
 
