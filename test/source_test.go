@@ -1186,28 +1186,44 @@ func TestDebugGomodSourceFilterConfig(t *testing.T) {
 		},
 	}
 
-	filterConfig := llb.Scratch().File(llb.Mkfile("/source-filter.yml", 0o644, []byte(`
+	const filterConfig = `
 global_excludes:
   - github.com/cpuguy83/tar2go@v0.3.1
-`)))
+`
 
-	runTest(t, func(ctx context.Context, gwc gwclient.Client) {
-		req := newSolveRequest(
-			withBuildTarget("debug/gomods"),
-			withSpec(ctx, t, spec),
-			withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, filterConfig),
-			withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/source-filter.yml"),
-		)
+	buildWithFilterConfig := func(t *testing.T, configState llb.State, extra ...srOpt) {
+		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+			opts := []srOpt{
+				withBuildTarget("debug/gomods"),
+				withSpec(ctx, t, spec),
+				withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, configState),
+			}
+			req := newSolveRequest(append(opts, extra...)...)
 
-		res := solveT(ctx, t, gwc, req)
-		ref, err := res.SingleRef()
-		assert.NilError(t, err)
+			res := solveT(ctx, t, gwc, req)
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
 
-		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "github.com/cpuguy83/tar2go@v0.3.1"})
-		assert.Assert(t, err != nil, "expected filtered gomod directory to be absent")
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "github.com/cpuguy83/tar2go@v0.3.1"})
+			assert.Assert(t, err != nil, "expected filtered gomod directory to be absent")
 
-		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "cache"})
-		assert.NilError(t, err)
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "cache"})
+			assert.NilError(t, err)
+		})
+	}
+
+	t.Run("config at the default path", func(t *testing.T) {
+		t.Parallel()
+
+		buildWithFilterConfig(t, llb.Scratch().File(llb.Mkfile("/"+dalec.DefaultSourceFilterConfigPath, 0o644, []byte(filterConfig))))
+	})
+
+	t.Run("config path build arg overrides the default path", func(t *testing.T) {
+		t.Parallel()
+
+		configState := llb.Scratch().File(llb.Mkfile("/gomod-filter.yml", 0o644, []byte(filterConfig)))
+
+		buildWithFilterConfig(t, configState, withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "gomod-filter.yml"))
 	})
 }
 
@@ -1237,20 +1253,14 @@ func TestDebugSourcesSourceFilterConfig(t *testing.T) {
 		},
 	}
 
-	filterConfig := llb.Scratch().File(llb.Mkfile("/source-filter.yml", 0o644, []byte(`
+	const filterConfig = `
 global_excludes:
   - drop.txt
-`)))
+`
 
-	runTest(t, func(ctx context.Context, gwc gwclient.Client) {
-		req := newSolveRequest(
-			withBuildTarget("debug/sources"),
-			withSpec(ctx, t, spec),
-			withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, filterConfig),
-			withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/source-filter.yml"),
-		)
+	checkFilteredSources := func(ctx context.Context, t *testing.T, res *gwclient.Result) {
+		t.Helper()
 
-		res := solveT(ctx, t, gwc, req)
 		ref, err := res.SingleRef()
 		assert.NilError(t, err)
 
@@ -1259,6 +1269,41 @@ global_excludes:
 
 		_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "src/drop.txt"})
 		assert.Assert(t, err != nil, "expected filtered source file to be absent")
+	}
+
+	buildWithFilterConfig := func(t *testing.T, configState llb.State, extra ...srOpt) {
+		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+			opts := []srOpt{
+				withBuildTarget("debug/sources"),
+				withSpec(ctx, t, spec),
+				withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, configState),
+			}
+			req := newSolveRequest(append(opts, extra...)...)
+
+			checkFilteredSources(ctx, t, solveT(ctx, t, gwc, req))
+		})
+	}
+
+	t.Run("config at the default path", func(t *testing.T) {
+		t.Parallel()
+
+		buildWithFilterConfig(t, llb.Scratch().File(llb.Mkfile("/"+dalec.DefaultSourceFilterConfigPath, 0o644, []byte(filterConfig))))
+	})
+
+	t.Run("config path build arg overrides the default path", func(t *testing.T) {
+		t.Parallel()
+
+		configState := llb.Scratch().File(llb.Mkfile("/sources-filter.yml", 0o644, []byte(filterConfig)))
+
+		buildWithFilterConfig(t, configState, withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "sources-filter.yml"))
+	})
+
+	t.Run("an absolute config path build arg is read from the context root", func(t *testing.T) {
+		t.Parallel()
+
+		configState := llb.Scratch().File(llb.Mkfile("/sources-filter.yml", 0o644, []byte(filterConfig)))
+
+		buildWithFilterConfig(t, configState, withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/sources-filter.yml"))
 	})
 }
 
