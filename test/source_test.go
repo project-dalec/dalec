@@ -644,6 +644,34 @@ gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c h1:dUUwHk2QECo/6vqA44rthZ8ie
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 `
 
+const thirdGomodFixtureMain = `package main
+
+import (
+	"fmt"
+
+	"golang.org/x/sync/syncmap"
+)
+
+func main() {
+	var m syncmap.Map
+	m.Clear()
+
+	fmt.Println("Hello, playground")
+}
+`
+
+const thirdGomodFixtureMod = `module example.com/m/v2
+
+go 1.25.0
+
+require golang.org/x/sync v0.22.0
+`
+
+const thirdGomodFixtureSum = `
+golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
+golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
+`
+
 const npmPackageJson = `
 {
   "name": "npm-test",
@@ -878,6 +906,94 @@ index ea874f5..ba38f84 100644
 			}
 			deps := []string{"github.com/cpuguy83/tar2go@v0.3.1", "github.com/stretchr/testify@v1.7.0"}
 			for _, dep := range deps {
+				stat, err := ref.StatFile(ctx, gwclient.StatRequest{
+					Path: dep,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if !fs.FileMode(stat.Mode).IsDir() {
+					t.Fatal("expected directory")
+				}
+			}
+		})
+	})
+
+	t.Run("multi-module with path expansion", func(t *testing.T) {
+		t.Parallel()
+		/*
+			dir/
+				go.mod
+				go.sum
+				main.go
+				module1/
+					go.mod
+					go.sum
+					main.go
+				module2/
+					go.mod
+					go.sum
+					main.go
+		*/
+
+		pg := dalec.ProgressGroup("test-multi-module-gomod-expansion")
+
+		contextSt := llb.Scratch().
+			File(llb.Mkdir("/dir", 0644), pg).
+			File(llb.Mkfile("/dir/go.mod", 0644, []byte(gomodFixtureMod)), pg).
+			File(llb.Mkfile("/dir/go.sum", 0644, []byte(gomodFixtureSum)), pg).
+			File(llb.Mkfile("/dir/main.go", 0644, []byte(gomodFixtureMain)), pg).
+			File(llb.Mkdir("/dir/module1", 0644), pg).
+			File(llb.Mkfile("/dir/module1/go.mod", 0644, []byte(alternativeGomodFixtureMod)), pg).
+			File(llb.Mkfile("/dir/module1/go.sum", 0644, []byte(alternativeGomodFixtureSum)), pg).
+			File(llb.Mkfile("/dir/module1/main.go", 0644, []byte(alternativeGomodFixtureMain)), pg).
+			File(llb.Mkdir("/dir/module2", 0644), pg).
+			File(llb.Mkfile("/dir/module2/go.mod", 0644, []byte(thirdGomodFixtureMod)), pg).
+			File(llb.Mkfile("/dir/module2/go.sum", 0644, []byte(thirdGomodFixtureSum)), pg).
+			File(llb.Mkfile("/dir/module2/main.go", 0644, []byte(thirdGomodFixtureMain)), pg)
+
+		const contextName = "multi-module-expansion"
+		spec := &dalec.Spec{
+			Name: "test-dalec-context-source",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Paths: []string{
+									"dir/module?", // expands to both dir/module1 and dir/module2.
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					"golang": {
+						Version: []string{},
+					},
+				},
+			},
+		}
+
+		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+			req := newSolveRequest(withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt), withBuildTarget("debug/gomods"))
+			res := solveT(ctx, t, gwc, req)
+			ref, err := res.SingleRef()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, dep := range []string{"github.com/cpuguy83/tar2go@v0.3.1"} {
+				if _, err := ref.StatFile(ctx, gwclient.StatRequest{Path: dep}); err == nil {
+					t.Fatalf("expected %q not to be fetched", dep)
+				}
+			}
+
+			for _, dep := range []string{"github.com/stretchr/testify@v1.7.0", "golang.org/x/sync@v0.22.0"} {
 				stat, err := ref.StatFile(ctx, gwclient.StatRequest{
 					Path: dep,
 				})
