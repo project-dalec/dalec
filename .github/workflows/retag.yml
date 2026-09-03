@@ -68,7 +68,7 @@ jobs:
           echo "RETAG_REGISTRY=${repo}" >> $GITHUB_ENV
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
       - name: Retag images
         run: |

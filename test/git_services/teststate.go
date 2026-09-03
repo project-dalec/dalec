@@ -155,7 +155,7 @@ func (ts *TestState) buildHTTPGitServer(ctx context.Context) llb.State {
 
 	src, mountOpts := dctx.ToMount(sOpt)
 
-	return llb.Image("golang:1.25", llb.WithMetaResolver(ts.client)).
+	return llb.Image("golang:1.26", llb.WithMetaResolver(ts.client)).
 		Run(
 			llb.Args([]string{"go", "build", "-o=/build/out/git_http_server", "./test/git_services/cmd/server"}),
 			llb.AddEnv("CGO_ENABLED", "0"),

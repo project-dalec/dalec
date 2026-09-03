@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/format"
 	"go/parser"
 	"go/token"
@@ -50,68 +51,82 @@ type SourceField struct {
 }
 
 func extractSourceFields() ([]SourceField, error) {
-	fset := token.NewFileSet()
-	packages, err := parser.ParseDir(fset, ".", nil, parser.ParseComments)
+	// ImportDir applies build constraints, so the file list matches the one the
+	// compiler would see for this package.
+	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse directory: %w", err)
+		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
-	var sourceFields []SourceField
+	fset := token.NewFileSet()
 
-	var found bool
-
-	for _, pkg := range packages {
-		if found {
-			break
+	for _, name := range pkg.GoFiles {
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s: %w", name, err)
 		}
-		for _, node := range pkg.Files {
-			// Find the Source struct
-			if found {
-				break
+
+		if fields, found := sourceFields(f); found {
+			// Sort fields for consistent output
+			sort.Slice(fields, func(i, j int) bool {
+				return fields[i].Name < fields[j].Name
+			})
+			return fields, nil
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "source struct not found")
+	return nil, nil
+}
+
+// sourceFields collects the source variant fields from the Source struct in f,
+// reporting whether the struct was declared in this file at all.
+func sourceFields(f *ast.File) ([]SourceField, bool) {
+	const sourceTypeRef = "Source"
+
+	var (
+		fields []SourceField
+		found  bool
+	)
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		ts, ok := n.(*ast.TypeSpec)
+		if !ok || ts.Name.Name != sourceTypeRef {
+			return true
+		}
+
+		found = true
+
+		st, ok := ts.Type.(*ast.StructType)
+		if !ok {
+			return false
+		}
+
+		for _, field := range st.Fields.List {
+			if len(field.Names) == 0 {
+				continue // Skip embedded fields
 			}
 
-			const sourceTypeRef = "Source"
-			ast.Inspect(node, func(n ast.Node) bool {
-				if ts, ok := n.(*ast.TypeSpec); ok && ts.Name.Name == sourceTypeRef {
-					found = true
-					if st, ok := ts.Type.(*ast.StructType); ok {
-						for _, field := range st.Fields.List {
-							if len(field.Names) == 0 {
-								continue // Skip embedded fields
-							}
+			// Only pointers to types starting with "Source" are variants.
+			ptr, ok := field.Type.(*ast.StarExpr)
+			if !ok {
+				continue
+			}
+			ident, ok := ptr.X.(*ast.Ident)
+			if !ok || !strings.HasPrefix(ident.Name, sourceTypeRef) {
+				continue
+			}
 
-							fieldName := field.Names[0].Name
-
-							// Check if this is a pointer to a type starting with "Source"
-							if ptr, ok := field.Type.(*ast.StarExpr); ok {
-								if ident, ok := ptr.X.(*ast.Ident); ok {
-									typeName := ident.Name
-									if strings.HasPrefix(typeName, sourceTypeRef) {
-										sourceFields = append(sourceFields, SourceField{
-											Name:     fieldName,
-											TypeName: typeName,
-										})
-									}
-								}
-							}
-						}
-					}
-				}
-				return true
+			fields = append(fields, SourceField{
+				Name:     field.Names[0].Name,
+				TypeName: ident.Name,
 			})
 		}
-	}
 
-	if !found {
-		fmt.Fprintln(os.Stderr, "source struct not found")
-	}
-
-	// Sort fields for consistent output
-	sort.Slice(sourceFields, func(i, j int) bool {
-		return sourceFields[i].Name < sourceFields[j].Name
+		return false
 	})
 
-	return sourceFields, nil
+	return fields, found
 }
 
 func generateCode(fields []SourceField) ([]byte, error) {
@@ -142,7 +157,7 @@ import (
 	buf.WriteString("\tcount := 0\n\n")
 
 	for _, field := range fields {
-		buf.WriteString(fmt.Sprintf("\tif s.%s != nil {\n", field.Name))
+		fmt.Fprintf(&buf, "\tif s.%s != nil {\n", field.Name)
 		buf.WriteString("\t\tcount++\n")
 		buf.WriteString("\t}\n")
 	}
@@ -166,8 +181,8 @@ import (
 	buf.WriteString("\tswitch {\n")
 
 	for _, field := range fields {
-		buf.WriteString(fmt.Sprintf("\tcase s.%s != nil:\n", field.Name))
-		buf.WriteString(fmt.Sprintf("\t\treturn s.%s\n", field.Name))
+		fmt.Fprintf(&buf, "\tcase s.%s != nil:\n", field.Name)
+		fmt.Fprintf(&buf, "\t\treturn s.%s\n", field.Name)
 	}
 
 	buf.WriteString(`	default:

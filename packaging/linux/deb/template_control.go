@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
 
 	"github.com/project-dalec/dalec"
-	"golang.org/x/exp/slices"
 )
 
 func WriteControl(spec *dalec.Spec, target string, w io.Writer) error {

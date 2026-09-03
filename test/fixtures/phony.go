@@ -29,7 +29,7 @@ func PhonyFrontend(ctx context.Context, gwc gwclient.Client) (*gwclient.Result, 
 	}
 
 	p := llb.Platform(dc.BuildPlatforms[0])
-	st := llb.Image("golang:1.25", llb.WithMetaResolver(gwc), p).
+	st := llb.Image("golang:1.26", llb.WithMetaResolver(gwc), p).
 		Run(
 			llb.Args([]string{"go", "build", "-o=/build/out", "./test/fixtures/phony"}),
 			llb.AddEnv("CGO_ENABLED", "0"),
