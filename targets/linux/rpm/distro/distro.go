@@ -26,6 +26,9 @@ type Config struct {
 	// Dependencies to install in base image
 	BasePackages       []dalec.Spec
 	RepoPlatformConfig *dalec.RepoPlatformConfig
+	// InstallBasePackagesSeparately bootstraps the base userland before
+	// installing the application RPM and its runtime dependency graph.
+	InstallBasePackagesSeparately bool
 
 	DefaultOutputImage string
 
