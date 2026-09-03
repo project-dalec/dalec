@@ -42,7 +42,7 @@ proxy ca
 	err = os.WriteFile(updateCA, []byte("#!/bin/sh\nprintf 'updated\\n' >> \"$DALEC_ZYPPER_UPDATE_LOG\"\n"), 0o700)
 	assert.NilError(t, err)
 
-	cmd := exec.Command("/bin/bash", "-c", zypperProxyConfigScript+`
+	cmd := exec.Command("bash", "-c", zypperProxyConfigScript+`
 configure_zypper_proxy
 grep -q 'buildkit proxy CA begin' "${DALEC_ZYPPER_PROXY_ANCHOR}"
 cleanup_zypper_proxy
@@ -50,7 +50,7 @@ if [ -e "${DALEC_ZYPPER_PROXY_ANCHOR}" ]; then exit 1; fi
 if [ "$(wc -l < "${DALEC_ZYPPER_UPDATE_LOG}")" -ne 2 ]; then exit 1; fi
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTPS_PROXY=http://proxy.example:3128",
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + sourceBundle,
 		"DALEC_ZYPPER_PROXY_ANCHOR=" + proxyAnchor,
@@ -72,11 +72,11 @@ func TestConfigureZypperProxyDoesNotTraceProxyValues(t *testing.T) {
 	assert.NilError(t, err)
 
 	const proxyURL = "http://dalec-proxy-value-sentinel@proxy.example:3128"
-	cmd := exec.Command("/bin/bash", "-c", "set -x\n"+zypperProxyConfigScript+`
+	cmd := exec.Command("bash", "-c", "set -x\n"+zypperProxyConfigScript+`
 configure_zypper_proxy
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=" + proxyURL,
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + caBundle,
 	}
@@ -95,12 +95,12 @@ func TestConfigureZypperProxyDisabled(t *testing.T) {
 	err := os.WriteFile(caBundle, []byte("test ca"), 0o600)
 	assert.NilError(t, err)
 
-	cmd := exec.Command("/bin/bash", "-c", zypperProxyConfigScript+`
+	cmd := exec.Command("bash", "-c", zypperProxyConfigScript+`
 configure_zypper_proxy
 if [ -e "${DALEC_ZYPPER_PROXY_ANCHOR}" ]; then exit 1; fi
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + caBundle,
 		"DALEC_ZYPPER_PROXY_ANCHOR=" + filepath.Join(t.TempDir(), "proxy.pem"),

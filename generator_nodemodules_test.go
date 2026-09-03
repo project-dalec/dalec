@@ -2,6 +2,7 @@ package dalec
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -86,7 +87,7 @@ configure_npm_proxy
 	"${NODE_EXTRA_CA_CERTS:-}"
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"HTTPS_PROXY=https://proxy.example:8443",
 		"NO_PROXY=localhost,127.0.0.1",
@@ -110,7 +111,7 @@ func TestConfigureNpmProxyDoesNotTraceProxyValues(t *testing.T) {
 
 	cmd := exec.Command("/bin/sh", "-c", "set -x\n"+npmProxyConfigScript+"\nconfigure_npm_proxy\n")
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://user:secret@proxy.example:3128",
 	}
 
@@ -134,7 +135,7 @@ configure_npm_proxy
 	"${NODE_EXTRA_CA_CERTS:-}"
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"HTTPS_PROXY=https://proxy.example:8443",
 		"DALEC_DISABLE_PROXY_CONFIG=1",
