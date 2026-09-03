@@ -21,9 +21,12 @@ var defaultRepoConfig = &dalec.RepoPlatformConfig{
 }
 
 type Config struct {
-	ImageRef       string
-	ContextRef     string
-	VersionID      string
+	ImageRef   string
+	ContextRef string
+	VersionID  string
+	// CacheIdentity identifies the build environment for user build-cache
+	// namespacing. When unset, VersionID is used.
+	CacheIdentity  string
 	AptCachePrefix string
 
 	BuilderPackages    []string
@@ -39,6 +42,17 @@ type Config struct {
 
 	// erofs-utils 1.7+ is required for tar support.
 	SysextSupported bool
+}
+
+func (cfg *Config) BuildCacheIdentity() string {
+	if cfg.CacheIdentity != "" {
+		return cfg.CacheIdentity
+	}
+	return cfg.VersionID
+}
+
+func (cfg *Config) SetBuildCacheIdentity(identity string) {
+	cfg.CacheIdentity = identity
 }
 
 func (cfg *Config) BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {

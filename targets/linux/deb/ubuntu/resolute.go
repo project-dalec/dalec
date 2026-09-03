@@ -18,6 +18,7 @@ var (
 		ImageRef:           resoluteRef,
 		AptCachePrefix:     ResoluteAptCachePrefix,
 		VersionID:          resoluteVersionID,
+		CacheIdentity:      resoluteVersionID,
 		ContextRef:         ResoluteWorkerContextName,
 		DefaultOutputImage: resoluteRef,
 		BuilderPackages:    builderPackages,

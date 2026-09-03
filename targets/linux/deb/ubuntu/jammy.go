@@ -18,6 +18,7 @@ var (
 		ImageRef:           jammyRef,
 		AptCachePrefix:     JammyAptCachePrefix,
 		VersionID:          JammyVersionID,
+		CacheIdentity:      JammyVersionID,
 		ContextRef:         JammyWorkerContextName,
 		DefaultOutputImage: jammyRef,
 		BuilderPackages:    builderPackages,

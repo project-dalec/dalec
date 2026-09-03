@@ -19,6 +19,7 @@ var (
 		ImageRef:           bullseyeRef,
 		AptCachePrefix:     BullseyeAptCachePrefix,
 		VersionID:          bullseyeVersionID,
+		CacheIdentity:      bullseyeVersionID,
 		ContextRef:         BullseyeWorkerContextName,
 		DefaultOutputImage: bullseyeRef,
 		BuilderPackages:    builderPackages,

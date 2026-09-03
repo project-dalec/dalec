@@ -5,8 +5,9 @@ import (
 )
 
 const (
-	V8TargetKey    = "rockylinux8"
-	dnfCacheNameV8 = "rockylinux8-dnf-cache"
+	V8TargetKey     = "rockylinux8"
+	cacheIdentityV8 = "rockylinux8"
+	dnfCacheNameV8  = "rockylinux8-dnf-cache"
 
 	// v8Ref is the image ref used for the base worker image
 	v8Ref      = "docker.io/library/rockylinux:8"
@@ -19,6 +20,7 @@ var ConfigV8 = &distro.Config{
 	ImageRef:   v8Ref,
 	ContextRef: v8WorkerContextName,
 
+	CacheIdentity:    cacheIdentityV8,
 	CacheName:        dnfCacheNameV8,
 	CacheDir:         []string{"/var/cache/dnf"},
 	CacheAddPlatform: true,

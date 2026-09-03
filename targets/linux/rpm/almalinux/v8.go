@@ -5,8 +5,9 @@ import (
 )
 
 const (
-	V8TargetKey    = "almalinux8"
-	dnfCacheNameV8 = "almalinux8-dnf-cache"
+	V8TargetKey     = "almalinux8"
+	cacheIdentityV8 = "almalinux8"
+	dnfCacheNameV8  = "almalinux8-dnf-cache"
 
 	// v8Ref is the image ref used for the base worker image
 	v8Ref      = "docker.io/library/almalinux:8"
@@ -19,8 +20,9 @@ var ConfigV8 = &distro.Config{
 	ImageRef:   v8Ref,
 	ContextRef: v8WorkerContextName,
 
-	CacheName: dnfCacheNameV8,
-	CacheDir:  []string{"/var/cache/dnf"},
+	CacheIdentity: cacheIdentityV8,
+	CacheName:     dnfCacheNameV8,
+	CacheDir:      []string{"/var/cache/dnf"},
 	// Alma's repo configs do not include the $basearch variable in the mirrorlist URL
 	// This means that the cache key that dnf computes for /var/cache/dnf/<repoid>-<hash>
 	// is the same across x86_64 and aarch64, which leads to incorrect repo metadata

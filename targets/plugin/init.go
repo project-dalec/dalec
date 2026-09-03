@@ -12,14 +12,16 @@ import (
 	"github.com/project-dalec/dalec/targets/linux/flatcar"
 	"github.com/project-dalec/dalec/targets/linux/rpm/almalinux"
 	"github.com/project-dalec/dalec/targets/linux/rpm/azlinux"
+	rpmdistro "github.com/project-dalec/dalec/targets/linux/rpm/distro"
 	"github.com/project-dalec/dalec/targets/linux/rpm/rockylinux"
 	"github.com/project-dalec/dalec/targets/linux/rpm/suse"
 	"github.com/project-dalec/dalec/targets/windows"
 )
 
-const testingAltVersionIDSuffix = "testingalt"
+const testingAltCacheIdentitySuffix = "testingalt"
 
 type routeFunc func(prefix string, spec *dalec.Spec) ([]frontend.Route, error)
+type testingAltCacheIdentityRouteFunc func(cacheIdentity string) routeFunc
 
 func init() {
 	registerDebRoutes(debian.TrixieDefaultTargetKey, debian.TrixieConfig)
@@ -32,20 +34,20 @@ func init() {
 	registerDebRoutes(ubuntu.NobleDefaultTargetKey, ubuntu.NobleConfig)
 	registerDebRoutes(ubuntu.ResoluteDefaultTargetKey, ubuntu.ResoluteConfig)
 
-	registerRoutes(almalinux.V8TargetKey, almalinux.ConfigV8.Routes)
-	registerRoutes(almalinux.V9TargetKey, almalinux.ConfigV9.Routes)
+	registerRpmRoutes(almalinux.V8TargetKey, almalinux.ConfigV8)
+	registerRpmRoutes(almalinux.V9TargetKey, almalinux.ConfigV9)
 
-	registerRoutes(rockylinux.V8TargetKey, rockylinux.ConfigV8.Routes)
-	registerRoutes(rockylinux.V9TargetKey, rockylinux.ConfigV9.Routes)
+	registerRpmRoutes(rockylinux.V8TargetKey, rockylinux.ConfigV8)
+	registerRpmRoutes(rockylinux.V9TargetKey, rockylinux.ConfigV9)
 
-	registerRoutes(azlinux.AzLinux3TargetKey, azlinux.Azlinux3Config.Routes)
-	registerRoutes(azlinux.AzLinux4TargetKey, azlinux.Azlinux4Config.Routes)
+	registerRpmRoutes(azlinux.AzLinux3TargetKey, azlinux.Azlinux3Config)
+	registerRpmRoutes(azlinux.AzLinux4TargetKey, azlinux.Azlinux4Config)
 
-	registerRoutes(suse.SLES15TargetKey, suse.ConfigSLES15.Routes)
+	registerRpmRoutes(suse.SLES15TargetKey, suse.ConfigSLES15)
 
 	registerRoutes(flatcar.TargetKey, flatcar.DefaultConfig.Routes)
 
-	registerRoutes(windows.DefaultTargetKey, windows.Routes)
+	registerWindowsRoutes(windows.DefaultTargetKey)
 }
 
 func registerRoutes(name string, routes routeFunc) {
@@ -63,9 +65,9 @@ func registerRoutes(name string, routes routeFunc) {
 	})
 }
 
-func registerDebRoutes(name string, cfg *debdistro.Config) {
+func registerRoutesWithTestingAltCacheIdentity(name string, routes routeFunc, cacheIdentity string, altRoutes testingAltCacheIdentityRouteFunc) {
 	targets.RegisterRouteProvider(name, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return cfg.Routes(name, spec)
+		return routes(name, spec)
 	})
 
 	if !includeAltTestingTargets {
@@ -73,10 +75,30 @@ func registerDebRoutes(name string, cfg *debdistro.Config) {
 	}
 
 	altName := targets.TestingAltTargetKey(name)
-	altCfg := *cfg
-	altCfg.VersionID += testingAltVersionIDSuffix
-
+	testingAltRoutes := altRoutes(cacheIdentity + testingAltCacheIdentitySuffix)
 	targets.RegisterRouteProvider(altName, func(_ context.Context, spec *dalec.Spec) ([]frontend.Route, error) {
-		return altCfg.Routes(altName, spec)
+		return testingAltRoutes(altName, spec)
+	})
+}
+
+func registerDebRoutes(name string, cfg *debdistro.Config) {
+	registerRoutesWithTestingAltCacheIdentity(name, cfg.Routes, cfg.BuildCacheIdentity(), func(cacheIdentity string) routeFunc {
+		altCfg := *cfg
+		altCfg.SetBuildCacheIdentity(cacheIdentity)
+		return altCfg.Routes
+	})
+}
+
+func registerRpmRoutes(name string, cfg *rpmdistro.Config) {
+	registerRoutesWithTestingAltCacheIdentity(name, cfg.Routes, cfg.BuildCacheIdentity(), func(cacheIdentity string) routeFunc {
+		altCfg := *cfg
+		altCfg.SetBuildCacheIdentity(cacheIdentity)
+		return altCfg.Routes
+	})
+}
+
+func registerWindowsRoutes(name string) {
+	registerRoutesWithTestingAltCacheIdentity(name, windows.Routes, windows.BuildCacheIdentity(), func(cacheIdentity string) routeFunc {
+		return windows.RoutesWithCacheIdentity(cacheIdentity)
 	})
 }
