@@ -1,9 +1,155 @@
-name: Setup DNS spoofing to azure.archive.ubuntu.com
-description: 'Redirects DNS requests from archive.ubuntu.com to azure.archive.ubuntu.com'
+name: Setup DNS spoofing to a caching failover apt mirror proxy
+description: 'Redirects the ubuntu and debian apt mirrors to a local nginx reverse proxy that caches metadata and fails over between ubuntu mirrors'
 
 runs:
   using: 'composite'
   steps:
+    - name: Install nginx
+      shell: bash
+      run: |
+        set -ex -o pipefail
+        # Installed and started before the spoof is active so nginx resolves its
+        # upstreams via the runner's normal DNS rather than back through dnsmasq.
+        sudo apt-get update && sudo apt-get install -y nginx
+
+    - name: Configure nginx reverse proxy
+      shell: bash
+      run: |
+        set -euxo pipefail
+
+        # Caching reverse proxy for the ubuntu and debian apt mirrors. Mirrors
+        # serve by path on any vhost, so forwarding the original Host and
+        # proxying to azure (primary) with us.archive as a backup lets us fail
+        # over on the connect/timeout/5xx failures that plain DNS can't cover.
+        # Metadata responses are cached so the repeated apt updates in a CI run
+        # reuse one fetch instead of re-downloading indexes over the network.
+        #
+        # Logs go to files rather than /dev/stdout|stderr: under systemd those
+        # device paths aren't openable and nginx fails to start (while nginx -t,
+        # run from this shell, still passes).
+        sudo tee /etc/nginx/nginx.conf >/dev/null <<'NGINX'
+        user www-data;
+        worker_processes auto;
+        error_log /var/log/nginx/error.log warn;
+        pid /run/nginx.pid;
+
+        events {
+          worker_connections 1024;
+        }
+
+        http {
+          access_log /var/log/nginx/access.log;
+
+          # Cache apt *metadata* only. CI runners are ephemeral so caching
+          # packages is pointless (and buildkit already caches those), but the
+          # many apt updates in a run otherwise re-fetch the same indexes over
+          # the network every time. Caching metadata collapses that to a single
+          # fetch per index for the life of the runner.
+          proxy_cache_path /var/cache/nginx/apt levels=1:2 keys_zone=apt_meta:16m
+                           max_size=2g inactive=2h use_temp_path=off;
+
+          # 1 for package files, which we stream through without caching.
+          map $uri $apt_nocache {
+            default 0;
+            "~\.(deb|udeb|ddeb)$" 1;
+          }
+
+          # Shared proxy + cache behaviour for every mirror vhost below. Mirrors
+          # serve by path on any vhost, so forwarding the original Host lets one
+          # backend cover archive/security (ubuntu) and /debian + /debian-security.
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_set_header Host $host;
+          # Keep redirects pointed at the spoofed name so apt stays on the proxy.
+          proxy_redirect off;
+
+          # Budgets so a sick upstream fails fast instead of hanging apt.
+          proxy_connect_timeout 5s;
+          proxy_read_timeout 30s;
+          proxy_send_timeout 30s;
+
+          proxy_cache apt_meta;
+          proxy_cache_key $host$request_uri;
+          proxy_cache_bypass $apt_nocache;
+          proxy_no_cache $apt_nocache;
+          # Collapse concurrent misses for the same index into one upstream fetch.
+          proxy_cache_lock on;
+          # Force a fixed TTL regardless of upstream Cache-Control: some mirrors
+          # send no-cache on InRelease, which would defeat the cache. Safe here
+          # because a runner is short-lived and apt fetches Packages via
+          # immutable by-hash URLs, so the snapshot stays internally consistent.
+          proxy_ignore_headers Cache-Control Expires;
+          proxy_cache_valid 200 60m;
+          proxy_cache_valid 404 1m;
+          # Surface hit/miss in response headers for debugging.
+          add_header X-Cache-Status $upstream_cache_status;
+
+          # Keep upstream connections warm -- APT opens many small requests per run.
+          upstream ubuntu_archive {
+            server azure.archive.ubuntu.com:80 max_fails=2 fail_timeout=10s;
+            server us.archive.ubuntu.com:80 backup;
+            keepalive 16;
+          }
+
+          upstream debian_archive {
+            # deb.debian.org / security.debian.org are the same fastly CDN and
+            # reliable on their own; the main archive mirrors don't carry
+            # /debian-security, so a backup here would 404 security requests.
+            #
+            # No keepalive on purpose: fastly closes idle connections quickly, so
+            # a pooled connection is often half-dead by the time it is reused.
+            # nginx cannot fail that over once a package body has started
+            # streaming, so apt sees the connection drop mid-download ("Broken
+            # pipe") and -- since the installer runs apt with no Acquire::Retries
+            # -- the whole install fails. Opening a fresh connection per request
+            # avoids the stale-reuse race; the cost is negligible because metadata
+            # is served from cache and packages are large, occasional GETs.
+            server deb.debian.org:80;
+          }
+
+          server {
+            listen 80 default_server;
+            server_name archive.ubuntu.com security.ubuntu.com;
+
+            location / {
+              proxy_pass http://ubuntu_archive;
+
+              # The actual failover: retry the SAME request on a backup mirror
+              # when the primary errors, times out, or returns 5xx/429.
+              proxy_next_upstream error timeout http_500 http_502 http_503 http_504 http_429 non_idempotent;
+              proxy_next_upstream_tries 2;
+              proxy_next_upstream_timeout 20s;
+            }
+          }
+
+          server {
+            listen 80;
+            server_name deb.debian.org security.debian.org;
+
+            location / {
+              proxy_pass http://debian_archive;
+            }
+          }
+        }
+        NGINX
+
+        # nginx auto-creates only the final proxy_cache_path component, and
+        # /var/cache/nginx doesn't exist yet, so the mkdir during `nginx -t`
+        # fails. Pre-create it owned by the worker user (www-data) so the cache
+        # manager can write to it.
+        sudo mkdir -p /var/cache/nginx/apt
+        sudo chown -R www-data:www-data /var/cache/nginx
+
+        sudo nginx -t
+        if ! sudo systemctl restart nginx; then
+          echo "::group::nginx failed to start"
+          sudo systemctl status nginx --no-pager --full || true
+          sudo journalctl -xeu nginx.service --no-pager || true
+          sudo ss -ltnp || true
+          echo "::endgroup::"
+          exit 1
+        fi
+
     - name: Add dnsmasq config
       id: dnsmasq-config
       shell: bash
@@ -14,16 +160,23 @@ runs:
         LISTEN_IP="$(hostname -I | awk '{ print $1 }')"
         echo "DNSMASQ_IP=${LISTEN_IP}" >> "${GITHUB_OUTPUT}"
 
-        # Lookup a v4 A record for azure's mirror
-        # We'll use this as the reply to archive.ubuntu.com requests
-        AZURE_MIRROR_IP="$(getent ahostsv4 azure.archive.ubuntu.com | awk '{print $1}' | head -1)"
-
+        # Point the ubuntu and debian mirror hostnames at the local nginx proxy.
         sudo mkdir -p /etc/dnsmasq.d
         cat <<EOF | sudo tee /etc/dnsmasq.d/apt-mirror.conf
         listen-address=${LISTEN_IP}
         bind-interfaces
-        address=/archive.ubuntu.com/${AZURE_MIRROR_IP}
-        address=/security.ubuntu.com/${AZURE_MIRROR_IP}
+        address=/archive.ubuntu.com/${LISTEN_IP}
+        address=/security.ubuntu.com/${LISTEN_IP}
+        address=/deb.debian.org/${LISTEN_IP}
+        address=/security.debian.org/${LISTEN_IP}
+        # dnsmasq also matches subdomains, so without these the ubuntu mirror
+        # hostnames the proxy dials would resolve back to the proxy. More-specific
+        # server= rules win and forward them to real DNS, breaking the loop.
+        # Debian needs no such rule: its upstream name is the spoofed name itself,
+        # and nginx resolves it once at config load -- before this spoof is active
+        # -- so it keeps using the real IP for the life of the run.
+        server=/azure.archive.ubuntu.com/127.0.0.53
+        server=/us.archive.ubuntu.com/127.0.0.53
         server=127.0.0.53
         log-queries
         EOF
