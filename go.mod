@@ -8,7 +8,7 @@ require (
 	github.com/bazelbuild/remote-apis v0.0.0-20250915115802-824e1ba94b2d
 	github.com/cavaliergopher/rpm v1.3.0
 	github.com/containerd/containerd/v2 v2.3.4
-	github.com/containerd/platforms v1.0.0-rc.4
+	github.com/containerd/platforms v1.0.0-rc.5
 	github.com/containerd/plugin v1.1.0
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/cpuguy83/ocijoin v0.2.0
