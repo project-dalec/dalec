@@ -50,8 +50,9 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	pkgs := []string{
 		filepath.Join(rpmMountDir, "**/*.rpm"),
 	}
+	hasBasePackages := !skipBase && len(cfg.BasePackages) > 0
 
-	if !skipBase && len(cfg.BasePackages) > 0 {
+	if hasBasePackages {
 		opts := append(opts, dalec.ProgressGroup("Create base virtual package"))
 
 		var basePkgStates []llb.State
@@ -61,7 +62,26 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 		}
 
 		basePkgs = dalec.MergeAtPath(basePkgs, basePkgStates, "/", opts...)
-		pkgs = append(pkgs, filepath.Join(baseMountPath, "**/*.rpm"))
+		if !cfg.InstallBasePackagesSeparately {
+			pkgs = append(pkgs, filepath.Join(baseMountPath, "**/*.rpm"))
+		}
+	}
+
+	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
+
+	if hasBasePackages && cfg.InstallBasePackagesSeparately {
+		baseInstallOpts := []DnfInstallOpt{
+			DnfAtRoot(workPath),
+			DnfWithSourceOpts(sOpt),
+			DnfInstallWithConstraints(opts),
+			IncludeDocs(spec.GetArtifacts(targetKey).HasDocs()),
+		}
+		rootfs = worker.Run(
+			dalec.WithConstraints(opts...),
+			cfg.Install([]string{filepath.Join(baseMountPath, "**/*.rpm")}, baseInstallOpts...),
+			llb.AddMount(baseMountPath, basePkgs, llb.SourcePath("/RPMS")),
+			frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
+		).AddMount(workPath, rootfs)
 	}
 
 	minimize := !skipBase && spec.GetImageMinimizationProfile(targetKey) == dalec.ImageMinimizationProfileDefault
@@ -69,18 +89,33 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 		installOpts = append(installOpts, minimizeInstall(opts...))
 	}
 
-	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
-
-	rootfs = worker.Run(
+	runOpts := []llb.RunOption{
 		dalec.WithConstraints(opts...), // Make sure constraints (and platform specifically) are applied before install is set
 		cfg.Install(pkgs, installOpts...),
 		llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS")),
-		llb.AddMount(baseMountPath, basePkgs, llb.SourcePath("/RPMS")),
 		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
+	}
+	if hasBasePackages {
+		// The minimizer uses both RPM mounts to determine the packages that must
+		// remain, even when the base package was installed in an earlier run.
+		runOpts = append(runOpts, llb.AddMount(baseMountPath, basePkgs, llb.SourcePath("/RPMS")))
+	}
+
+	rootfs = worker.Run(
+		runOpts...,
 	).AddMount(workPath, rootfs)
 
 	if post := spec.GetImagePost(targetKey); post != nil && len(post.Symlinks) > 0 {
 		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, frontend.NativeSymlinkSupport(client), opts...))
+	}
+
+	if minimize && hasBasePackages && cfg.InstallBasePackagesSeparately {
+		squashOpts := append(opts, dalec.ProgressGroup("Squash RPM container"))
+		rootfs = llb.Scratch().File(llb.Copy(rootfs, "/", "/", &llb.CopyInfo{
+			CopyDirContentsOnly: true,
+			CreateDestPath:      true,
+			AllowWildcard:       true,
+		}), squashOpts...)
 	}
 
 	return rootfs

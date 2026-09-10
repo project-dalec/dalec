@@ -32,14 +32,15 @@ var ConfigSLES15 = &distro.Config{
 	CacheName: zypperCacheSLES15,
 	CacheDir:  []string{"/var/cache/zypp"},
 
-	ReleaseVer:                  "15",
-	BuilderPackages:             builderPackages,
-	BasePackages:                basePackages(SLES15TargetKey),
-	RepoPlatformConfig:          &defaultPlatformConfig,
-	InstallFunc:                 distro.ZypperInstall,
-	CrossArchInstallUnsupported: true,
-	FullName:                    sles15FullName,
-	RPMMacros:                   sles15RPMMacros,
+	ReleaseVer:                    "15",
+	BuilderPackages:               builderPackages,
+	BasePackages:                  basePackages(SLES15TargetKey),
+	InstallBasePackagesSeparately: true,
+	RepoPlatformConfig:            &defaultPlatformConfig,
+	InstallFunc:                   distro.ZypperInstall,
+	CrossArchInstallUnsupported:   true,
+	FullName:                      sles15FullName,
+	RPMMacros:                     sles15RPMMacros,
 }
 
 // sles15RPMMacros are the rpm macro overrides needed to make SUSE's rpm behave
