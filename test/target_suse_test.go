@@ -9,8 +9,11 @@ import (
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets/linux/rpm/distro"
 	"github.com/project-dalec/dalec/targets/linux/rpm/suse"
 )
@@ -64,10 +67,119 @@ func TestSLES15(t *testing.T) {
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testSuseExtra(ctx, t, cfg, suse.ConfigSLES15.ImageRef)
+	testSLESBasePackageBootstrap(ctx, t, cfg)
 }
 
 func testSuseExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distroImageRef string) {
 	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef, true, cfg.Worker)
+}
+
+func testSLESBasePackageBootstrap(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
+	t.Run("base_packages_are_installed_before_application_dependencies", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := testLinuxSpec(t, dalec.Spec{
+			Dependencies: &dalec.PackageDependencies{
+				Runtime: dalec.PackageDependencyList{
+					"bash":        {},
+					"coreutils":   {},
+					"grep":        {},
+					"libopenssl3": {},
+					"moby-runc": {
+						Version: []string{">= 1.1.0"},
+					},
+				},
+				Recommends: dalec.PackageDependencyList{
+					"git":  {},
+					"pigz": {},
+					"xz":   {},
+				},
+				ExtraRepos: []dalec.PackageRepositoryConfig{
+					{
+						// This intentionally mirrors the external repository and
+						// dependency graph that exposed the combined-transaction
+						// failure. Key rotation or repository changes may require
+						// updating this fixture independently of Dalec.
+						Keys: map[string]dalec.Source{
+							"msft.asc": {
+								HTTP: &dalec.SourceHTTP{
+									URL:         "https://packages.microsoft.com/keys/microsoft.asc",
+									Digest:      digest.Digest("sha256:2fa9c05d591a1582a9aba276272478c262e95ad00acf60eaee1644d93941e3c6"),
+									Permissions: 0o644,
+								},
+							},
+						},
+						Config: map[string]dalec.Source{
+							"microsoft-prod.repo": {
+								Inline: &dalec.SourceInline{
+									File: &dalec.SourceInlineFile{
+										Contents: `[packages-microsoft-com-prod]
+name=Microsoft Production
+baseurl=https://packages.microsoft.com/sles/15/prod/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///usr/share/pki/rpm-gpg/msft.asc
+sslverify=1
+`,
+									},
+								},
+							},
+						},
+						Envs: []string{"install"},
+					},
+				},
+			},
+			Sources: map[string]dalec.Source{
+				"service.service": {
+					Inline: &dalec.SourceInline{
+						File: &dalec.SourceInlineFile{
+							Contents: `[Unit]
+Description=Dalec SLES bootstrap regression test
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true
+
+[Install]
+WantedBy=multi-user.target
+`,
+						},
+					},
+				},
+			},
+			Artifacts: dalec.Artifacts{
+				Systemd: &dalec.SystemdConfiguration{
+					Units: map[string]dalec.SystemdUnitConfig{
+						"service.service": {Enable: true},
+					},
+				},
+			},
+			Tests: []*dalec.TestSpec{
+				{
+					Name: "base and application packages installed",
+					Files: map[string]dalec.FileCheckOutput{
+						"/etc/os-release": {
+							Permissions: 0o644,
+						},
+						filepath.Join(cfg.SystemdDir.Targets, "multi-user.target.wants/service.service"): {
+							LinkTarget: "/usr/lib/systemd/system/service.service",
+						},
+					},
+				},
+			},
+		})
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(cfg.Target.Container),
+				withIgnoreCache(frontend.IgnoreCacheTestsKey),
+			)
+			solveT(ctx, t, client, req)
+		})
+	})
 }
 
 // suseListSignFiles lists the rpm artifacts expected to be signed for SUSE.
