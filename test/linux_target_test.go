@@ -174,6 +174,26 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		testSourceOutputBuilds(ctx, t, testConfig.Target)
 	})
 
+	t.Run("package_source_labels", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		spec := &dalec.Spec{
+			Name: "test-package-source", Version: "1.12.0", Revision: "1", License: "Apache-2.0",
+			Description: "Package-only outputs do not acquire container metadata",
+			Sources: map[string]dalec.Source{
+				"src": {Git: &dalec.SourceGit{URL: "https://github.com/coredns/coredns.git", Commit: "v1.12.0"}},
+			},
+		}
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			res := solveT(ctx, t, gwc, newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testConfig.Target.Package)))
+			data, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+			assert.Assert(t, ok, "missing package output config")
+			var img dalec.DockerImageSpec
+			assert.NilError(t, json.Unmarshal(data, &img))
+			assert.Check(t, cmp.Len(img.Config.Labels, 0))
+		})
+	})
+
 	t.Run("source-output-applies-gomod-edits", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
@@ -4529,6 +4549,10 @@ func testLinuxSymlinkArtifacts(ctx context.Context, t *testing.T, cfg testLinuxC
 }
 
 func testImageConfig(ctx context.Context, t *testing.T, target string, opts ...srOpt) {
+	t.Run("source_labels", func(t *testing.T) {
+		testImageSourceLabels(ctx, t, target, opts...)
+	})
+
 	spec := &dalec.Spec{
 		Name:        "test-image-config",
 		Version:     "0.0.1",
@@ -4606,6 +4630,70 @@ func testImageConfig(ctx context.Context, t *testing.T, target string, opts ...s
 		assert.Check(t, cmp.Equal(img.Config.StopSignal, spec.Image.StopSignal))
 		assert.Check(t, cmp.Equal(img.Config.User, spec.Image.User))
 	})
+}
+
+func testImageSourceLabels(ctx context.Context, t *testing.T, target string, opts ...srOpt) {
+	const upstream = "https://github.com/coredns/coredns"
+	for _, tc := range []struct {
+		name    string
+		global  *dalec.ImageConfig
+		target  *dalec.ImageConfig
+		copies  int
+		want    string
+		present bool
+	}{
+		{name: "inferred_without_image", copies: 1, want: upstream, present: true},
+		{
+			name: "global_override", copies: 1, want: "https://example.com/global", present: true,
+			global: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: "https://example.com/global"}},
+		},
+		{
+			name: "target_override", copies: 1, want: "https://example.com/target", present: true,
+			global: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: "https://example.com/global"}},
+			target: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: "https://example.com/target"}},
+		},
+		{
+			name: "target_opt_out", copies: 1, present: true,
+			global: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: upstream}},
+			target: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: ""}},
+		},
+		{name: "ambiguous", copies: 2},
+		{name: "no_git_source"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &dalec.Spec{
+				Name: "test-image-source", Version: "1.12.0", Revision: "1", License: "Apache-2.0",
+				Description: "Image source metadata", Image: tc.global,
+				Args:    map[string]string{"UPSTREAM": "https://example.com/must-be-substituted"},
+				Sources: make(map[string]dalec.Source),
+			}
+			for i := range tc.copies {
+				spec.Sources[fmt.Sprintf("source%d", i)] = dalec.Source{
+					Git: &dalec.SourceGit{URL: "${UPSTREAM}.git", Commit: "v1.12.0"},
+				}
+			}
+			if tc.target != nil {
+				key, _, _ := strings.Cut(target, "/")
+				spec.Targets = map[string]dalec.Target{key: {Image: tc.target}}
+			}
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(append(slices.Clone(opts),
+					withSpec(ctx, t, spec), withBuildTarget(target), withBuildArg("UPSTREAM", upstream))...)
+				res := solveT(ctx, t, gwc, sr)
+				data, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+				assert.Assert(t, ok, "missing image config")
+				var img dalec.DockerImageSpec
+				assert.NilError(t, json.Unmarshal(data, &img))
+				value, present := img.Config.Labels[ocispecs.AnnotationSource]
+				assert.Equal(t, value, tc.want)
+				assert.Equal(t, present, tc.present)
+				for _, key := range []string{ocispecs.AnnotationRevision, "org.label-schema.vcs-url", "org.label-schema.vcs-ref"} {
+					_, present := img.Config.Labels[key]
+					assert.Check(t, !present, "unexpected inherited provenance label %q", key)
+				}
+			})
+		})
+	}
 }
 
 func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxConfig) {

@@ -128,6 +128,68 @@ image:
     com.example.label: example
 ```
 
+#### Upstream source repository
+
+For container outputs, Dalec automatically sets
+`org.opencontainers.image.source` in the final image configuration's
+`config.Labels` when the spec has exactly one top-level `sources.<name>.git`
+source with a supported repository URL. This also works without an `image`
+section and is applied after build-argument substitution for each output
+platform, including Windows base-image variants.
+
+HTTP and HTTPS repository URLs are supported. SSH (including
+`git@github.com:owner/repo.git`) and `git://` URLs are converted to HTTPS only for
+`github.com`, `gitlab.com`, and `bitbucket.org`, using their standard transport
+ports. Credentials, query parameters, fragments, a trailing slash, and a trailing
+`.git` are removed. Local paths, loopback/private IP addresses, and SSH/Git
+servers with unknown web endpoints are not inferred; use an explicit label for
+these cases.
+
+For example, `sources.coredns.git.url: https://github.com/coredns/coredns.git`
+produces `org.opencontainers.image.source: https://github.com/coredns/coredns`.
+Other non-Git sources may coexist with that source. With multiple Git sources
+(even copies of the same repository), no Git sources, or an unsupported URL,
+Dalec does not infer a source label. It does not infer repositories from source
+archives, `website`, generators, nested build contexts, or build/base images.
+
+For ambiguous sources or archives, identify the component's upstream explicitly:
+
+```yaml
+image:
+  labels:
+    org.opencontainers.image.source: https://github.com/coredns/coredns
+```
+
+Explicit labels take precedence over inference, and target-specific labels take
+precedence over global labels. An explicitly configured legacy
+`org.label-schema.vcs-url` also disables inference, preserving its use by
+existing consumers.
+
+To opt out, set the source label to an empty string:
+
+```yaml
+image:
+  labels:
+    org.opencontainers.image.source: ""
+```
+
+The empty label is retained in the output. Dalec removes inherited
+`org.opencontainers.image.source`, `org.opencontainers.image.revision`,
+`org.label-schema.vcs-url`, and `org.label-schema.vcs-ref` from the base image
+before applying explicit spec/target labels, whether inference succeeds or not.
+This prevents consumers from reporting the base image's repository or pairing
+its commit with the component's repository. Other base labels are preserved.
+No revision is inferred. Set it explicitly if needed. To suppress discovery,
+also remove or empty any **explicit** legacy source label in your spec.
+
+[Renovate's Docker datasource](https://docs.renovatebot.com/modules/datasource/docker/)
+reads the source label on the latest stable image tag to discover `sourceUrl`.
+This enables upstream changelog discovery, but does not guarantee release notes:
+packaging-revision tags may need version mapping to upstream releases. Upstream
+notes do not necessarily cover Dalec-specific patches, toolchain changes, or
+revision-only CVE rebuilds. This does not add a `changelogUrl` label or change
+package-only outputs.
+
 ### Env
 
 The `env` field is used to specify environment variables for the image.
