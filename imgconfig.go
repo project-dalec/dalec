@@ -141,6 +141,10 @@ func gitSourceWebURL(raw string) string {
 		if ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
 			return ""
 		}
+	} else if isNumericIPv4Host(host) {
+		// Consumers may resolve shortened, integer, octal, or hexadecimal
+		// IPv4 spellings that ParseAddr rejects. Do not infer from these.
+		return ""
 	}
 
 	switch u.Scheme {
@@ -176,4 +180,21 @@ func gitSourceWebURL(raw string) string {
 	// Constructing a new URL deliberately excludes credentials, query
 	// parameters and BuildKit's ref/subdirectory fragment.
 	return u.String()
+}
+
+func isNumericIPv4Host(host string) bool {
+	for part := range strings.SplitSeq(host, ".") {
+		if part == "" {
+			return false
+		}
+		digits := "0123456789"
+		if strings.HasPrefix(part, "0x") {
+			part = strings.TrimPrefix(part, "0x")
+			digits += "abcdef"
+		}
+		if strings.Trim(part, digits) != "" {
+			return false
+		}
+	}
+	return true
 }

@@ -143,7 +143,9 @@ HTTP and HTTPS repository URLs are supported. SSH (including
 ports. Credentials, query parameters, fragments, a trailing slash, and a trailing
 `.git` are removed. Local paths, loopback/private IP addresses, and SSH/Git
 servers with unknown web endpoints are not inferred; use an explicit label for
-these cases.
+these cases. Non-canonical numeric IPv4 hosts (such as `127.1`, `2130706433`,
+or `0x7f000001`) are also excluded rather than relying on consumer-specific
+address parsing.
 
 For example, `sources.coredns.git.url: https://github.com/coredns/coredns.git`
 produces `org.opencontainers.image.source: https://github.com/coredns/coredns`.
