@@ -41,13 +41,13 @@ type Config struct {
 	SysextSupported bool
 }
 
-func (cfg *Config) BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
+func (cfg *Config) BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string, opts ...dalec.ImageConfigOpt) (*dalec.DockerImageSpec, error) {
 	img, err := resolveConfig(ctx, sOpt, spec, platform, targetKey)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := dalec.BuildImageConfig(spec, targetKey, img); err != nil {
+	if err := dalec.BuildImageConfig(spec, targetKey, img, opts...); err != nil {
 		return nil, err
 	}
 

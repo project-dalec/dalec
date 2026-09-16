@@ -15,25 +15,45 @@ const (
 	legacyImageRevisionLabel = "org.label-schema.vcs-ref"
 )
 
-func BuildImageConfig(spec *Spec, targetKey string, img *DockerImageSpec) error {
+type imageConfigOptions struct {
+	inferSourceLabel bool
+}
+
+type ImageConfigOpt func(*imageConfigOptions)
+
+// WithImageSourceLabel enables upstream source inference and replaces inherited
+// source/revision labels with the component's provenance.
+func WithImageSourceLabel() ImageConfigOpt {
+	return func(opts *imageConfigOptions) {
+		opts.inferSourceLabel = true
+	}
+}
+
+func BuildImageConfig(spec *Spec, targetKey string, img *DockerImageSpec, opts ...ImageConfigOpt) error {
+	var options imageConfigOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	cfg := img.Config
 	cfg.Labels = maps.Clone(cfg.Labels)
-	// Base-image provenance does not describe the packaged component. In
-	// particular, a base revision must not be paired with an upstream source.
-	delete(cfg.Labels, ocispecs.AnnotationSource)
-	delete(cfg.Labels, ocispecs.AnnotationRevision)
-	delete(cfg.Labels, legacyImageSourceLabel)
-	delete(cfg.Labels, legacyImageRevisionLabel)
-
 	specCfg := MergeSpecImage(spec, targetKey)
-	_, sourceSet := specCfg.Labels[ocispecs.AnnotationSource]
-	_, legacySourceSet := specCfg.Labels[legacyImageSourceLabel]
-	if !sourceSet && !legacySourceSet {
-		if source := imageSourceURL(spec); source != "" {
-			if cfg.Labels == nil {
-				cfg.Labels = make(map[string]string)
+	if options.inferSourceLabel {
+		// A base revision must not be paired with the component's source.
+		delete(cfg.Labels, ocispecs.AnnotationSource)
+		delete(cfg.Labels, ocispecs.AnnotationRevision)
+		delete(cfg.Labels, legacyImageSourceLabel)
+		delete(cfg.Labels, legacyImageRevisionLabel)
+
+		_, sourceSet := specCfg.Labels[ocispecs.AnnotationSource]
+		_, legacySourceSet := specCfg.Labels[legacyImageSourceLabel]
+		if !sourceSet && !legacySourceSet {
+			if source := imageSourceURL(spec); source != "" {
+				if cfg.Labels == nil {
+					cfg.Labels = make(map[string]string)
+				}
+				cfg.Labels[ocispecs.AnnotationSource] = source
 			}
-			cfg.Labels[ocispecs.AnnotationSource] = source
 		}
 	}
 
@@ -130,6 +150,9 @@ func gitSourceWebURL(raw string) string {
 	if err != nil {
 		return ""
 	}
+	if remote.Scheme != "http" && remote.Scheme != "https" {
+		return ""
+	}
 
 	u := url.URL{Scheme: remote.Scheme, Host: remote.Host, Path: remote.Path}
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
@@ -147,30 +170,7 @@ func gitSourceWebURL(raw string) string {
 		return ""
 	}
 
-	switch u.Scheme {
-	case "http", "https":
-	case "ssh", "git":
-		// Arbitrary SSH/Git servers need not have a web endpoint, and their
-		// paths may be private filesystem paths rather than repository names.
-		switch host {
-		case "github.com", "gitlab.com", "bitbucket.org":
-		default:
-			return ""
-		}
-		defaultPort := "22"
-		if u.Scheme == "git" {
-			defaultPort = "9418"
-		}
-		if port := u.Port(); port != "" && port != defaultPort {
-			return ""
-		}
-		u.Scheme = "https"
-		u.Host = host
-	default:
-		return ""
-	}
-
-	u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git")
+	u.Path = strings.TrimSuffix(u.Path, "/")
 	u.Path = "/" + strings.TrimPrefix(u.Path, "/")
 	if u.Path == "/" || strings.ContainsAny(u.Path, "\\$") {
 		return ""

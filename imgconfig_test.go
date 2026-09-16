@@ -14,18 +14,19 @@ func TestGitSourceWebURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, input, want string
 	}{
-		{"https", "https://github.com/coredns/coredns.git", "https://github.com/coredns/coredns"},
-		{"trailing slash", "https://github.com/coredns/coredns.git/", "https://github.com/coredns/coredns"},
+		{"https", "https://github.com/coredns/coredns.git", "https://github.com/coredns/coredns.git"},
+		{"trailing slash", "https://github.com/coredns/coredns.git/", "https://github.com/coredns/coredns.git"},
 		{"already normalized", "https://github.com/coredns/coredns", "https://github.com/coredns/coredns"},
-		{"credentials and metadata", "https://user:secret@github.com/coredns/coredns.git?token=secret#v1.12.0:src", "https://github.com/coredns/coredns"},
-		{"http custom host", "http://git.example.com:8080/team/repo.git", "http://git.example.com:8080/team/repo"},
-		{"scp", "git@github.com:coredns/coredns.git", "https://github.com/coredns/coredns"},
-		{"ssh", "ssh://git@github.com/coredns/coredns.git", "https://github.com/coredns/coredns"},
-		{"ssh standard port", "ssh://git@github.com:22/coredns/coredns.git", "https://github.com/coredns/coredns"},
-		{"git protocol", "git://github.com/coredns/coredns.git", "https://github.com/coredns/coredns"},
-		{"git standard port", "git://github.com:9418/coredns/coredns.git", "https://github.com/coredns/coredns"},
-		{"gitlab subgroup", "git@gitlab.com:group/subgroup/repo.git", "https://gitlab.com/group/subgroup/repo"},
-		{"bitbucket", "git@bitbucket.org:team/repo.git", "https://bitbucket.org/team/repo"},
+		{"credentials and metadata", "https://user:secret@github.com/coredns/coredns.git?token=secret#v1.12.0:src", "https://github.com/coredns/coredns.git"},
+		{"http custom host", "http://git.example.com:8080/team/repo.git", "http://git.example.com:8080/team/repo.git"},
+		{"scp", "git@github.com:coredns/coredns.git", ""},
+		{"ssh", "ssh://git@github.com/coredns/coredns.git", ""},
+		{"ssh standard port", "ssh://git@github.com:22/coredns/coredns.git", ""},
+		{"git protocol", "git://github.com/coredns/coredns.git", ""},
+		{"git standard port", "git://github.com:9418/coredns/coredns.git", ""},
+		{"gitlab subgroup scp", "git@gitlab.com:group/subgroup/repo.git", ""},
+		{"gitlab subgroup https", "https://gitlab.com/group/subgroup/repo.git", "https://gitlab.com/group/subgroup/repo.git"},
+		{"bitbucket", "git@bitbucket.org:team/repo.git", ""},
 		{"unknown ssh web endpoint", "git@git.example.com:/home/private/repo.git", ""},
 		{"unknown git web endpoint", "git://git.example.com/repo.git", ""},
 		{"custom ssh port", "ssh://git@github.com:2222/coredns/coredns.git", ""},
@@ -38,9 +39,9 @@ func TestGitSourceWebURL(t *testing.T) {
 		{"local host", "https://localhost/repo.git", ""},
 		{"fully qualified local host", "https://localhost./repo.git", ""},
 		{"local domain", "https://git.local/repo.git", ""},
-		{"canonical public IPv4", "http://192.0.2.1/repo.git", "http://192.0.2.1/repo"},
-		{"numeric subdomain", "https://127.1.example.com/repo.git", "https://127.1.example.com/repo"},
-		{"hexadecimal subdomain", "https://0x7f000001.example.com/repo.git", "https://0x7f000001.example.com/repo"},
+		{"canonical public IPv4", "http://192.0.2.1/repo.git", "http://192.0.2.1/repo.git"},
+		{"numeric subdomain", "https://127.1.example.com/repo.git", "https://127.1.example.com/repo.git"},
+		{"hexadecimal subdomain", "https://0x7f000001.example.com/repo.git", "https://0x7f000001.example.com/repo.git"},
 		{"loopback", "http://127.0.0.1/repo.git", ""},
 		{"abbreviated loopback", "http://127.1/repo.git", ""},
 		{"three part loopback", "http://127.0.1/repo.git", ""},
@@ -82,8 +83,8 @@ func TestGitSourceWebURL(t *testing.T) {
 }
 
 func TestBuildImageConfigSourceLabels(t *testing.T) {
-	const upstream = "https://github.com/coredns/coredns"
-	gitSource := Source{Git: &SourceGit{URL: upstream + ".git", Commit: "v1.12.0"}}
+	const upstream = "https://github.com/coredns/coredns.git"
+	gitSource := Source{Git: &SourceGit{URL: upstream, Commit: "v1.12.0"}}
 	for _, tc := range []struct {
 		name    string
 		sources map[string]Source
@@ -105,6 +106,8 @@ func TestBuildImageConfigSourceLabels(t *testing.T) {
 		{name: "nested build context", sources: map[string]Source{"src": {Build: &SourceBuild{Source: gitSource}}}},
 		{name: "multiple git sources", sources: map[string]Source{"src": gitSource, "copy": gitSource}},
 		{name: "unsupported source", sources: map[string]Source{"src": {Git: &SourceGit{URL: "/home/private/src"}}}},
+		{name: "ssh source", sources: map[string]Source{"src": {Git: &SourceGit{URL: "git@github.com:coredns/coredns.git"}}}},
+		{name: "git protocol source", sources: map[string]Source{"src": {Git: &SourceGit{URL: "git://github.com/coredns/coredns.git"}}}},
 		{name: "numeric loopback source", sources: map[string]Source{"src": {Git: &SourceGit{URL: "http://127.1/repo.git"}}}},
 		{name: "integer loopback source", sources: map[string]Source{"src": {Git: &SourceGit{URL: "http://2130706433/repo.git"}}}},
 		{name: "hexadecimal loopback source", sources: map[string]Source{"src": {Git: &SourceGit{URL: "http://0x7f000001/repo.git"}}}},
@@ -175,35 +178,46 @@ func TestBuildImageConfigSourceLabels(t *testing.T) {
 			if tc.target != nil {
 				spec.Targets = map[string]Target{"test": {Image: &ImageConfig{Labels: maps.Clone(tc.target)}}}
 			}
-			for _, inherited := range []bool{false, true} {
-				img := &DockerImageSpec{}
-				want := maps.Clone(tc.want)
-				if want == nil {
-					want = make(map[string]string)
-				}
-				if inherited {
-					img.Config.Labels = map[string]string{
-						ocispecs.AnnotationSource: "https://example.com/base", ocispecs.AnnotationRevision: "base-commit",
-						legacyImageSourceLabel: "https://example.com/legacy-base", legacyImageRevisionLabel: "base-ref",
-						"unrelated": "preserved",
+			for _, enabled := range []bool{false, true} {
+				for _, inherited := range []bool{false, true} {
+					img := &DockerImageSpec{}
+					want := maps.Clone(tc.want)
+					if want == nil {
+						want = make(map[string]string)
 					}
-					want["unrelated"] = "preserved"
-				}
-				baseLabels := img.Config.Labels
-				originalBase := maps.Clone(baseLabels)
-				assert.NilError(t, BuildImageConfig(spec, "test", img))
-				assert.Check(t, maps.Equal(img.Config.Labels, want), "inherited=%v: got %v, want %v", inherited, img.Config.Labels, want)
-				assert.Check(t, maps.Equal(baseLabels, originalBase), "base config must not be mutated")
+					if inherited {
+						img.Config.Labels = map[string]string{
+							ocispecs.AnnotationSource: "https://example.com/base", ocispecs.AnnotationRevision: "base-commit",
+							legacyImageSourceLabel: "https://example.com/legacy-base", legacyImageRevisionLabel: "base-ref",
+							"unrelated": "preserved",
+						}
+						want["unrelated"] = "preserved"
+					}
+					baseLabels := img.Config.Labels
+					originalBase := maps.Clone(baseLabels)
+					var opts []ImageConfigOpt
+					if enabled {
+						opts = append(opts, WithImageSourceLabel())
+					} else {
+						want = make(map[string]string)
+						maps.Copy(want, originalBase)
+						maps.Copy(want, tc.global)
+						maps.Copy(want, tc.target)
+					}
+					assert.NilError(t, BuildImageConfig(spec, "test", img, opts...))
+					assert.Check(t, maps.Equal(img.Config.Labels, want), "enabled=%v, inherited=%v: got %v, want %v", enabled, inherited, img.Config.Labels, want)
+					assert.Check(t, maps.Equal(baseLabels, originalBase), "base config must not be mutated")
 
-				data, err := json.Marshal(img)
-				assert.NilError(t, err)
-				var exported struct {
-					Config struct {
-						Labels map[string]string `json:"Labels"`
-					} `json:"config"`
+					data, err := json.Marshal(img)
+					assert.NilError(t, err)
+					var exported struct {
+						Config struct {
+							Labels map[string]string `json:"Labels"`
+						} `json:"config"`
+					}
+					assert.NilError(t, json.Unmarshal(data, &exported))
+					assert.Check(t, maps.Equal(exported.Config.Labels, want))
 				}
-				assert.NilError(t, json.Unmarshal(data, &exported))
-				assert.Check(t, maps.Equal(exported.Config.Labels, want))
 			}
 			if spec.Image != nil {
 				assert.DeepEqual(t, spec.Image.Labels, tc.global)
@@ -235,8 +249,8 @@ func TestBuildImageConfigSourcePlatforms(t *testing.T) {
 				t.Parallel()
 				img := &DockerImageSpec{}
 				img.Platform = platform
-				assert.NilError(t, BuildImageConfig(spec, target, img))
-				want := "https://github.com/coredns/coredns"
+				assert.NilError(t, BuildImageConfig(spec, target, img, WithImageSourceLabel()))
+				want := "https://github.com/coredns/coredns.git"
 				switch target {
 				case "override":
 					want = "https://example.com/override"
@@ -272,14 +286,14 @@ sources:
 	assert.Assert(t, spec.Image == nil)
 	assert.DeepEqual(t, MergeSpecImage(spec, ""), &ImageConfig{})
 	img := &DockerImageSpec{}
-	assert.NilError(t, BuildImageConfig(spec, "", img))
-	assert.Equal(t, img.Config.Labels[ocispecs.AnnotationSource], "https://github.com/coredns/coredns")
+	assert.NilError(t, BuildImageConfig(spec, "", img, WithImageSourceLabel()))
+	assert.Equal(t, img.Config.Labels[ocispecs.AnnotationSource], "https://github.com/coredns/coredns.git")
 	assert.Assert(t, spec.Image == nil)
 
 	spec.Image = &ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: "${UPSTREAM}"}}
 	spec.Args["UPSTREAM"] = "https://example.com/incorrect"
 	assert.NilError(t, spec.SubstituteArgs(map[string]string{"UPSTREAM": "https://example.com/explicit"}))
-	assert.NilError(t, BuildImageConfig(spec, "", img))
+	assert.NilError(t, BuildImageConfig(spec, "", img, WithImageSourceLabel()))
 	assert.Equal(t, img.Config.Labels[ocispecs.AnnotationSource], "https://example.com/explicit")
 }
 
