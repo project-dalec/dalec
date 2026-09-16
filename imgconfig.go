@@ -157,7 +157,11 @@ func gitSourceWebURL(raw string) string {
 		default:
 			return ""
 		}
-		if port := u.Port(); port != "" && !(u.Scheme == "ssh" && port == "22") && !(u.Scheme == "git" && port == "9418") {
+		defaultPort := "22"
+		if u.Scheme == "git" {
+			defaultPort = "9418"
+		}
+		if port := u.Port(); port != "" && port != defaultPort {
 			return ""
 		}
 		u.Scheme = "https"

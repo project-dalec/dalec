@@ -29,6 +29,9 @@ func TestGitSourceWebURL(t *testing.T) {
 		{"unknown ssh web endpoint", "git@git.example.com:/home/private/repo.git", ""},
 		{"unknown git web endpoint", "git://git.example.com/repo.git", ""},
 		{"custom ssh port", "ssh://git@github.com:2222/coredns/coredns.git", ""},
+		{"custom git port", "git://github.com:1234/coredns/coredns.git", ""},
+		{"ssh with git port", "ssh://git@github.com:9418/coredns/coredns.git", ""},
+		{"git with ssh port", "git://github.com:22/coredns/coredns.git", ""},
 		{"file URL", "file:///home/private/repo.git", ""},
 		{"absolute path", "/home/private/repo.git", ""},
 		{"relative path", "../repo.git", ""},
@@ -234,9 +237,10 @@ func TestBuildImageConfigSourcePlatforms(t *testing.T) {
 				img.Platform = platform
 				assert.NilError(t, BuildImageConfig(spec, target, img))
 				want := "https://github.com/coredns/coredns"
-				if target == "override" {
+				switch target {
+				case "override":
 					want = "https://example.com/override"
-				} else if target == "opt-out" {
+				case "opt-out":
 					want = ""
 				}
 				assert.Equal(t, img.Config.Labels[ocispecs.AnnotationSource], want)
