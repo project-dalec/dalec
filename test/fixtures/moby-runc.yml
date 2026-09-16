@@ -96,9 +96,6 @@ build:
     - command: |
         set -eu
         cd src
-        if [ "${DALEC_TARGET}" = "azlinux3" ]; then
-          export GOEXPERIMENT=nosystemcrypto
-        fi
         make man runc BUILDTAGS=seccomp
 artifacts:
   binaries:
