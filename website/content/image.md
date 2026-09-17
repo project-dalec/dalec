@@ -128,6 +128,111 @@ image:
     com.example.label: example
 ```
 
+#### Upstream source repository
+
+Source-label inference is **disabled by default**. To opt in for container
+outputs, pass the frontend input `dalec.image-source-label=true`. For example,
+with BuildKit's `buildctl`:
+
+```shell
+buildctl build \
+  --frontend gateway.v0 \
+  --opt source=ghcr.io/project-dalec/dalec/frontend:latest \
+  --local context=. \
+  --local dockerfile=. \
+  --opt filename=spec.yml \
+  --opt target=bookworm/container \
+  --opt dalec.image-source-label=true \
+  --output type=oci,dest=image.tar
+```
+
+This is a frontend input, **not a build argument**. Setting
+`--build-arg dalec.image-source-label=true` does not enable it (and is rejected
+as an unknown argument unless declared in the spec). Docker CLI
+build commands do not expose this input; use a client that supports arbitrary
+frontend inputs, or configure `image.labels` explicitly instead.
+
+When enabled, Dalec sets
+`org.opencontainers.image.source` in the final image configuration's
+`config.Labels` when the spec has exactly one top-level `sources.<name>.git`
+source with a supported repository URL. This also works without an `image`
+section and is applied after build-argument substitution for each output
+platform, including Windows base-image variants.
+
+RPM `depsonly` targets do not include the application, so they never infer its
+source repository. Explicit global/target image labels still apply. When the
+input is enabled, these targets also remove inherited source/revision labels
+as described below; when absent or `false`, inherited provenance is preserved.
+
+Only HTTP and HTTPS repository URLs are supported. SSH (including
+`git@github.com:owner/repo.git`), `git://`, and local paths are not inferred,
+even for well-known hosts. Credentials, query parameters, fragments and a
+trailing slash are removed; a trailing `.git` is retained. Loopback/private IP
+addresses are not inferred; use an explicit label for these cases.
+Non-canonical numeric IPv4 hosts (such as `127.1`, `2130706433`,
+or `0x7f000001`) are also excluded rather than relying on consumer-specific
+address parsing.
+Tilde-prefixed HTTP(S) path segments are supported, for example
+`https://git.sr.ht/~sircmpwn/aerc`; they are not local home-directory paths.
+
+For example, `sources.coredns.git.url: https://github.com/coredns/coredns.git`
+produces `org.opencontainers.image.source: https://github.com/coredns/coredns.git`
+when the input is enabled.
+Other non-Git sources may coexist with that source. With multiple Git sources
+(even copies of the same repository), no Git sources, or an unsupported URL,
+Dalec does not infer a source label. It does not infer repositories from source
+archives, `website`, generators, nested build contexts, or build/base images.
+
+For ambiguous sources or archives, identify the component's upstream explicitly:
+
+```yaml
+image:
+  labels:
+    org.opencontainers.image.source: https://github.com/coredns/coredns
+```
+
+Explicit labels take precedence over inference, and target-specific labels take
+precedence over global labels. An explicitly configured legacy
+`org.label-schema.vcs-url` also disables inference, preserving its use by
+existing consumers.
+
+With the input enabled, a spec or target can opt out of inference by setting
+the source label to an empty string:
+
+```yaml
+image:
+  labels:
+    org.opencontainers.image.source: ""
+```
+
+The empty label is retained in the output. **Only when the frontend input is
+enabled**, Dalec removes inherited
+`org.opencontainers.image.source`, `org.opencontainers.image.revision`,
+`org.label-schema.vcs-url`, and `org.label-schema.vcs-ref` from the base image
+before applying explicit spec/target labels, whether inference succeeds or not.
+This prevents consumers from reporting the base image's repository or pairing
+its commit with the component's repository. Other base labels are preserved.
+No revision is inferred. Set it explicitly if needed. To suppress discovery,
+also remove or empty any **explicit** legacy source label in your spec.
+
+When the input is absent or `false`, Dalec neither infers a source label nor
+removes inherited provenance. Explicit global/target labels still override
+base labels as usual. In that mode, an empty OCI source label does not remove
+an inherited legacy source label; consumers may still fall back to it.
+The input accepts boolean values (`true`/`false` or `1`/`0`); invalid values,
+including an explicitly empty input, fail container builds.
+
+HTTP(S) alone does not imply that a repository is public. Enable this input
+only when the repository URL is appropriate to disclose in the output image.
+
+[Renovate's Docker datasource](https://docs.renovatebot.com/modules/datasource/docker/)
+reads the source label on the latest stable image tag to discover `sourceUrl`.
+This enables upstream changelog discovery, but does not guarantee release notes:
+packaging-revision tags may need version mapping to upstream releases. Upstream
+notes do not necessarily cover Dalec-specific patches, toolchain changes, or
+revision-only CVE rebuilds. This does not add a `changelogUrl` label or change
+package-only outputs.
+
 ### Env
 
 The `env` field is used to specify environment variables for the image.

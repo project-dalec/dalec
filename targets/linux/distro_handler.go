@@ -61,7 +61,7 @@ type sysextEnvProvider interface {
 	SysextEnv(spec *dalec.Spec, targetKey string) map[string]string
 }
 
-func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
+func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string, opts ...dalec.ImageConfigOpt) (*dalec.DockerImageSpec, error) {
 	bi, err := spec.GetSingleBase(targetKey)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Sp
 		return nil, err
 	}
 
-	if err := dalec.BuildImageConfig(spec, targetKey, img); err != nil {
+	if err := dalec.BuildImageConfig(spec, targetKey, img, opts...); err != nil {
 		return nil, err
 	}
 
@@ -102,6 +102,10 @@ func resolveBaseConfig(ctx context.Context, sOpt dalec.SourceOpts, platform *oci
 
 func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		imageOpts, err := frontend.ImageConfigOpts(client)
+		if err != nil {
+			return nil, err
+		}
 		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 			sOpt, err := frontend.SourceOptFromClient(ctx, client, platform)
 			if err != nil {
@@ -119,7 +123,7 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
 			}
 
-			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
+			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey, imageOpts...)
 			if err != nil {
 				return nil, nil, err
 			}

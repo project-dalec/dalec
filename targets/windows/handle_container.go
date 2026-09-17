@@ -36,6 +36,10 @@ var defaultPlatform = ocispecs.Platform{
 }
 
 func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+	imageOpts, err := frontend.ImageConfigOpts(client)
+	if err != nil {
+		return nil, err
+	}
 	dc, err := dockerui.NewClient(client)
 	if err != nil {
 		return nil, err
@@ -168,7 +172,7 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 			return nil, errors.Wrap(err, "error unmarshalling base image config")
 		}
 
-		if err := dalec.BuildImageConfig(spec, targetKey, &img); err != nil {
+		if err := dalec.BuildImageConfig(spec, targetKey, &img, imageOpts...); err != nil {
 			return nil, errors.Wrap(err, "error creating image config")
 		}
 

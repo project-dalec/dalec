@@ -87,6 +87,10 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 }
 
 func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+	imageOpts, err := frontend.ImageConfigOpts(client)
+	if err != nil {
+		return nil, err
+	}
 	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		rtDeps := spec.GetPackageDeps(targetKey).GetRuntime()
 		if len(rtDeps) == 0 {
@@ -144,7 +148,10 @@ func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (
 			return nil, nil, err
 		}
 
-		img, err := linux.BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
+		// Keep image settings, but exclude sources not included in the deps-only package.
+		imageSpec := *spec
+		imageSpec.Sources = depsSpec.Sources
+		img, err := linux.BuildImageConfig(ctx, sOpt, &imageSpec, platform, targetKey, imageOpts...)
 		if err != nil {
 			return nil, nil, err
 		}
