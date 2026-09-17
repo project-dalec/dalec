@@ -20,13 +20,13 @@ func TestConfigureDnfProxyAddsCACertOptions(t *testing.T) {
 	err := os.WriteFile(caBundle, []byte("test ca"), 0o600)
 	assert.NilError(t, err)
 
-	cmd := exec.Command("/bin/bash", "-c", dnfProxyConfigScript+`
+	cmd := exec.Command("bash", "-c", dnfProxyConfigScript+`
 install_flags="-y"
 configure_dnf_proxy
 printf '%s\n%s\n%s\n' "${install_flags}" "${SSL_CERT_FILE:-}" "${CURL_CA_BUNDLE:-}"
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTPS_PROXY=http://proxy.example:3128",
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + caBundle,
 	}
@@ -51,12 +51,12 @@ func TestConfigureDnfProxyDoesNotTraceProxyValues(t *testing.T) {
 	err := os.WriteFile(caBundle, []byte("test ca"), 0o600)
 	assert.NilError(t, err)
 
-	cmd := exec.Command("/bin/bash", "-c", "set -x\n"+dnfProxyConfigScript+`
+	cmd := exec.Command("bash", "-c", "set -x\n"+dnfProxyConfigScript+`
 install_flags="-y"
 configure_dnf_proxy
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://user:secret@proxy.example:3128",
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + caBundle,
 	}
@@ -83,7 +83,7 @@ proxy ca
 	err = os.WriteFile(trustBundle, []byte("trust ca\n"), 0o600)
 	assert.NilError(t, err)
 
-	cmd := exec.Command("/bin/bash", "-c", dnfProxyConfigScript+`
+	cmd := exec.Command("bash", "-c", dnfProxyConfigScript+`
 install_flags="-y"
 configure_dnf_proxy
 grep -q 'buildkit proxy CA begin' "${DALEC_RPM_PROXY_TRUST_BUNDLE}"
@@ -93,7 +93,7 @@ if grep -q 'buildkit proxy CA begin' "${DALEC_RPM_PROXY_TRUST_BUNDLE}"; then exi
 grep -q 'new ca' "${DALEC_RPM_PROXY_TRUST_BUNDLE}"
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + caBundle,
 		"DALEC_RPM_PROXY_TRUST_BUNDLE=" + trustBundle,
@@ -112,14 +112,14 @@ func TestConfigureDnfProxyDisabled(t *testing.T) {
 	err := os.WriteFile(caBundle, []byte("test ca"), 0o600)
 	assert.NilError(t, err)
 
-	cmd := exec.Command("/bin/bash", "-c", dnfProxyConfigScript+`
+	cmd := exec.Command("bash", "-c", dnfProxyConfigScript+`
 install_flags="-y"
 configure_dnf_proxy
 if [ "${install_flags}" != "-y" ]; then exit 1; fi
 if [ -n "${SSL_CERT_FILE:-}" ] || [ -n "${CURL_CA_BUNDLE:-}" ]; then exit 1; fi
 `)
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"DALEC_RPM_PROXY_CA_BUNDLE=" + caBundle,
 		"DALEC_DISABLE_PROXY_CONFIG=1",
