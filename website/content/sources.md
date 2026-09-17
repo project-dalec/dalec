@@ -456,6 +456,23 @@ sources:
             - module2
 ```
 
+Instead of maintaining `paths` by hand, an entry can be a glob pattern, matched
+against the source content using [`io/fs.Glob`](https://pkg.go.dev/io/fs#Glob)
+semantics (e.g. `*` matches every entry in the directory). Each match replaces
+the pattern in place, so the spec keeps working as modules are added,
+renamed, or removed.
+
+```yaml
+sources:
+  src:
+    path: ./
+    context: {}
+    generate:
+      - gomod:
+          paths:
+            - module?
+```
+
 The `gomod` generator supports private go modules. The following example illustrates this:
 
 ```yaml
