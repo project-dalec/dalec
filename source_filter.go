@@ -10,6 +10,11 @@ const (
 	BuildArgDalecSourceFilterConfigPath  = "DALEC_SOURCE_FILTER_CONFIG_PATH"
 	BuildArgDalecSourceFilterContextName = "DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME"
 	DefaultSourceOptionsContextName      = "dalec-source-options"
+
+	// DefaultSourceFilterConfigPath is the path, relative to the source options
+	// build context, that the source filter config is read from when
+	// [BuildArgDalecSourceFilterConfigPath] is not set.
+	DefaultSourceFilterConfigPath = "source-filter.yml"
 )
 
 // SourceFilterConfig configures build-time filtering for source package inputs.
@@ -39,16 +44,7 @@ func (sOpt SourceOpts) sourceFilterExcludes() ([]string, error) {
 }
 
 func sourceFilter(sOpt SourceOpts, opts ...llb.ConstraintsOpt) llb.StateOption {
-	return func(in llb.State) llb.State {
-		excludes, err := sOpt.sourceFilterExcludes()
-		if err != nil {
-			return ErrorState(in, err)
-		}
-		if len(excludes) == 0 {
-			return in
-		}
-		return in.With(SourceFilter(SourceFilterConfig{GlobalExcludes: excludes}, opts...))
-	}
+	return sourceFilterAtPath(sOpt, "", opts...)
 }
 
 func sourceFilterAtPath(sOpt SourceOpts, base string, opts ...llb.ConstraintsOpt) llb.StateOption {
@@ -60,37 +56,20 @@ func sourceFilterAtPath(sOpt SourceOpts, base string, opts ...llb.ConstraintsOpt
 		if len(excludes) == 0 {
 			return in
 		}
-		return in.With(SourceFilterAtPath(base, SourceFilterConfig{GlobalExcludes: excludes}, opts...))
-	}
-}
 
-// SourceFilter filters source package content from the root of the input state.
-func SourceFilter(cfg SourceFilterConfig, opts ...llb.ConstraintsOpt) llb.StateOption {
-	return func(in llb.State) llb.State {
-		if cfg.IsEmpty() {
-			return in
-		}
-		return llb.Scratch().File(llb.Copy(in, "/", "/", WithDirContentsOnly(), WithExcludes(cfg.GlobalExcludes)), opts...)
-	}
-}
-
-// SourceFilterAtPath applies a global source filter to content nested under base.
-// The external config remains global while named source states keep their source
-// name as a top-level directory in package source assembly.
-func SourceFilterAtPath(base string, cfg SourceFilterConfig, opts ...llb.ConstraintsOpt) llb.StateOption {
-	return func(in llb.State) llb.State {
-		if cfg.IsEmpty() {
-			return in
-		}
-		if isRoot(base) {
-			return in.With(SourceFilter(cfg, opts...))
+		if !isRoot(base) {
+			// prepend the base path to each excluded path
+			joined := make([]string, 0, len(excludes))
+			for _, path := range excludes {
+				newPath := filepath.ToSlash(filepath.Join(base, path))
+				joined = append(joined, newPath)
+			}
+			excludes = joined
 		}
 
-		excludes := make([]string, 0, len(cfg.GlobalExcludes))
-		for _, exclude := range cfg.GlobalExcludes {
-			excludes = append(excludes, filepath.ToSlash(filepath.Join(base, exclude)))
-		}
-
-		return SourceFilter(SourceFilterConfig{GlobalExcludes: excludes}, opts...)(in)
+		return llb.Scratch().File(
+			llb.Copy(in, "/", "/", WithDirContentsOnly(), WithExcludes(excludes)),
+			opts...,
+		)
 	}
 }

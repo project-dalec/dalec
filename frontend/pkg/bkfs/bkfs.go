@@ -17,6 +17,7 @@ import (
 var (
 	_ fs.DirEntry    = (*stateRefDirEntry)(nil)
 	_ fs.ReadDirFS   = (*StateRefFS)(nil)
+	_ fs.ReadFileFS  = (*StateRefFS)(nil)
 	_ io.ReaderAt    = (*stateRefFile)(nil)
 	_ fs.ReadDirFile = (*stateRefFile)(nil)
 	_ fs.ReadDirFS   = (*nullFS)(nil)
@@ -118,6 +119,29 @@ func (st *StateRefFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 
+func (st *StateRefFS) ReadFile(name string) ([]byte, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Err: fs.ErrInvalid, Path: name, Op: "readfile"}
+	}
+
+	dt, err := st.ref.ReadFile(st.ctx, gwclient.ReadRequest{
+		Filename: name,
+	})
+	if err != nil {
+		return nil, pathError("readfile", name, err)
+	}
+	return dt, nil
+}
+
+// pathError converts a buildkit error into the [io/fs] error the caller expects.
+// Buildkit gives us no typed error for a missing path, so match on the message.
+func pathError(op, name string, err error) error {
+	if strings.Contains(err.Error(), "no such file or directory") {
+		err = fmt.Errorf("%w: %w", fs.ErrNotExist, err)
+	}
+	return &fs.PathError{Err: err, Op: op, Path: name}
+}
+
 type stateRefFile struct {
 	eof    bool   // has file been read to EOF?
 	path   string // the full path of the file from root
@@ -205,10 +229,7 @@ func (st *StateRefFS) Open(name string) (fs.File, error) {
 		Path: name,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "no such file or directory") {
-			err = fmt.Errorf("%w: %w", fs.ErrNotExist, err)
-		}
-		return nil, &fs.PathError{Err: err, Op: "open", Path: name}
+		return nil, pathError("open", name, err)
 	}
 
 	f := &stateRefFile{

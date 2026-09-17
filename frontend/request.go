@@ -2,6 +2,9 @@ package frontend
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
+	"path"
 	"strconv"
 	"strings"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 )
 
 const (
@@ -155,25 +159,6 @@ func getSigningConfigFromContext(ctx context.Context, client gwclient.Client, cf
 	return pc.Signer, nil
 }
 
-func getSourceFilterConfigFromContext(ctx context.Context, client gwclient.Client, cfgPath string, configCtxName string, getContext func(string, ...llb.LocalOption) (*llb.State, error), opts ...llb.ConstraintsOpt) (dalec.SourceFilterConfig, error) {
-	dt, err := readConfigFromContext(ctx, client, cfgPath, configCtxName, dalec.SourceOpts{
-		GetContext: getContext,
-	}, opts...)
-	if err != nil {
-		return dalec.SourceFilterConfig{}, err
-	}
-
-	return decodeSourceFilterConfig(ctx, dt)
-}
-
-func decodeSourceFilterConfig(ctx context.Context, dt []byte) (dalec.SourceFilterConfig, error) {
-	var cfg dalec.SourceFilterConfig
-	if err := yaml.UnmarshalContext(ctx, dt, &cfg, yaml.Strict()); err != nil {
-		return dalec.SourceFilterConfig{}, err
-	}
-	return cfg, nil
-}
-
 func readConfigFromContext(ctx context.Context, client gwclient.Client, cfgPath string, configCtxName string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) ([]byte, error) {
 	src := dalec.Source{Path: cfgPath, Context: &dalec.SourceContext{Name: configCtxName}}
 	configState := src.ToState("", dalec.SourceOpts{GetContext: sOpt.GetContext}, opts...)
@@ -265,25 +250,57 @@ func getSignConfigCtxName(client gwclient.Client) string {
 	return client.BuildOpts().Opts["build-arg:"+buildArgDalecSigningConfigContextName]
 }
 
-func getSourceFilterConfigPath(client gwclient.Client) string {
-	return client.BuildOpts().Opts["build-arg:"+dalec.BuildArgDalecSourceFilterConfigPath]
-}
+func loadSourceFilterConfig(ctx context.Context, client gwclient.Client, getContext func(string, ...llb.LocalOption) (*llb.State, error)) (dalec.SourceFilterConfig, error) {
+	var (
+		nopFilter           dalec.SourceFilterConfig
+		clientSetFilterArgs bool
 
-func getSourceFilterContextNameWithDefault(client gwclient.Client) string {
+		opts = client.BuildOpts().Opts
+	)
+
+	cfgPath := dalec.DefaultSourceFilterConfigPath
+	if p := opts["build-arg:"+dalec.BuildArgDalecSourceFilterConfigPath]; p != "" {
+		clientSetFilterArgs = true
+		cfgPath = p
+	}
+
 	configCtxName := dalec.DefaultSourceOptionsContextName
-	if cn := client.BuildOpts().Opts["build-arg:"+dalec.BuildArgDalecSourceFilterContextName]; cn != "" {
+	if cn := opts["build-arg:"+dalec.BuildArgDalecSourceFilterContextName]; cn != "" {
+		clientSetFilterArgs = true
 		configCtxName = cn
 	}
-	return configCtxName
-}
 
-func loadSourceFilterConfig(ctx context.Context, client gwclient.Client, getContext func(string, ...llb.LocalOption) (*llb.State, error)) (dalec.SourceFilterConfig, error) {
-	cfgPath := getSourceFilterConfigPath(client)
-	if cfgPath == "" {
-		return dalec.SourceFilterConfig{}, nil
+	contextPath := strings.TrimPrefix(path.Clean(cfgPath), "/")
+	st, err := getContext(configCtxName, llb.IncludePatterns([]string{contextPath}), llb.FollowPaths([]string{contextPath}))
+	if err != nil {
+		return nopFilter, fmt.Errorf("error getting global filter context: %w", err)
+	}
+	if st == nil {
+		if clientSetFilterArgs {
+			// The client specifically set the build-args like the context would be included.
+			// No context was supplied, so assume there is a problem.
+			return nopFilter, fmt.Errorf("client set filter args but context is not available: context=%q", configCtxName)
+		}
+
+		// Context doesn't exist, no filters.
+		return nopFilter, nil
 	}
 
-	return getSourceFilterConfigFromContext(ctx, client, cfgPath, getSourceFilterContextNameWithDefault(client), getContext)
+	fSys, err := bkfs.FromState(ctx, st, client)
+	if err != nil {
+		return nopFilter, fmt.Errorf("error solving global filter context: %w", err)
+	}
+
+	dt, err := fs.ReadFile(fSys, contextPath)
+	if err != nil {
+		return nopFilter, errors.Wrapf(err, "error reading source filter config %q", cfgPath)
+	}
+
+	var cfg dalec.SourceFilterConfig
+	if err := yaml.UnmarshalContext(ctx, dt, &cfg, yaml.Strict()); err != nil {
+		return nopFilter, errors.Wrapf(err, "error decoding source filter config %q", cfgPath)
+	}
+	return cfg, nil
 }
 
 func forwardToSigner(ctx context.Context, client gwclient.Client, cfg *dalec.PackageSigner, s llb.State, opts ...llb.ConstraintsOpt) (llb.State, error) {
