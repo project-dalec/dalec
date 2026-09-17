@@ -176,7 +176,7 @@ func gitSourceWebURL(raw string) string {
 		return ""
 	}
 	for part := range strings.SplitSeq(strings.TrimPrefix(u.Path, "/"), "/") {
-		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, "~") {
+		if part == "" || part == "." || part == ".." {
 			return ""
 		}
 	}

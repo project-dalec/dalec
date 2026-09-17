@@ -148,7 +148,10 @@ func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (
 			return nil, nil, err
 		}
 
-		img, err := linux.BuildImageConfig(ctx, sOpt, spec, platform, targetKey, imageOpts...)
+		// Keep image settings, but exclude sources not included in the deps-only package.
+		imageSpec := *spec
+		imageSpec.Sources = depsSpec.Sources
+		img, err := linux.BuildImageConfig(ctx, sOpt, &imageSpec, platform, targetKey, imageOpts...)
 		if err != nil {
 			return nil, nil, err
 		}

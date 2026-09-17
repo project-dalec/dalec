@@ -4642,6 +4642,11 @@ func testImageConfig(ctx context.Context, t *testing.T, target string, opts ...s
 
 func testImageSourceLabels(ctx context.Context, t *testing.T, target string, opts ...srOpt) {
 	const upstream = "https://github.com/coredns/coredns"
+	depsOnly := strings.HasSuffix(target, "/depsonly")
+	var inferred map[string]string
+	if !depsOnly {
+		inferred = map[string]string{ocispecs.AnnotationSource: upstream + ".git"}
+	}
 	for _, tc := range []struct {
 		name     string
 		input    string
@@ -4650,27 +4655,54 @@ func testImageSourceLabels(ctx context.Context, t *testing.T, target string, opt
 		global   *dalec.ImageConfig
 		target   *dalec.ImageConfig
 		copies   int
-		want     string
-		present  bool
+		want     map[string]string
 	}{
 		{name: "disabled_by_default", copies: 1},
 		{name: "explicitly_disabled", input: "false", copies: 1},
 		{name: "build_arg_cannot_enable", input: "true", buildArg: true, copies: 1},
 		{name: "invalid_input", input: "yes", invalid: true},
-		{name: "inferred_without_image", input: "true", copies: 1, want: upstream + ".git", present: true},
+		{name: "single_git_source_without_image", input: "true", copies: 1, want: inferred},
 		{
-			name: "global_override", input: "true", copies: 1, want: "https://example.com/global", present: true,
+			name: "global_override", input: "true", copies: 1,
 			global: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: "https://example.com/global"}},
+			want:   map[string]string{ocispecs.AnnotationSource: "https://example.com/global"},
 		},
 		{
-			name: "target_override", input: "true", copies: 1, want: "https://example.com/target", present: true,
+			name: "target_override", input: "true", copies: 1,
 			global: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: "https://example.com/global"}},
 			target: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: "https://example.com/target"}},
+			want:   map[string]string{ocispecs.AnnotationSource: "https://example.com/target"},
 		},
 		{
-			name: "target_opt_out", input: "true", copies: 1, present: true,
+			name: "target_opt_out", input: "true", copies: 1,
 			global: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: upstream}},
 			target: &dalec.ImageConfig{Labels: map[string]string{ocispecs.AnnotationSource: ""}},
+			want:   map[string]string{ocispecs.AnnotationSource: ""},
+		},
+		{
+			name: "legacy_override", input: "true", copies: 1,
+			global: &dalec.ImageConfig{Labels: map[string]string{"org.label-schema.vcs-url": "https://example.com/global"}},
+			target: &dalec.ImageConfig{Labels: map[string]string{"org.label-schema.vcs-url": "https://example.com/target"}},
+			want:   map[string]string{"org.label-schema.vcs-url": "https://example.com/target"},
+		},
+		{
+			name: "legacy_opt_out", input: "true", copies: 1,
+			global: &dalec.ImageConfig{Labels: map[string]string{"org.label-schema.vcs-url": "https://example.com/global"}},
+			target: &dalec.ImageConfig{Labels: map[string]string{"org.label-schema.vcs-url": ""}},
+			want:   map[string]string{"org.label-schema.vcs-url": ""},
+		},
+		{
+			name: "explicit_revisions", input: "true", copies: 1,
+			global: &dalec.ImageConfig{Labels: map[string]string{
+				ocispecs.AnnotationSource:   "https://example.com/explicit",
+				ocispecs.AnnotationRevision: "explicit-commit",
+				"org.label-schema.vcs-ref":  "explicit-ref",
+			}},
+			want: map[string]string{
+				ocispecs.AnnotationSource:   "https://example.com/explicit",
+				ocispecs.AnnotationRevision: "explicit-commit",
+				"org.label-schema.vcs-ref":  "explicit-ref",
+			},
 		},
 		{name: "ambiguous", input: "true", copies: 2},
 		{name: "no_git_source", input: "true"},
@@ -4690,7 +4722,7 @@ func testImageSourceLabels(ctx context.Context, t *testing.T, target string, opt
 					Git: &dalec.SourceGit{URL: "${UPSTREAM}.git", Commit: "v1.12.0"},
 				}
 			}
-			if strings.HasSuffix(target, "/depsonly") {
+			if depsOnly {
 				spec.Dependencies = &dalec.PackageDependencies{
 					Runtime: map[string]dalec.PackageConstraints{"curl": {}},
 				}
@@ -4719,14 +4751,11 @@ func testImageSourceLabels(ctx context.Context, t *testing.T, target string, opt
 				assert.Assert(t, ok, "missing image config")
 				var img dalec.DockerImageSpec
 				assert.NilError(t, json.Unmarshal(data, &img))
-				value, present := img.Config.Labels[ocispecs.AnnotationSource]
-				assert.Equal(t, value, tc.want)
-				assert.Equal(t, present, tc.present)
-				if tc.input == "true" && !tc.buildArg {
-					for _, key := range []string{ocispecs.AnnotationRevision, "org.label-schema.vcs-url", "org.label-schema.vcs-ref"} {
-						_, present := img.Config.Labels[key]
-						assert.Check(t, !present, "unexpected inherited provenance label %q", key)
-					}
+				for _, key := range []string{ocispecs.AnnotationSource, ocispecs.AnnotationRevision, "org.label-schema.vcs-url", "org.label-schema.vcs-ref"} {
+					value, present := img.Config.Labels[key]
+					want, wantPresent := tc.want[key]
+					assert.Check(t, cmp.Equal(value, want), "label %q", key)
+					assert.Check(t, cmp.Equal(present, wantPresent), "label %q presence", key)
 				}
 			})
 		})
@@ -6225,6 +6254,9 @@ func testDepsOnly(ctx context.Context, t *testing.T, testConfig testLinuxConfig)
 		// include the built artifact (/usr/bin/my-script) or its implicit dep.
 		spec := fillMetadata("test-deps-only-full", &dalec.Spec{
 			Sources: map[string]dalec.Source{
+				"upstream": {
+					Git: &dalec.SourceGit{URL: "https://github.com/coredns/coredns.git", Commit: "v1.12.0"},
+				},
 				"my-script": {
 					Inline: &dalec.SourceInline{
 						File: &dalec.SourceInlineFile{
@@ -6253,7 +6285,15 @@ func testDepsOnly(ctx context.Context, t *testing.T, testConfig testLinuxConfig)
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
 			req := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(testConfig.Target.DepsOnly))
+			req.FrontendOpt[frontend.KeyImageSourceLabel] = "true"
 			res := solveT(ctx, t, client, req)
+
+			data, ok := res.Metadata[exptypes.ExporterImageConfigKey]
+			assert.Assert(t, ok, "missing image config")
+			var img dalec.DockerImageSpec
+			assert.NilError(t, json.Unmarshal(data, &img))
+			_, present := img.Config.Labels[ocispecs.AnnotationSource]
+			assert.Check(t, !present, "deps-only image must not infer application provenance")
 
 			ref, err := res.SingleRef()
 			assert.NilError(t, err)

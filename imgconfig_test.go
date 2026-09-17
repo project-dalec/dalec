@@ -15,6 +15,9 @@ func TestGitSourceWebURL(t *testing.T) {
 		name, input, want string
 	}{
 		{"https", "https://github.com/coredns/coredns.git", "https://github.com/coredns/coredns.git"},
+		{"sourcehut https", "https://git.sr.ht/~sircmpwn/aerc", "https://git.sr.ht/~sircmpwn/aerc"},
+		{"https tilde path with git suffix", "https://git.example.com/~user/repo.git", "https://git.example.com/~user/repo.git"},
+		{"http tilde path", "http://git.example.com/~user/repo", "http://git.example.com/~user/repo"},
 		{"trailing slash", "https://github.com/coredns/coredns.git/", "https://github.com/coredns/coredns.git"},
 		{"already normalized", "https://github.com/coredns/coredns", "https://github.com/coredns/coredns"},
 		{"credentials and metadata", "https://user:secret@github.com/coredns/coredns.git?token=secret#v1.12.0:src", "https://github.com/coredns/coredns.git"},
@@ -36,6 +39,7 @@ func TestGitSourceWebURL(t *testing.T) {
 		{"file URL", "file:///home/private/repo.git", ""},
 		{"absolute path", "/home/private/repo.git", ""},
 		{"relative path", "../repo.git", ""},
+		{"local home path", "~/private/repo.git", ""},
 		{"local host", "https://localhost/repo.git", ""},
 		{"fully qualified local host", "https://localhost./repo.git", ""},
 		{"local domain", "https://git.local/repo.git", ""},
@@ -95,6 +99,11 @@ func TestBuildImageConfigSourceLabels(t *testing.T) {
 		{
 			name: "one git source without image config", sources: map[string]Source{"src": gitSource},
 			want: map[string]string{ocispecs.AnnotationSource: upstream},
+		},
+		{
+			name:    "sourcehut git source without image config",
+			sources: map[string]Source{"src": {Git: &SourceGit{URL: "https://git.sr.ht/~sircmpwn/aerc"}}},
+			want:    map[string]string{ocispecs.AnnotationSource: "https://git.sr.ht/~sircmpwn/aerc"},
 		},
 		{
 			name:    "non git sources do not add ambiguity",

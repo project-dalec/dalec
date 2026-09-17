@@ -159,6 +159,11 @@ source with a supported repository URL. This also works without an `image`
 section and is applied after build-argument substitution for each output
 platform, including Windows base-image variants.
 
+RPM `depsonly` targets do not include the application, so they never infer its
+source repository. Explicit global/target image labels still apply. When the
+input is enabled, these targets also remove inherited source/revision labels
+as described below; when absent or `false`, inherited provenance is preserved.
+
 Only HTTP and HTTPS repository URLs are supported. SSH (including
 `git@github.com:owner/repo.git`), `git://`, and local paths are not inferred,
 even for well-known hosts. Credentials, query parameters, fragments and a
@@ -167,6 +172,8 @@ addresses are not inferred; use an explicit label for these cases.
 Non-canonical numeric IPv4 hosts (such as `127.1`, `2130706433`,
 or `0x7f000001`) are also excluded rather than relying on consumer-specific
 address parsing.
+Tilde-prefixed HTTP(S) path segments are supported, for example
+`https://git.sr.ht/~sircmpwn/aerc`; they are not local home-directory paths.
 
 For example, `sources.coredns.git.url: https://github.com/coredns/coredns.git`
 produces `org.opencontainers.image.source: https://github.com/coredns/coredns.git`
