@@ -1,7 +1,14 @@
 package test
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"path"
 	"strings"
 	"testing"
 
@@ -9,6 +16,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/frontend/pkg/bkfs"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
 )
@@ -193,6 +201,171 @@ func testSourceRPMTarget(ctx context.Context, t *testing.T, targetCfg targetConf
 	})
 }
 
+// testSourcePackageExcludesGomodZipCache checks the actual source package, not
+// just the generator output: cache ZIPs must be omitted without losing ordinary
+// sources (including ZIPs), extracted modules, or module metadata.
+func testSourcePackageExcludesGomodZipCache(ctx context.Context, t *testing.T, targetCfg targetConfig) {
+	const (
+		contextName = "gomod-source"
+		module      = "github.com/cpuguy83/tar2go"
+		version     = "v0.3.1"
+		moduleDir   = module + "@" + version
+		cacheDir    = "cache/download/" + module + "/@v/"
+	)
+
+	var sourceTarget string
+	switch {
+	case strings.HasSuffix(targetCfg.Package, "/rpm"):
+		sourceTarget = strings.TrimSuffix(targetCfg.Package, "/rpm") + "/srpm"
+	case strings.HasSuffix(targetCfg.Package, "/deb"):
+		sourceTarget = strings.TrimSuffix(targetCfg.Package, "/deb") + "/dsc"
+	default:
+		t.Fatalf("no source-package target known for %q", targetCfg.Package)
+	}
+
+	zipFixture := gomodZipFixture(t)
+	source := llb.Scratch().
+		File(llb.Mkfile("/main.go", 0o644, []byte(gomodFixtureMain))).
+		File(llb.Mkfile("/go.mod", 0o644, []byte(gomodFixtureMod))).
+		File(llb.Mkfile("/go.sum", 0o644, []byte(gomodFixtureSum))).
+		File(llb.Mkdir("/testdata", 0o755)).
+		File(llb.Mkfile("/testdata/fixture.zip", 0o644, zipFixture))
+	spec := &dalec.Spec{
+		Name:        "test-gomod-source",
+		Version:     "0.0.1",
+		Revision:    "1",
+		Description: "Testing module cache ZIP exclusion in source packages",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Sources: map[string]dalec.Source{
+			"src": {
+				Context:  &dalec.SourceContext{Name: contextName},
+				Generate: []*dalec.SourceGenerator{{Gomod: &dalec.GeneratorGomod{}}},
+			},
+		},
+		Dependencies: &dalec.PackageDependencies{
+			Build: map[string]dalec.PackageConstraints{
+				targetCfg.GetPackage("golang"): {},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+		res := solveT(ctx, t, gwc, newSolveRequest(
+			withSpec(ctx, t, spec),
+			withBuildContext(ctx, t, contextName, source),
+			withBuildTarget(sourceTarget),
+		))
+		ref, err := res.SingleRef()
+		assert.NilError(t, err)
+		pkgFS := bkfs.FromRef(ctx, ref)
+
+		var extract, gomodsRoot, sourceRoot string
+		if strings.HasSuffix(targetCfg.Package, "/rpm") {
+			srpm := expectedSRPMPath(t, targetCfg, spec)
+			_, err := fs.Stat(pkgFS, srpm)
+			assert.NilError(t, err, "expected source RPM at %q", srpm)
+			// Keep rpm2cpio separate from cpio so either failure is surfaced.
+			extract = fmt.Sprintf(`set -eu
+mkdir -p /work /out/gomods
+cd /work
+rpm2cpio %q > source.cpio
+cpio -id < source.cpio
+tar -xzf __gomods.tar.gz -C /out/gomods
+tar -xzf src.tar.gz -C /out
+`, path.Join("/pkg", srpm))
+			gomodsRoot, sourceRoot = "gomods", "src"
+		} else {
+			descriptors, err := fs.Glob(pkgFS, "*.dsc")
+			assert.NilError(t, err)
+			assert.Assert(t, cmp.Len(descriptors, 1), "expected exactly one source descriptor")
+			for _, name := range []string{descriptors[0], spec.Name + "_" + spec.Version + ".orig.tar.gz"} {
+				_, err := fs.Stat(pkgFS, name)
+				assert.NilError(t, err, "expected source-package artifact %q", name)
+			}
+			extract = fmt.Sprintf("set -eu; dpkg-source -x %q /out/source", path.Join("/pkg", descriptors[0]))
+			gomodsRoot, sourceRoot = "source/xxxdalecGomodsInternal", "source/src"
+		}
+
+		worker := solveT(ctx, t, gwc, newSolveRequest(withBuildTarget(targetCfg.Worker), withSpec(ctx, t, nil)))
+		st := resultToState(t, worker).Run(
+			dalec.ShArgs(extract),
+			llb.AddMount("/pkg", resultToState(t, res), llb.Readonly),
+		).AddMount("/out", llb.Scratch())
+
+		def, err := st.Marshal(ctx)
+		assert.NilError(t, err)
+		out, err := gwc.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB(), Evaluate: true})
+		assert.NilError(t, err)
+		outRef, err := out.SingleRef()
+		assert.NilError(t, err)
+		gomods, err := fs.Sub(bkfs.FromRef(ctx, outRef), gomodsRoot)
+		assert.NilError(t, err)
+
+		stat, err := fs.Stat(gomods, moduleDir)
+		assert.NilError(t, err, "extracted module must remain in the source package")
+		assert.Assert(t, stat.IsDir())
+		mod, err := fs.ReadFile(gomods, moduleDir+"/go.mod")
+		assert.NilError(t, err)
+		assert.Assert(t, len(mod) > 0, "module go.mod must not be empty")
+		checkFile(ctx, t, path.Join(gomodsRoot, cacheDir, version+".mod"), out, mod)
+
+		var hasGoSource bool
+		err = fs.WalkDir(gomods, moduleDir, func(name string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
+				data, err := fs.ReadFile(gomods, name)
+				if err != nil {
+					return err
+				}
+				hasGoSource = hasGoSource || len(data) > 0
+			}
+			return nil
+		})
+		assert.NilError(t, err)
+		assert.Assert(t, hasGoSource, "module must retain nonempty non-test Go sources")
+
+		var info struct {
+			Version string
+		}
+		assert.NilError(t, json.Unmarshal(readFile(ctx, t, path.Join(gomodsRoot, cacheDir, version+".info"), out), &info))
+		assert.Equal(t, info.Version, version)
+		var checksum string
+		for line := range strings.SplitSeq(gomodFixtureSum, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 3 && fields[0] == module && fields[1] == version {
+				checksum = fields[2]
+				break
+			}
+		}
+		assert.Assert(t, checksum != "", "fixture must contain the module ZIP checksum")
+		assert.Equal(t, strings.TrimSpace(string(readFile(ctx, t, path.Join(gomodsRoot, cacheDir, version+".ziphash"), out))), checksum)
+
+		zipPath := cacheDir + version + ".zip"
+		_, err = fs.Stat(gomods, zipPath)
+		assert.Assert(t, errors.Is(err, fs.ErrNotExist), "expected cache ZIP %q to be excluded, got %v", zipPath, err)
+		err = fs.WalkDir(gomods, "cache/download", func(name string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if strings.HasSuffix(name, ".zip") {
+				return fmt.Errorf("unexpected ZIP in packaged module download cache: %s", name)
+			}
+			return nil
+		})
+		assert.NilError(t, err)
+
+		checkFile(ctx, t, sourceRoot+"/main.go", out, []byte(gomodFixtureMain))
+		checkFile(ctx, t, sourceRoot+"/go.mod", out, []byte(gomodFixtureMod))
+		checkFile(ctx, t, sourceRoot+"/go.sum", out, []byte(gomodFixtureSum))
+		checkFile(ctx, t, sourceRoot+"/testdata/fixture.zip", out, zipFixture)
+	})
+}
+
 // expectedSRPMPath returns the path of the source rpm the distro's rpm target
 // produces for the given spec.
 func expectedSRPMPath(t *testing.T, targetCfg targetConfig, spec *dalec.Spec) string {
@@ -210,4 +383,17 @@ func expectedSRPMPath(t *testing.T, targetCfg targetConfig, spec *dalec.Spec) st
 
 	t.Fatal("no source rpm in the list of expected package files")
 	return ""
+}
+
+func gomodZipFixture(t *testing.T) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	entry, err := zw.Create("fixture.txt")
+	assert.NilError(t, err)
+	_, err = entry.Write([]byte("retained ZIP contents\n"))
+	assert.NilError(t, err)
+	assert.NilError(t, zw.Close())
+	return buf.Bytes()
 }

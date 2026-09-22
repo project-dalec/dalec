@@ -1211,6 +1211,109 @@ global_excludes:
 	})
 }
 
+// TestGomodDepsExcludesZipCache is an integration-level regression test for
+// GomodDeps' built-in zip-cache exclusion. It runs a real `go mod download`
+// through the "debug/gomods" target and inspects the resulting filesystem,
+// rather than only unit-testing the LLB the generator constructs.
+func TestGomodDepsExcludesZipCache(t *testing.T) {
+	t.Parallel()
+
+	const (
+		module    = "github.com/cpuguy83/tar2go"
+		version   = "v0.3.1"
+		moduleDir = module + "@" + version
+		// Real on-disk layout of the go module cache for this module/version,
+		// as populated by `go mod download` under $GOMODCACHE.
+		zipPath  = "cache/download/" + module + "/@v/" + version + ".zip"
+		modPath  = "cache/download/" + module + "/@v/" + version + ".mod"
+		infoPath = "cache/download/" + module + "/@v/" + version + ".info"
+	)
+
+	newSpec := func() *dalec.Spec {
+		return &dalec.Spec{
+			Name:        "test-gomod-zip-cache-excludes",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing that GomodDeps excludes the go module zip cache",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Generate: []*dalec.SourceGenerator{{Gomod: &dalec.GeneratorGomod{}}},
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"main.go": {Contents: gomodFixtureMain},
+								"go.mod":  {Contents: gomodFixtureMod},
+								"go.sum":  {Contents: gomodFixtureSum},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					"golang": {},
+				},
+			},
+		}
+	}
+
+	t.Run("when no source filter is configured, the module zip is excluded but the extracted module and its metadata remain", func(t *testing.T) {
+		t.Parallel()
+
+		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+			req := newSolveRequest(withBuildTarget("debug/gomods"), withSpec(ctx, t, newSpec()))
+			res := solveT(ctx, t, gwc, req)
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: zipPath})
+			assert.Assert(t, err != nil, "expected module zip cache file %q to be excluded from GomodDeps output", zipPath)
+
+			stat, err := ref.StatFile(ctx, gwclient.StatRequest{Path: moduleDir})
+			assert.NilError(t, err, "extracted module sources must still be present")
+			assert.Assert(t, fs.FileMode(stat.Mode).IsDir())
+
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: modPath})
+			assert.NilError(t, err, "go.mod cache metadata must be retained")
+
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: infoPath})
+			assert.NilError(t, err, "module info cache metadata must be retained")
+		})
+	})
+
+	t.Run("when a downstream source filter negates the zip exclude, the zip remains excluded", func(t *testing.T) {
+		t.Parallel()
+
+		// This directly exercises the pattern-ordering fix: a downstream
+		// config that (accidentally or otherwise) tries to re-include the
+		// zip cache via a "!" negated pattern must not be able to override
+		// the generator's mandatory exclude.
+		filterConfig := llb.Scratch().File(llb.Mkfile("/source-filter.yml", 0o644, []byte(`
+global_excludes:
+  - "!cache/download/**/*.zip"
+`)))
+
+		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
+			req := newSolveRequest(
+				withBuildTarget("debug/gomods"),
+				withSpec(ctx, t, newSpec()),
+				withBuildContext(ctx, t, dalec.DefaultSourceOptionsContextName, filterConfig),
+				withBuildArg(dalec.BuildArgDalecSourceFilterConfigPath, "/source-filter.yml"),
+			)
+			res := solveT(ctx, t, gwc, req)
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+
+			_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: zipPath})
+			assert.Assert(t, err != nil, "a downstream negated pattern must not be able to re-include the module zip cache")
+		})
+	})
+}
+
 func TestDebugSourcesSourceFilterConfig(t *testing.T) {
 	t.Parallel()
 
