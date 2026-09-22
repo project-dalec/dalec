@@ -23,19 +23,71 @@ var (
 	customStartTmpl    = template.Must(template.New("start").Parse(string(customStartTmplContent)))
 )
 
+// customSystemdPartial holds the generated custom-enable postinst snippet for a
+// single package (primary or subpackage). The snippet must be appended to that
+// package's own maintainer script so that units ship and enable in the same
+// package.
+type customSystemdPartial struct {
+	// pkgName is the resolved package name that owns the units.
+	pkgName string
+	// isPrimary is true for the primary package.
+	isPrimary bool
+	// content is the custom-enable postinst snippet.
+	content []byte
+}
+
+// partialFile returns the filename (under debian/dalec/) the snippet is written to.
+func (p customSystemdPartial) partialFile() string {
+	if p.isPrimary {
+		return customSystemdPostinstFile
+	}
+	return p.pkgName + "." + customSystemdPostinstFile
+}
+
+// postinstTarget returns the maintainer script the snippet must be appended to.
+func (p customSystemdPartial) postinstTarget() string {
+	if p.isPrimary {
+		return "debian/postinst"
+	}
+	return "debian/" + p.pkgName + ".postinst"
+}
+
 // This is used to generate a postinst (or at least part of a postinst) for the
 // case where we have a mix of enabled/disabled units with the same basename.
 // For all units that need this, the `dh_installsystemd` command should be
 // executed with the `--no-enable` option.
 // This handles enabled or not enabled for this special case instead of using
 // the postinst provided by `dh_installsystemd` without `--no-eable` set.
-func customDHInstallSystemdPostinst(spec *dalec.Spec, target string) ([]byte, error) {
-	artifacts := spec.GetArtifacts(target)
-	units := artifacts.Systemd.GetUnits()
+//
+// A snippet is generated per package (primary and each subpackage) so that each
+// snippet can be appended to the maintainer script of the package that actually
+// ships the units, rather than always landing in the primary package's postinst.
+func customDHInstallSystemdPostinst(spec *dalec.Spec, target string) ([]customSystemdPartial, error) {
+	var partials []customSystemdPartial
+
+	for _, pkg := range resolvePackages(spec, target) {
+		buf := bytes.NewBuffer(nil)
+		if err := writeCustomEnableForUnits(buf, pkg.artifacts.Systemd.GetUnits()); err != nil {
+			return nil, errors.Wrapf(err, "package %s", pkg.name)
+		}
+		if buf.Len() > 0 {
+			partials = append(partials, customSystemdPartial{
+				pkgName:   pkg.name,
+				isPrimary: pkg.primary,
+				content:   buf.Bytes(),
+			})
+		}
+	}
+
+	return partials, nil
+}
+
+func writeCustomEnableForUnits(buf *bytes.Buffer, units map[string]dalec.SystemdUnitConfig) error {
+	if len(units) == 0 {
+		return nil
+	}
+
 	grouped := groupUnitsByBaseName(units)
-
-	buf := bytes.NewBuffer(nil)
-
 	sorted := dalec.SortMapKeys(grouped)
 	for _, v := range sorted {
 		ls := grouped[v]
@@ -43,20 +95,17 @@ func customDHInstallSystemdPostinst(spec *dalec.Spec, target string) ([]byte, er
 			continue
 		}
 
-		sorted := dalec.SortMapKeys(ls)
-
-		for _, name := range sorted {
-			cfg := ls[name]
+		for name, cfg := range dalec.SortedMapIter(ls) {
 			if err := writeCustomEnablePartial(buf, name, &cfg); err != nil {
-				return nil, errors.Wrapf(err, "error writing custom systemd enable template for unit: %s", name)
+				return errors.Wrapf(err, "error writing custom systemd enable template for unit: %s", name)
 			}
 			if err := customStartTmpl.Execute(buf, name); err != nil {
-				return nil, errors.Wrapf(err, "error writing custom systemd start template for unit: %s", name)
+				return errors.Wrapf(err, "error writing custom systemd start template for unit: %s", name)
 			}
 		}
 	}
 
-	return buf.Bytes(), nil
+	return nil
 }
 
 func writeCustomEnablePartial(buf io.Writer, name string, cfg *dalec.SystemdUnitConfig) error {
