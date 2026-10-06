@@ -19,7 +19,7 @@ func TestConfigureAptProxyWritesConfig(t *testing.T) {
 	conf := filepath.Join(t.TempDir(), "apt.conf")
 	cmd := exec.Command("/bin/sh", "-c", aptProxyConfigScript+"\nconfigure_apt_proxy\nprintf '%s' \"${APT_CONFIG}\"\n")
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"HTTPS_PROXY=https://proxy.example:8443",
 		"DALEC_APT_PROXY_CONFIG=" + conf,
@@ -49,7 +49,7 @@ func TestConfigureAptProxyDoesNotTraceProxyValues(t *testing.T) {
 	conf := filepath.Join(t.TempDir(), "apt.conf")
 	cmd := exec.Command("/bin/sh", "-c", "set -x\n"+aptProxyConfigScript+"\nconfigure_apt_proxy\n")
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://user:secret@proxy.example:3128",
 		"DALEC_APT_PROXY_CONFIG=" + conf,
 	}
@@ -67,7 +67,7 @@ func TestCleanupAptProxyRemovesConfig(t *testing.T) {
 	conf := filepath.Join(t.TempDir(), "apt.conf")
 	cmd := exec.Command("/bin/sh", "-c", aptProxyConfigScript+"\nconfigure_apt_proxy\ncleanup_apt_proxy\nif [ -n \"${APT_CONFIG:-}\" ] || [ -e \"${DALEC_APT_PROXY_CONFIG}\" ]; then exit 1; fi\n")
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"DALEC_APT_PROXY_CONFIG=" + conf,
 	}
@@ -86,7 +86,7 @@ func TestCleanupAptProxyRestoresAptConfig(t *testing.T) {
 	original := filepath.Join(dir, "original.conf")
 	cmd := exec.Command("/bin/sh", "-c", aptProxyConfigScript+"\nconfigure_apt_proxy\ncleanup_apt_proxy\nprintf '%s' \"${APT_CONFIG:-}\"\n")
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"APT_CONFIG=" + original,
 		"HTTP_PROXY=http://proxy.example:3128",
 		"DALEC_APT_PROXY_CONFIG=" + conf,
@@ -105,7 +105,7 @@ func TestConfigureAptProxyDisabled(t *testing.T) {
 	conf := filepath.Join(t.TempDir(), "apt.conf")
 	cmd := exec.Command("/bin/sh", "-c", aptProxyConfigScript+"\nconfigure_apt_proxy\nif [ -n \"${APT_CONFIG:-}\" ] || [ -e \"${DALEC_APT_PROXY_CONFIG}\" ]; then exit 1; fi\n")
 	cmd.Env = []string{
-		"PATH=/bin:/usr/bin",
+		"PATH=" + os.Getenv("PATH"),
 		"HTTP_PROXY=http://proxy.example:3128",
 		"DALEC_APT_PROXY_CONFIG=" + conf,
 		"DALEC_DISABLE_PROXY_CONFIG=1",
