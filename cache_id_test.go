@@ -1,9 +1,12 @@
 package dalec
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	internaltest "github.com/project-dalec/dalec/internal/test"
 )
 
 func TestPersistentCacheIDString(t *testing.T) {
@@ -72,4 +75,27 @@ func TestFormatSafeCacheIDPlatform(t *testing.T) {
 	if got, want := FormatSafeCacheIDPlatform(p), "linux_arm64"; got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
+}
+
+func TestCacheDirAutoNamespaceIncludesGenericCacheType(t *testing.T) {
+	t.Parallel()
+
+	st := llb.Scratch().Run(
+		ShArgs("true"),
+		(&CacheDir{Dest: "/tmp/cache", Key: "dalec-gobuildcache"}).ToRunOption("azlinux3.0"),
+	).Root()
+
+	for _, op := range internaltest.LLBOpsFromState(t.Context(), t, st) {
+		exec := op.Op.GetExec()
+		if exec == nil {
+			continue
+		}
+		for _, mount := range exec.Mounts {
+			if mount.CacheOpt != nil && strings.Contains(mount.CacheOpt.ID, "-"+cacheTypeGeneric+"-") {
+				return
+			}
+		}
+	}
+
+	t.Fatalf("expected generic cache type %q in auto-namespaced cache ID", cacheTypeGeneric)
 }

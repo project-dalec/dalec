@@ -262,6 +262,7 @@ func (c *CacheDir) ToRunOption(cacheIdentity string, opts ...CacheDirOption) llb
 			key = PersistentCacheID{
 				Environment: cacheIdentity,
 				Platform:    execCacheIDPlatform(ei, info.Platform),
+				Type:        cacheTypeGeneric,
 				Key:         key,
 			}.String()
 		}

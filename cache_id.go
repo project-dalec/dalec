@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	cacheTypeGeneric     = "dalec-genericcache"
 	cacheTypeGoBuild     = "dalec-gobuildcache"
 	cacheTypeRustSccache = "dalec-rustsccache"
 	cacheTypeBazel       = "dalec-bazelcache"
@@ -28,7 +29,7 @@ type PersistentCacheID struct {
 	Key string
 }
 
-// String format the cache ID from its non-empty parts.
+// String formats the cache ID from its non empty parts.
 func (id PersistentCacheID) String() string {
 	parts := make([]string, 0, 4)
 	for _, part := range []string{id.Environment, id.Platform, id.Type, id.Key} {
