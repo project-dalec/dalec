@@ -292,7 +292,7 @@ func (s *Spec) generateGomodPatchStateForSource(gomodOpts gomodGeneratorOpts) (*
 		llb.AddMount("/gomod-patch.sh", scriptState, llb.SourcePath("/gomod-patch.sh")),
 		llb.AddMount(workDir, gomodOpts.sourceState),
 		llb.AddMount(origWorkDir, gomodOpts.sourceState, llb.Readonly), // Read-only mount for diffing
-		llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
+		llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(gomodProxyCacheID(), llb.CacheMountShared)),
 		llb.AddMount(patchOutputDir, patchOutput), // Mount scratch state to capture patch file
 		llb.AddEnv("GOPATH", "/go"),
 		llb.AddEnv("TMP_GOMODCACHE", proxyPath),
