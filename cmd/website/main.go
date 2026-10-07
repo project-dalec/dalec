@@ -149,8 +149,18 @@ func generateSite(toolchain llb.State) llb.StateOption {
 			hugoCacheID = "dalec-website-hugo"
 		)
 		cacheMounts := dalec.RunOptFunc(func(ei *llb.ExecInfo) {
-			llb.AddMount("/go/pkg/mod", llb.Scratch(), llb.AsPersistentCacheDir(modsCacheID, llb.CacheMountLocked)).SetRunOption(ei)
-			llb.AddMount("/cache", llb.Scratch(), llb.AsPersistentCacheDir(hugoCacheID, llb.CacheMountLocked)).SetRunOption(ei)
+			goModPersistentCacheID := dalec.PersistentCacheID{Type: modsCacheID}.String()
+			hugoPersistentCacheID := dalec.PersistentCacheID{Type: hugoCacheID}.String()
+			llb.AddMount(
+				"/go/pkg/mod",
+				llb.Scratch(),
+				llb.AsPersistentCacheDir(goModPersistentCacheID, llb.CacheMountLocked),
+			).SetRunOption(ei)
+			llb.AddMount(
+				"/cache",
+				llb.Scratch(),
+				llb.AsPersistentCacheDir(hugoPersistentCacheID, llb.CacheMountLocked),
+			).SetRunOption(ei)
 		})
 		generated := toolchain.Run(
 			cacheMounts,

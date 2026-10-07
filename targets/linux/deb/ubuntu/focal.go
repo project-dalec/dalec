@@ -18,6 +18,7 @@ var (
 		ImageRef:           focalRef,
 		AptCachePrefix:     FocalAptCachePrefix,
 		VersionID:          focalVersionID,
+		CacheIdentity:      focalVersionID,
 		ContextRef:         FocalWorkerContextName,
 		DefaultOutputImage: focalRef,
 		BuilderPackages:    builderPackages,

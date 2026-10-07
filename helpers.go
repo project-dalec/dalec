@@ -82,10 +82,34 @@ func (f runOptionFunc) SetRunOption(i *llb.ExecInfo) {
 	f(i)
 }
 
+const (
+	cacheTypeAptVarCache = "dalec-var-cache-apt"
+	cacheTypeAptVarLib   = "dalec-var-lib-apt"
+)
+
 // WithMountedAptCache gives an [llb.RunOption] that mounts the apt cache directories.
-// It uses the given namePrefix as the prefix for the cache keys.
-// namePrefix should be distinct per distro version.
-func WithMountedAptCache(namePrefix string, opts ...llb.ConstraintsOpt) llb.RunOption {
+// cacheIdentity should be distinct per distro version.
+func WithMountedAptCache(cacheIdentity string, opts ...llb.ConstraintsOpt) llb.RunOption {
+	return WithMountedAptCacheNamespace(cacheIdentity, "", opts...)
+}
+
+// WithMountedAptCacheNamespace mounts apt cache directories under a global namespace.
+func WithMountedAptCacheNamespace(cacheIdentity, namespace string, opts ...llb.ConstraintsOpt) llb.RunOption {
+	return withMountedAptCache(cacheIdentity, namespace, "", opts...)
+}
+
+// WithMountedAptCacheForPlatform mounts platform-scoped apt cache directories.
+func WithMountedAptCacheForPlatform(cacheIdentity string, platform ocispecs.Platform, opts ...llb.ConstraintsOpt) llb.RunOption {
+	return WithMountedAptCacheForPlatformNamespace(cacheIdentity, "", platform, opts...)
+}
+
+// WithMountedAptCacheForPlatformNamespace mounts platform-scoped apt cache directories
+// under a global namespace.
+func WithMountedAptCacheForPlatformNamespace(cacheIdentity, namespace string, platform ocispecs.Platform, opts ...llb.ConstraintsOpt) llb.RunOption {
+	return withMountedAptCache(cacheIdentity, namespace, FormatSafeCacheIDPlatform(platform), opts...)
+}
+
+func withMountedAptCache(cacheIdentity, namespace, platform string, opts ...llb.ConstraintsOpt) llb.RunOption {
 	return runOptionFunc(func(ei *llb.ExecInfo) {
 		// This is in the "official" docker image for ubuntu/debian.
 		// This file prevents us from actually caching anything.
@@ -98,13 +122,23 @@ func WithMountedAptCache(namePrefix string, opts ...llb.ConstraintsOpt) llb.RunO
 		llb.AddMount(
 			"/var/cache/apt",
 			llb.Scratch(),
-			llb.AsPersistentCacheDir(namePrefix+"dalec-var-cache-apt", llb.CacheMountLocked),
+			llb.AsPersistentCacheDir(PersistentCacheID{
+				Namespace:   namespace,
+				Environment: cacheIdentity,
+				Platform:    platform,
+				Type:        cacheTypeAptVarCache,
+			}.String(), llb.CacheMountLocked),
 		).SetRunOption(ei)
 
 		llb.AddMount(
 			"/var/lib/apt",
 			llb.Scratch(),
-			llb.AsPersistentCacheDir(namePrefix+"dalec-var-lib-apt", llb.CacheMountLocked),
+			llb.AsPersistentCacheDir(PersistentCacheID{
+				Namespace:   namespace,
+				Environment: cacheIdentity,
+				Platform:    platform,
+				Type:        cacheTypeAptVarLib,
+			}.String(), llb.CacheMountLocked),
 		).SetRunOption(ei)
 	})
 }

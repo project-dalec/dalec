@@ -41,12 +41,12 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 			dalec.WithConstraints(opts...),
 			InstallLocalPkg(basePackages(ctx, input), true, opts...),
 			aptProxyConfig(input.SOpt),
-			dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
+			dalec.WithMountedAptCacheNamespace(c.AptCachePrefix, input.SOpt.CacheNamespace, opts...),
 		).Root()
 	}
 
 	return baseImg.With(installPackagesInContainer(input, []llb.RunOption{
-		dalec.WithMountedAptCache(input.Config.AptCachePrefix, opts...),
+		dalec.WithMountedAptCacheNamespace(input.Config.AptCachePrefix, input.SOpt.CacheNamespace, opts...),
 		InstallLocalPkg(debSt, true, opts...),
 		aptProxyConfig(input.SOpt),
 	}))
@@ -304,7 +304,7 @@ done
 		llb.AddMount("/tmp/install.sh", script, llb.SourcePath("install.sh")),
 		llb.AddMount("/spec-packages", input.SpecPackages, llb.Readonly),
 		extraRepos(input, opts...),
-		dalec.WithMountedAptCache(input.Config.AptCachePrefix, opts...),
+		dalec.WithMountedAptCacheNamespace(input.Config.AptCachePrefix, input.SOpt.CacheNamespace, opts...),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		aptProxyConfig(input.SOpt),
 		dalec.ShArgs("/tmp/install.sh"),
