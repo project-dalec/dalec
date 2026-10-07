@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
