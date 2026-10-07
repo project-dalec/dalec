@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	AzLinux4TargetKey    = "azlinux4"
-	dnfCacheNameAzlinux4 = "azlinux4-dnf-cache"
+	AzLinux4TargetKey     = "azlinux4"
+	azlinux4CacheIdentity = "azlinux4.0"
+	dnfCacheNameAzlinux4  = "azlinux4-dnf-cache"
 
 	// Azlinux4Ref is the image ref used for the base worker image.
 	//
@@ -87,6 +88,7 @@ var Azlinux4Config = &distro.Config{
 	ImageRef:   Azlinux4Ref,
 	ContextRef: Azlinux4WorkerContextName,
 
+	CacheIdentity:    azlinux4CacheIdentity,
 	CacheName:        dnfCacheNameAzlinux4,
 	CacheDir:         []string{"/var/cache/libdnf5"},
 	CacheAddPlatform: true,

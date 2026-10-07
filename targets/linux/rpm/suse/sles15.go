@@ -7,8 +7,9 @@ import (
 
 const (
 	// SLES15TargetKey is the target name recipes use, e.g. "sles15/rpm".
-	SLES15TargetKey   = "sles15"
-	zypperCacheSLES15 = "sles15-zypper-cache"
+	SLES15TargetKey     = "sles15"
+	sles15CacheIdentity = "sles15.7"
+	zypperCacheSLES15   = "sles15-zypper-cache"
 
 	// sles15Ref is the image ref used for the base worker image. Pin to 15.7:
 	// SP6 (15.6) reached end of general support on 2025-12-31, so builds should
@@ -29,8 +30,9 @@ var ConfigSLES15 = &distro.Config{
 	ImageRef:   sles15Ref,
 	ContextRef: sles15WorkerContextName,
 
-	CacheName: zypperCacheSLES15,
-	CacheDir:  []string{"/var/cache/zypp"},
+	CacheIdentity: sles15CacheIdentity,
+	CacheName:     zypperCacheSLES15,
+	CacheDir:      []string{"/var/cache/zypp"},
 
 	ReleaseVer:                  "15",
 	BuilderPackages:             builderPackages,
