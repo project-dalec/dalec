@@ -4,7 +4,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
-	"net/url"
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
@@ -148,10 +147,8 @@ func (git *SourceGit) fillDefaults(ls []*SourceGenerator) {
 	}
 
 	host := git.URL
-
-	u, err := url.Parse(git.URL)
-	if err == nil {
-		host = u.Host
+	if remote, err := parseGitURL(git.URL); err == nil {
+		host = remote.Host
 	}
 
 	// The git auth from the git source is autofilled for the gomods, so
@@ -189,20 +186,25 @@ func (src *SourceGit) processBuildArgs(lex *shell.Lex, args map[string]string, a
 	return nil
 }
 
-func (src *SourceGit) doc(w io.Writer, name string) {
-	u, err := url.Parse(src.URL)
-	if err != nil {
-		// This should have always been validated before, so we panic here
-		panic(fmt.Errorf("could not parse git ref %q: %w", src.URL, err))
+// parseGitURL parses a git remote the same way [llb.Git] does, including
+// SCP-style remotes such as "git@github.com:org/repo.git" and remotes with no
+// scheme, which are treated as https.
+func parseGitURL(remote string) (*gitutil.GitURL, error) {
+	u, err := gitutil.ParseURL(remote)
+	if stderrors.Is(err, gitutil.ErrUnknownProtocol) {
+		return gitutil.ParseURL("https://" + remote)
 	}
-	ref, err := gitutil.FromURL(u)
-	if err != nil {
-		// This should have always been validated before, so we panic here
-		panic(fmt.Errorf("could not parse git ref %q: %w", src.URL, err))
+	return u, err
+}
+
+func (src *SourceGit) doc(w io.Writer, name string) {
+	remote := src.URL
+	if ref, err := parseGitURL(src.URL); err == nil {
+		remote = ref.Remote
 	}
 
 	printDocLn(w, "Generated from a git repository:")
-	printDocLn(w, "	Remote:", ref.Remote)
+	printDocLn(w, "	Remote:", remote)
 	printDocLn(w, "	Ref:", src.Commit)
 	if src.Checksum != "" {
 		printDocLn(w, "	Checksum:", src.Checksum)

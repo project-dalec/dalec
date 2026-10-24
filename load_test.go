@@ -455,6 +455,46 @@ func TestSourceFillDefaults(t *testing.T) {
 			},
 		},
 		{
+			title: "auto-propagate git auth to gomod auth for scp-style url",
+			before: Source{
+				Git: &SourceGit{
+					URL:    "git@github.com:auth/test.git",
+					Commit: t.Name(),
+					Auth: GitAuth{
+						SSH: "default",
+					},
+				},
+				Generate: []*SourceGenerator{
+					{
+						Gomod: &GeneratorGomod{},
+					},
+				},
+			},
+			after: Source{
+				Git: &SourceGit{
+					URL:    "git@github.com:auth/test.git",
+					Commit: t.Name(),
+					Auth: GitAuth{
+						SSH: "default",
+					},
+				},
+				Generate: []*SourceGenerator{
+					{
+						Gomod: &GeneratorGomod{
+							Auth: map[string]GomodGitAuth{
+								"github.com": {
+									SSH: &GomodGitAuthSSH{
+										ID:       "default",
+										Username: "git",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			title: "don't overwrite existing git auth when auto-propagating",
 			before: Source{
 				Git: &SourceGit{

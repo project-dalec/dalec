@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path"
@@ -235,6 +236,44 @@ func TestSourceGitHTTP(t *testing.T) {
 		m, ops := getGomodLLBOps(ctx, t, spec)
 		checkGitAuth(t, m, ops, &src, numSecrets, numSSH)
 	})
+}
+
+func TestSourceGitDoc(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		url    string
+		remote string
+	}{
+		{name: "https", url: "https://github.com/myOrg/myRepo.git", remote: "https://github.com/myOrg/myRepo.git"},
+		{name: "https without .git", url: "https://github.com/myOrg/myRepo", remote: "https://github.com/myOrg/myRepo"},
+		{name: "ssh", url: "ssh://git@github.com:22/myOrg/myRepo.git", remote: "ssh://git@github.com:22/myOrg/myRepo.git"},
+		{name: "scp", url: "git@github.com:myOrg/myRepo.git", remote: "git@github.com:myOrg/myRepo.git"},
+		{name: "no scheme", url: "github.com/myOrg/myRepo.git", remote: "https://github.com/myOrg/myRepo.git"},
+		{name: "unsupported scheme", url: "foo://github.com/myOrg/myRepo.git", remote: "foo://github.com/myOrg/myRepo.git"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			src := Source{
+				Git: &SourceGit{
+					URL:    tc.url,
+					Commit: "v1.0.0",
+				},
+			}
+
+			dt, err := io.ReadAll(src.Doc("src"))
+			assert.NilError(t, err)
+
+			expected := "Generated from a git repository:\n" +
+				"	Remote: " + tc.remote + "\n" +
+				"	Ref: v1.0.0\n"
+			assert.Equal(t, string(dt), expected)
+		})
+	}
 }
 
 func getGomodLLBOps(ctx context.Context, t *testing.T, spec Spec) (map[string]*pb.Op, []*pb.Op) {
