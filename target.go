@@ -75,8 +75,10 @@ func (t *Target) validate() error {
 		}
 	}
 
-	if err := t.Image.validate(); err != nil {
-		errs = append(errs, errors.Wrap(err, "postinstall"))
+	if t.Artifacts != nil {
+		if err := t.Artifacts.validate(); err != nil {
+			errs = append(errs, errors.Wrap(err, "artifacts"))
+		}
 	}
 
 	for key, pkg := range t.Packages {

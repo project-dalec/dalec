@@ -621,10 +621,6 @@ func (s Spec) Validate() error {
 		}
 	}
 
-	if err := s.Image.validate(); err != nil {
-		errs = append(errs, errors.Wrap(err, "image"))
-	}
-
 	if err := s.Build.validate(); err != nil {
 		errs = append(errs, errors.Wrap(err, "build"))
 	}
