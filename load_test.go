@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -2365,6 +2366,85 @@ func TestArtifactsValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSpecValidate_TargetArtifacts(t *testing.T) {
+	docCaps := &Artifacts{
+		Docs: map[string]ArtifactConfig{
+			"README.md": {
+				LinuxCapabilities: []ArtifactCapability{
+					{Name: "cap_net_raw", Effective: true},
+				},
+			},
+		},
+	}
+
+	cases := []struct {
+		name      string
+		artifacts *Artifacts
+		expectErr string
+	}{
+		{
+			name: "no target artifacts is valid",
+		},
+		{
+			name: "capabilities on target binaries is valid",
+			artifacts: &Artifacts{
+				Binaries: map[string]ArtifactConfig{
+					"/tmp/mybinary": {
+						LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_raw", Effective: true, Permitted: true},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:      "capabilities on target docs is invalid",
+			artifacts: docCaps,
+			expectErr: "target azlinux3: artifacts: capabilities can only be set on executable files (binaries, libs, libexec, opt); cannot set capabilities on docs 'README.md'",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := Spec{
+				Targets: map[string]Target{
+					"azlinux3": {Artifacts: tc.artifacts},
+				},
+			}
+
+			err := spec.Validate()
+			if tc.expectErr == "" {
+				assert.NilError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tc.expectErr)
+			}
+		})
+	}
+}
+
+func TestSpecValidate_ImageErrorsReportedOnce(t *testing.T) {
+	img := &ImageConfig{
+		Base: "busybox:latest",
+		Bases: []BaseImage{
+			{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "busybox:latest"}}},
+		},
+	}
+
+	spec := Spec{
+		Image: img,
+		Targets: map[string]Target{
+			"azlinux3": {Image: img},
+		},
+	}
+
+	err := spec.Validate()
+	assert.ErrorContains(t, err, "cannot specify both image.base and image.bases")
+
+	// One error for the root image and one for the target image.
+	assert.Check(t, cmp.Equal(strings.Count(err.Error(), "cannot specify both image.base and image.bases"), 2), err.Error())
+	assert.Check(t, !strings.Contains(err.Error(), "postinstall"), err.Error())
 }
 
 func FuzzLoad(f *testing.F) {
