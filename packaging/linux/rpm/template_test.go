@@ -316,6 +316,28 @@ func TestTemplateSources(t *testing.T) {
 		assert.Check(t, strings.Contains(s, "# Exclusions:\n# \tvendor/**\n# \tmalicious: value\n"))
 		assert.Check(t, !strings.Contains(s, "\nmalicious: value\n"))
 	})
+
+	t.Run("scp-style git source", func(t *testing.T) {
+		w := &specWrapper{Spec: &dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"src1": {
+					Git: &dalec.SourceGit{
+						URL:    "git@github.com:myOrg/myRepo.git",
+						Commit: "v1.0.0",
+					},
+				},
+			},
+		}}
+
+		out, err := w.Sources()
+		assert.NilError(t, err)
+
+		expected := "# Generated from a git repository:\n" +
+			"# \tRemote: git@github.com:myOrg/myRepo.git\n" +
+			"# \tRef: v1.0.0\n" +
+			"Source0: src1.tar.gz\n\n"
+		assert.Equal(t, out.String(), expected)
+	})
 }
 
 func TestTemplate_Artifacts(t *testing.T) {
