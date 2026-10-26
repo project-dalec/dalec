@@ -15,6 +15,25 @@ import (
 	"github.com/project-dalec/dalec/frontend"
 )
 
+// Deselect only the incident roots, preserving independent Comodo/emSign anchors.
+// Keep the configuration change so subsequent trust-store regeneration is safe.
+const emudhraCADistrustScript = `set -eu
+sed -i \
+	-e 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' \
+	-e 's|^mozilla/Comodo_AAA_Services_root\.crt$|!mozilla/Comodo_AAA_Services_root.crt|' \
+	/etc/ca-certificates.conf
+update-ca-certificates --fresh
+`
+
+func (cfg *Config) workerCADistrustScript() string {
+	switch cfg.VersionID {
+	case "ubuntu18.04", "ubuntu20.04":
+		return emudhraCADistrustScript
+	default:
+		return ""
+	}
+}
+
 // nativeExecutorPlatform returns the BuildKit worker's native (executor) platform.
 // Do NOT use platforms.DefaultSpec() for this: the frontend image may be running as the
 // TARGET platform (multi-arch frontend), which would make DefaultSpec() lie.
@@ -158,6 +177,13 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 			return *st
 		}
 	}
+
+	worker := cfg.buildWorkerBase(sOpt, buildPlat, opts...)
+	worker = worker.With(cfg.withCADistrust(opts...))
+	return worker
+}
+
+func (cfg *Config) buildWorkerBase(sOpt dalec.SourceOpts, buildPlat ocispecs.Platform, opts ...llb.ConstraintsOpt) llb.State {
 	// Determine target platform (requested) and build platform (native executor).
 	targetPlat := platforms.Normalize(buildPlat)
 	if sOpt.TargetPlatform != nil {
@@ -182,7 +208,7 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 	// Pin the image state to the target platform so the mounted rootfs is actually target-arch.
 	targetBase := frontend.GetBaseImage(targetSOpt, cfg.ImageRef, targetOpts...).Platform(targetPlat)
 
-	// Native build: keep current behavior.
+	// Native build: install directly into the target worker.
 	if samePlatform(targetPlat, buildPlat) {
 		return targetBase.Run(
 			dalec.WithConstraints(append(opts, llb.Platform(targetPlat))...),
@@ -211,6 +237,19 @@ func (cfg *Config) workerWithBuildPlatform(sOpt dalec.SourceOpts, buildPlat ocis
 	)
 
 	return es.GetMount(rootfsMount).Platform(targetPlat)
+}
+
+func (cfg *Config) withCADistrust(opts ...llb.ConstraintsOpt) llb.StateOption {
+	script := cfg.workerCADistrustScript()
+	if script == "" {
+		return dalec.NoopStateOption
+	}
+	return func(in llb.State) llb.State {
+		return in.Run(
+			dalec.ShArgs(script),
+			dalec.WithConstraints(opts...),
+		).Root()
+	}
 }
 
 func (cfg *Config) SysextWorker(sOpts dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
