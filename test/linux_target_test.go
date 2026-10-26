@@ -3920,6 +3920,12 @@ func Value() string {
 		testArtifactCapabilities(ctx, t, testConfig)
 	})
 
+	t.Run("artifact capabilities on target docs", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testTargetArtifactCapabilitiesOnDocs(ctx, t, testConfig)
+	})
+
 	if testConfig.Target.Subpackages != nil {
 		t.Run("subpackages", func(t *testing.T) {
 			t.Parallel()
@@ -6383,6 +6389,47 @@ echo "This is a third test binary"
 		if err != nil {
 			t.Fatal(err)
 		}
+	})
+}
+
+// testTargetArtifactCapabilitiesOnDocs checks that capabilities set on
+// non-executable artifacts under a target are rejected just like they are
+// at the root, rather than being silently dropped by the packaging.
+func testTargetArtifactCapabilitiesOnDocs(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+	spec := &dalec.Spec{
+		Name:        "test-target-artifact-capabilities-on-docs",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Description: "Capabilities on target docs should be rejected",
+		Sources: map[string]dalec.Source{
+			"README.md": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: "hello world\n",
+					},
+				},
+			},
+		},
+		Targets: map[string]dalec.Target{
+			testConfig.Target.Key: {
+				Artifacts: &dalec.Artifacts{
+					Docs: map[string]dalec.ArtifactConfig{
+						"README.md": {
+							LinuxCapabilities: []dalec.ArtifactCapability{
+								{Name: "cap_net_raw", Effective: true, Permitted: true},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
+		_, err := client.Solve(ctx, req)
+		assert.ErrorContains(t, err, "target "+testConfig.Target.Key+": artifacts: capabilities can only be set on executable files")
 	})
 }
 
