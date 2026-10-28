@@ -18,6 +18,7 @@ var (
 		ImageRef:           bionicRef,
 		AptCachePrefix:     BionicAptCachePrefix,
 		VersionID:          bionicVersionID,
+		CacheIdentity:      bionicVersionID,
 		ContextRef:         BionicWorkerContextName,
 		DefaultOutputImage: bionicRef,
 		BuilderPackages:    builderPackages,

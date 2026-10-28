@@ -5,8 +5,9 @@ import (
 )
 
 const (
-	V9TargetKey    = "rockylinux9"
-	dnfCacheNameV9 = "rockylinux9-dnf-cache"
+	V9TargetKey     = "rockylinux9"
+	cacheIdentityV9 = "rockylinux9"
+	dnfCacheNameV9  = "rockylinux9-dnf-cache"
 
 	// v9Ref is the image ref used for the base worker image
 	v9Ref      = "docker.io/library/rockylinux:9"
@@ -19,6 +20,7 @@ var ConfigV9 = &distro.Config{
 	ImageRef:   v9Ref,
 	ContextRef: v9WorkerContextName,
 
+	CacheIdentity:    cacheIdentityV9,
 	CacheName:        dnfCacheNameV9,
 	CacheDir:         []string{"/var/cache/dnf"},
 	CacheAddPlatform: true,
