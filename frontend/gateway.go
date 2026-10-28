@@ -133,6 +133,10 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 		sOpt.BuildArgs = dalec.DuplicateMap(dc.BuildArgs)
 	}
 
+	if cacheNS, ok := GetBuildArg(c, dalec.BuildArgBuildkitCacheMountNS); ok {
+		sOpt.CacheNamespace = cacheNS
+	}
+
 	sOpt.SourceFilter = sync.OnceValues(func() (dalec.SourceFilterConfig, error) {
 		return loadSourceFilterConfig(ctx, c, sOpt.GetContext)
 	})

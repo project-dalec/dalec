@@ -154,6 +154,7 @@ type SourceOpts struct {
 	GetContext       func(string, ...llb.LocalOption) (*llb.State, error)
 	TargetPlatform   *ocispecs.Platform
 	BuildArgs        map[string]string
+	CacheNamespace   string
 	GitCredHelperOpt func() (llb.RunOption, error)
 	SourceFilter     func() (SourceFilterConfig, error)
 	// ExtraEnvs contains environment variables that source generators may use

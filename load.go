@@ -28,6 +28,10 @@ const (
 	// This does not disable BuildKit's solve-level proxy network enforcement.
 	BuildArgDalecDisableProxyConfig = "DALEC_DISABLE_PROXY_CONFIG"
 
+	// BuildArgBuildkitCacheMountNS is the Dockerfile frontend-compatible build
+	// arg used to prefix persistent BuildKit cache mount IDs.
+	BuildArgBuildkitCacheMountNS = "BUILDKIT_CACHE_MOUNT_NS"
+
 	parseModeIgnoreComments = 0
 )
 
@@ -48,6 +52,8 @@ func knownArg(key string) bool {
 	case "DALEC_DISABLE_SYMLINK":
 		return true
 	case BuildArgDalecDisableProxyConfig:
+		return true
+	case BuildArgBuildkitCacheMountNS:
 		return true
 	case "DALEC_SKIP_SIGNING":
 		return true

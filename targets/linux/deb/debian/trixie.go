@@ -18,6 +18,7 @@ var (
 		ImageRef:           trixieRef,
 		AptCachePrefix:     TrixieAptCachePrefix,
 		VersionID:          trixieVersionID,
+		CacheIdentity:      trixieVersionID,
 		ContextRef:         TrixieWorkerContextName,
 		DefaultOutputImage: trixieRef,
 		BuilderPackages:    builderPackages,

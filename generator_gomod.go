@@ -25,6 +25,10 @@ const (
 	BuildArgDalecGomodProxy = "DALEC_GOMOD_PROXY"
 )
 
+func gomodProxyCacheID(namespace string) string {
+	return PersistentCacheID{Namespace: namespace, Type: GomodCacheKey}.String()
+}
+
 func (g *GeneratorGomod) processBuildArgs(args map[string]string, allowArg func(key string) bool) error {
 	var errs []error
 	lex := shell.NewLex('\\')
@@ -68,13 +72,14 @@ func (s *Spec) HasGomods() bool {
 }
 
 type gomodGeneratorOpts struct {
-	sourceName  string
-	gen         *SourceGenerator
-	sourceState llb.State
-	worker      llb.State
-	credHelper  llb.RunOption
-	extraEnvs   map[string]string
-	constraints []llb.ConstraintsOpt
+	sourceName     string
+	gen            *SourceGenerator
+	sourceState    llb.State
+	worker         llb.State
+	credHelper     llb.RunOption
+	extraEnvs      map[string]string
+	cacheNamespace string
+	constraints    []llb.ConstraintsOpt
 }
 
 func (opts gomodGeneratorOpts) gomodProxy() string {
@@ -123,7 +128,7 @@ func withGomod(gomodOpts gomodGeneratorOpts) func(llb.State) llb.State {
 				llb.AddEnv("GIT_SSH_COMMAND", "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"),
 				llb.Dir(filepath.Join(joinedWorkDir, path)),
 				srcMount,
-				llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(GomodCacheKey, llb.CacheMountShared)),
+				llb.AddMount(proxyPath, llb.Scratch(), llb.AsPersistentCacheDir(gomodProxyCacheID(gomodOpts.cacheNamespace), llb.CacheMountShared)),
 				WithConstraints(opts...),
 				g.Gomod._sourceMap.GetLocation(in),
 			}
@@ -269,13 +274,14 @@ func (s *Spec) GomodDeps(sOpt SourceOpts, worker llb.State, opts ...llb.Constrai
 			for _, gen := range src.Generate {
 				if gen.Gomod != nil {
 					in = in.With(withGomod(gomodGeneratorOpts{
-						sourceName:  key,
-						gen:         gen,
-						sourceState: patched[key],
-						worker:      worker,
-						credHelper:  credHelperRunOpt,
-						extraEnvs:   sOpt.ExtraEnvs,
-						constraints: opts,
+						sourceName:     key,
+						gen:            gen,
+						sourceState:    patched[key],
+						worker:         worker,
+						credHelper:     credHelperRunOpt,
+						extraEnvs:      sOpt.ExtraEnvs,
+						cacheNamespace: sOpt.CacheNamespace,
+						constraints:    opts,
 					}))
 				}
 			}

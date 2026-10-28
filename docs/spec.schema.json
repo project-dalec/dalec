@@ -461,7 +461,7 @@
 				"object",
 				"null"
 			],
-			"description": "Currently this only supports setting up a *local* bazel cache."
+			"description": "BazelCache sets up a cache for bazel builds."
 		},
 		"BuildStep": {
 			"required": [
@@ -592,7 +592,7 @@
 					"type": [
 						"boolean"
 					],
-					"description": "NoAutoNamespace disables the automatic prefixing of the cache key with the\ntarget specific information such as distro and CPU architecture, which may\nbe auto-injected to prevent common issues that would cause an invalid cache."
+					"description": "NoAutoNamespace disables the automatic prefixing of the cache key with the\nbuild environment identity and CPU architecture, which may be auto-injected\nto prevent common issues that would cause an invalid cache.\nIt does not disable the global BUILDKIT_CACHE_MOUNT_NS prefix."
 				},
 				"sharing": {
 					"enum": [
