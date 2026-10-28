@@ -44,9 +44,9 @@ func (pc *PackageConstraints) UnmarshalYAML(ctx context.Context, node ast.Node) 
 	var i internal
 
 	if node.Type() != ast.NullType {
-		// Decode via getDecoder so the document's anchor definitions (carried as
-		// reference readers) are available; this lets an alias used as a
-		// package's value resolve against a top-level anchor.
+		// Decode via getDecoder so the document's anchor definitions are
+		// available; this lets an alias used as a package's value resolve
+		// against a top-level anchor.
 		dec := getDecoder(ctx)
 		if err := dec.DecodeFromNodeContext(ctx, node, &i); err != nil {
 			return errors.Wrap(err, "unmarshal package constraints")

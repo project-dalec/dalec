@@ -227,7 +227,10 @@ dependencies:
 		// The value is an alias to an anchor declared above the `somepkg` key, so the
 		// entry's source map precedes its key. It must stay at the anchor rather than
 		// being pulled down to the key line.
-		assert.Equal(t, int(pc._sourceMap.pos.Start.Line), lineOf(doc, "x-c: &c"))
+		// The mapping starts at its first value in the original document.
+		// Reparsing a reference reader used to drop blank lines and shift this
+		// location up to the anchor's line.
+		assert.Equal(t, int(pc._sourceMap.pos.Start.Line), lineOf(doc, `version: [">= 1.0"]`))
 		assert.Assert(t, int(pc._sourceMap.pos.Start.Line) != lineOf(doc, "somepkg: *c"))
 	})
 }
