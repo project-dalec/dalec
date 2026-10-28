@@ -17,7 +17,6 @@ DALEC includes a number of built-in targets that you can either use in your spec
 - `azlinux4` - Azure Linux 4
 - `bookworm` - Debian 12 (Bookworm) (v0.11)
 - `trixie` - Debian 13 (Trixie) (v0.next)
-- `bionic` - Ubuntu 18.04 (Bionic) (v0.11)
 - `focal` - Ubuntu 20.04 (focal) (v0.11)
 - `jammy` - Ubuntu 22.04 (jammy) (v0.9)
 - `noble` - Ubuntu 24.04 (noble) (v0.11)

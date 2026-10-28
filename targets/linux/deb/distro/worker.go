@@ -27,7 +27,7 @@ update-ca-certificates --fresh
 
 func (cfg *Config) workerCADistrustScript() string {
 	switch cfg.VersionID {
-	case "ubuntu18.04", "ubuntu20.04":
+	case "ubuntu20.04":
 		return emudhraCADistrustScript
 	default:
 		return ""

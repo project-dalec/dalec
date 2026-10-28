@@ -207,21 +207,6 @@ func TestFocal(t *testing.T) {
 	testWorkerCADistrust(t, testConf.Target)
 }
 
-func TestBionic(t *testing.T) {
-	t.Parallel()
-
-	ctx := startTestSpan(baseCtx, t)
-	testConf := debLinuxTestConfigFor(ubuntu.BionicDefaultTargetKey, ubuntu.BionicConfig,
-		withPackageOverride("golang", "golang-1.18"),
-		withPackageOverride("rust", "rust-all"),
-		withPackageOverride("bazel", noPackageAvailable),
-	)
-
-	testLinuxDistro(ctx, t, testConf)
-	testUbuntuBaseDependencies(t, testConf.Target)
-	testWorkerCADistrust(t, testConf.Target)
-}
-
 func testUbuntuBaseDependencies(t *testing.T, target targetConfig) {
 	t.Run("base deps", func(t *testing.T) {
 		t.Parallel()
