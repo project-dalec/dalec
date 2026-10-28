@@ -25,7 +25,6 @@ func init() {
 	registerDebRoutes(debian.TrixieDefaultTargetKey, debian.TrixieConfig)
 	registerDebRoutes(debian.BookwormDefaultTargetKey, debian.BookwormConfig)
 
-	registerDebRoutes(ubuntu.BionicDefaultTargetKey, ubuntu.BionicConfig)
 	registerDebRoutes(ubuntu.FocalDefaultTargetKey, ubuntu.FocalConfig)
 	registerDebRoutes(ubuntu.JammyDefaultTargetKey, ubuntu.JammyConfig)
 	registerDebRoutes(ubuntu.NobleDefaultTargetKey, ubuntu.NobleConfig)

@@ -721,7 +721,7 @@ rm -f /var/lib/dpkg/info/*.prerm \
       /var/lib/dpkg/info/*.postinst 2>/dev/null || true
 
 # --force-remove-protected was added in dpkg 1.20.6; older releases (e.g.
-# Debian buster, Ubuntu 18.04) don't recognize it and will error out.
+# Debian buster, Ubuntu 20.04) don't recognize it and will error out.
 force_remove_protected=""
 if dpkg --force-help 2>/dev/null | grep -qw remove-protected; then
     force_remove_protected="--force-remove-protected"
@@ -795,8 +795,8 @@ if [ -f "${keep_set_file}" ]; then
         [ -z "${pkg}" ] && continue
         # Use --admindir rather than --root for the query. dpkg-query's
         # --root option is comparatively recent and is unsupported on
-        # older dpkg (e.g. the dpkg-query shipped with Ubuntu 18.04 /
-        # Bionic, 1.19.x), where passing --root makes dpkg-query exit
+        # older dpkg (e.g. the dpkg-query 1.19.x shipped with Ubuntu 20.04 /
+        # Focal), where passing --root makes dpkg-query exit
         # non-zero and the '|| echo missing' fallback fires — a false
         # negative that fails the build even though the package is fine.
         # --admindir=<root>/var/lib/dpkg has been supported for far
