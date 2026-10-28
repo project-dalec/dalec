@@ -7,7 +7,7 @@ import (
 
 const (
 	AzLinux3TargetKey     = "azlinux3"
-	azlinux3CacheIdentity = "azlinux3.0"
+	azlinux3CacheIdentity = AzLinux3TargetKey
 	tdnfCacheNameAzlinux3 = "azlinux3-tdnf-cache"
 
 	// Azlinux3Ref is the image ref used for the base worker image

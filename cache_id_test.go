@@ -7,7 +7,6 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec/internal/test"
-	internaltest "github.com/project-dalec/dalec/internal/test"
 )
 
 func TestPersistentCacheIDString(t *testing.T) {
@@ -94,7 +93,7 @@ func TestCacheDirAutoNamespaceIncludesGenericCacheType(t *testing.T) {
 		(&CacheDir{Dest: "/tmp/cache", Key: "dalec-gobuildcache"}).ToRunOption("azlinux3.0"),
 	).Root()
 
-	for _, op := range internaltest.LLBOpsFromState(t.Context(), t, st) {
+	for _, op := range test.LLBOpsFromState(t.Context(), t, st) {
 		exec := op.Op.GetExec()
 		if exec == nil {
 			continue

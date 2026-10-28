@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	DefaultTargetKey              = "windowscross"
-	outputKey                     = "windows"
-	workerImgRef                  = "docker.io/library/ubuntu:jammy"
-	windowsCacheIdentity          = ubuntu.JammyVersionID + "-mingw-w64"
+	DefaultTargetKey = "windowscross"
+	outputKey        = "windows"
+	workerImgRef     = "docker.io/library/ubuntu:jammy"
+	// Preserve the pre-namespacing cache identity for the standard target.
+	windowsCacheIdentity          = ubuntu.JammyVersionID + "/" + DefaultTargetKey
 	WindowscrossWorkerContextName = "dalec-windowscross-worker"
 )
 

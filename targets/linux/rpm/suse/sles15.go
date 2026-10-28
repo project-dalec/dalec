@@ -8,7 +8,7 @@ import (
 const (
 	// SLES15TargetKey is the target name recipes use, e.g. "sles15/rpm".
 	SLES15TargetKey     = "sles15"
-	sles15CacheIdentity = "sles15.7"
+	sles15CacheIdentity = SLES15TargetKey
 	zypperCacheSLES15   = "sles15-zypper-cache"
 
 	// sles15Ref is the image ref used for the base worker image. Pin to 15.7:
