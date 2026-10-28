@@ -371,13 +371,40 @@ func decodeOpts(ctx context.Context) []yaml.DecodeOption {
 	return v.([]yaml.DecodeOption)
 }
 
-func getDecoder(ctx context.Context) *yaml.Decoder {
-	opts := decodeOpts(ctx)
-	base := getBaseDoc(ctx)
-	if base != nil {
-		opts = append(opts, yaml.ReferenceReaders(base))
+// nodeDecoder owns a fresh decoder for each custom unmarshaler. Only its anchor
+// initialization is reused when that unmarshaler needs more than one pass.
+type nodeDecoder struct {
+	decoder     *yaml.Decoder
+	base        ast.Node
+	initialized bool
+	initErr     error
+}
+
+func getDecoder(ctx context.Context) *nodeDecoder {
+	return &nodeDecoder{
+		decoder: yaml.NewDecoder(bytes.NewBuffer(nil), decodeOpts(ctx)...),
+		base:    getBaseDoc(ctx),
 	}
-	return yaml.NewDecoder(bytes.NewBuffer(nil), opts...)
+}
+
+func (d *nodeDecoder) DecodeFromNodeContext(ctx context.Context, node ast.Node, dst interface{}) error {
+	if !d.initialized {
+		d.initialized = true
+		if d.base != nil {
+			// Decoding into an AST node populates the decoder's anchors without
+			// invoking Dalec's typed unmarshallers or serializing and reparsing
+			// the document. Use a clean context so this walk cannot modify the
+			// caller's active alias-recursion tracking.
+			var base ast.Node
+			d.initErr = d.decoder.DecodeFromNodeContext(context.Background(), d.base, &base)
+		}
+	}
+
+	if d.initErr != nil {
+		return d.initErr
+	}
+
+	return d.decoder.DecodeFromNodeContext(ctx, node, dst)
 }
 
 // UnmarshalYAML implements the [yaml.NodeUnmarshaler] interface to provide custom unmarshalling.
