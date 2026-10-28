@@ -17,6 +17,11 @@ type Config struct {
 	ImageRef   string
 	ContextRef string
 
+	// CacheIdentity identifies the build environment for user build-cache
+	// namespacing. This is separate from CacheName, which is used for package
+	// manager metadata caches.
+	CacheIdentity string
+
 	// The release version of the distro
 	ReleaseVer string
 
@@ -62,9 +67,30 @@ type Config struct {
 	RPMMacros []rpm.SpecMacro
 }
 
+func (cfg *Config) BuildCacheIdentity() string {
+	return cfg.CacheIdentity
+}
+
+func (cfg *Config) SetBuildCacheIdentity(identity string) {
+	cfg.CacheIdentity = identity
+}
+
+func (cfg *Config) packageCacheID(platform, dir string) string {
+	key := ""
+	if len(cfg.CacheDir) > 1 {
+		key = filepath.Base(dir)
+	}
+
+	return dalec.PersistentCacheID{
+		Environment: cfg.CacheName,
+		Platform:    platform,
+		Key:         key,
+	}.String()
+}
+
 func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
-		cacheKey := cfg.CacheName
+		var platform string
 		if cfg.CacheAddPlatform {
 			p := ei.Constraints.Platform
 			if p == nil {
@@ -74,7 +100,7 @@ func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
 				dp := platforms.DefaultSpec()
 				p = &dp
 			}
-			cacheKey += "-" + platforms.Format(*p)
+			platform = dalec.FormatCacheIDPlatform(*p)
 		}
 
 		if len(cfg.CacheDir) == 0 {
@@ -86,14 +112,10 @@ func (cfg *Config) PackageCacheMount(root string) llb.RunOption {
 			if d == "" {
 				continue
 			}
-			k := cacheKey
-			if len(cfg.CacheDir) > 1 {
-				k = cacheKey + "-" + filepath.Base(d)
-			}
 			llb.AddMount(
 				joinUnderRoot(root, d),
 				llb.Scratch(),
-				llb.AsPersistentCacheDir(k, llb.CacheMountLocked),
+				llb.AsPersistentCacheDir(cfg.packageCacheID(platform, d), llb.CacheMountLocked),
 			).SetRunOption(ei)
 		}
 

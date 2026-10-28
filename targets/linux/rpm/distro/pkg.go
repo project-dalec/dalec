@@ -63,10 +63,13 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dale
 	specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
 
 	builder := worker.With(dalec.SetBuildNetworkMode(spec))
-	cacheInfo := rpm.CacheInfo{TargetKey: targetKey, Caches: spec.Build.Caches}
+	cacheInfo := rpm.CacheInfo{CacheIdentity: c.BuildCacheIdentity(), Caches: spec.Build.Caches}
 
 	if needsAutoGocache(spec, targetKey) {
 		addGoCache(&cacheInfo)
+	}
+	if len(cacheInfo.Caches) > 0 && cacheInfo.CacheIdentity == "" {
+		return dalec.ErrorState(builder, fmt.Errorf("rpm distro cache identity is not set"))
 	}
 
 	buildOpts := append(opts, spec.Build.Steps.GetSourceLocation(builder), frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))
