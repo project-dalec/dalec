@@ -203,6 +203,7 @@ func TestFocal(t *testing.T) {
 
 	testLinuxDistro(ctx, t, testConf)
 	testUbuntuBaseDependencies(t, testConf.Target)
+	testWorkerCADistrust(t, testConf.Target)
 }
 
 func TestBionic(t *testing.T) {
@@ -217,6 +218,7 @@ func TestBionic(t *testing.T) {
 
 	testLinuxDistro(ctx, t, testConf)
 	testUbuntuBaseDependencies(t, testConf.Target)
+	testWorkerCADistrust(t, testConf.Target)
 }
 
 func testUbuntuBaseDependencies(t *testing.T, target targetConfig) {
