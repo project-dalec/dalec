@@ -385,15 +385,25 @@ global_excludes:
   - "vendor/**/examples/**"
 ```
 
-Pass the config path with `DALEC_SOURCE_FILTER_CONFIG_PATH`. The file is read
-from the `dalec-source-options` build context unless
-`DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME` names a different build context.
+The filter config is read from `source-filter.yml` in the `dalec-source-options`
+build context. Builds that do not provide that context are not filtered; builds
+that do provide it must have the config in it.
 
 Example with Docker Buildx:
 
 ```console
 $ docker buildx build \
-  --build-arg DALEC_SOURCE_FILTER_CONFIG_PATH=source-filter.yml \
+  --build-context dalec-source-options=./ci/dalec \
+  ...
+```
+
+Both defaults can be overridden: `DALEC_SOURCE_FILTER_CONFIG_PATH` sets the path
+the config is read from and `DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME` sets the
+build context it is read from.
+
+```console
+$ docker buildx build \
+  --build-arg DALEC_SOURCE_FILTER_CONFIG_PATH=no-fixtures.yml \
   --build-context dalec-source-options=./ci/dalec \
   ...
 ```

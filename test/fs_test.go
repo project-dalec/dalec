@@ -331,6 +331,45 @@ func TestStateWrapper_ReadPartial(t *testing.T) {
 	})
 }
 
+func TestStateWrapper_ReadFile(t *testing.T) {
+	t.Parallel()
+	ctx := startTestSpan(baseCtx, t)
+
+	contents := []byte("hello world")
+	st := llb.Scratch().File(llb.Mkfile("/foo", 0644, contents))
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+		rfs, err := bkfs.FromState(ctx, &st, gwc)
+		assert.NilError(t, err)
+
+		t.Run("reads the file", func(t *testing.T) {
+			dt, err := fs.ReadFile(rfs, "foo")
+			assert.NilError(t, err)
+			assert.DeepEqual(t, dt, contents)
+		})
+
+		t.Run("a leading slash is rejected", func(t *testing.T) {
+			_, err := fs.ReadFile(rfs, "/foo")
+			assert.Assert(t, err != nil)
+			assert.Assert(t, errors.Is(err, fs.ErrInvalid))
+
+			var pe *fs.PathError
+			assert.Assert(t, errors.As(err, &pe))
+			assert.Equal(t, pe.Path, "/foo")
+			assert.Equal(t, pe.Op, "readfile")
+		})
+
+		t.Run("a missing file is reported as not existing", func(t *testing.T) {
+			_, err := fs.ReadFile(rfs, "no-such-file")
+			assert.Assert(t, errors.Is(err, fs.ErrNotExist), "got %v", err)
+
+			var pe *fs.PathError
+			assert.Assert(t, errors.As(err, &pe))
+			assert.Equal(t, pe.Path, "no-such-file")
+		})
+	})
+}
+
 func TestStateWrapper_ReadAll(t *testing.T) {
 	t.Parallel()
 	ctx := startTestSpan(baseCtx, t)
