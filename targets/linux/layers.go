@@ -2,6 +2,7 @@ package linux
 
 import (
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/moby/buildkit/client/llb"
@@ -71,6 +72,13 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 		return nil, errors.Wrap(err, "building container root filesystem")
 	}
 
+	// The split steps always run instead of being loaded from the cache.
+	// BuildKit keys execs with read-only mounts by a content checksum that
+	// ignores modification times, which could reuse a split of an earlier
+	// install whose generated files differ from this one. The steps are fast
+	// and deterministic, so unchanged packages still produce identical layers.
+	splitOpts := append(slices.Clone(opts), llb.IgnoreCache)
+
 	withFrontend := llb.AddMount(layerSplitFrontendPath, frontendSt, llb.SourcePath("/frontend"), llb.Readonly)
 	withRoot := llb.AddMount(layerSplitRootPath, rootfs, llb.Readonly)
 
@@ -86,7 +94,7 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 		withRoot,
 		llb.AddMount(layerSplitPkgsPath, pkgs, llb.Readonly),
 		llb.WithCustomName("Plan per-package image layers"),
-		dalec.WithConstraints(opts...),
+		dalec.WithConstraints(splitOpts...),
 	).AddMount(layerSplitOutPath, llb.Scratch())
 
 	def, err := planSt.Marshal(ctx, dalec.WithConstraints(opts...))
@@ -132,7 +140,7 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 		withRoot,
 		llb.AddMount(layerSplitPlanPath, planSt, llb.Readonly),
 		llb.WithCustomName("Copy files into per-package image layers"),
-		dalec.WithConstraints(opts...),
+		dalec.WithConstraints(splitOpts...),
 	)
 
 	// Each output mount becomes one layer. Unchanged packages produce
@@ -163,7 +171,7 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 		withRoot,
 		llb.AddMount(layerSplitActualPath, merged, llb.Readonly),
 		llb.WithCustomName("Verify per-package image layers match the installed root filesystem"),
-		dalec.WithConstraints(opts...),
+		dalec.WithConstraints(splitOpts...),
 	).Root()
 
 	return &splitLayersResult{State: merged, Verify: verify, Groups: plan.Groups}, nil
