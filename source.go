@@ -156,6 +156,7 @@ type SourceOpts struct {
 	BuildArgs        map[string]string
 	GitCredHelperOpt func() (llb.RunOption, error)
 	SourceFilter     func() (SourceFilterConfig, error)
+	Glob             func(llb.State, string) ([]string, error)
 	// ExtraEnvs contains environment variables that source generators may use
 	// while preparing generated dependency sources.
 	ExtraEnvs map[string]string
