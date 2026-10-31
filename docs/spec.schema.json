@@ -1143,6 +1143,17 @@
 					],
 					"description": "Drop removes module requirements from go.mod via go mod edit -droprequire.\nEach entry is a module path to remove. This handles cases where a sub-module\nhas been absorbed into its parent module in a newer version\n(e.g. google.golang.org/grpc/stats/opentelemetry merged into grpc at v1.79.0)."
 				},
+				"godebug": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Godebug sets godebug directives in go.mod via go mod edit -godebug.\nEach entry is a \"key=value\" pair (e.g. \"tlsmlkem=0\") which changes the\ndefault GODEBUG setting of binaries built from the module.\nThis requires Go 1.23 or newer to generate the edits."
+				},
 				"replace": {
 					"items": {
 						"$ref": "#/$defs/GomodReplace"
