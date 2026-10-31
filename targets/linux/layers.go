@@ -4,9 +4,13 @@ import (
 	"context"
 	"slices"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/project-dalec/dalec"
@@ -44,6 +48,107 @@ func imageLayersMode(client gwclient.Client, spec *dalec.Spec, targetKey string)
 		return "", errors.Wrap(err, dalec.BuildArgDalecImageLayers)
 	}
 	return mode, nil
+}
+
+// imageUpdater is implemented by distros which can update the packages of an
+// existing container image instead of installing every package again.
+type imageUpdater interface {
+	UpdateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, prev llb.State, specPkgs *llb.State, pkgs []string, opts ...llb.ConstraintsOpt) (llb.State, error)
+}
+
+// previousImage is a previously built image passed in the
+// [dalec.PreviousImageContext] build context.
+type previousImage struct {
+	State llb.State
+	// Config is nil when the context does not carry an image config.
+	Config *dockerspec.DockerOCIImage
+}
+
+func getPreviousImage(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform) (*previousImage, error) {
+	dc, err := dockerui.NewClient(client)
+	if err != nil {
+		return nil, err
+	}
+	nc, err := dc.NamedContext(dalec.PreviousImageContext, dockerui.ContextOpt{
+		ResolveMode: dc.ImageResolveMode.String(),
+		Platform:    platform,
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "resolving %s build context", dalec.PreviousImageContext)
+	}
+	if nc == nil {
+		return nil, nil
+	}
+	st, img, err := nc.Load(ctx)
+	if err != nil {
+		return nil, errors.Wrapf(err, "loading %s build context", dalec.PreviousImageContext)
+	}
+	if st == nil {
+		return nil, nil
+	}
+	return &previousImage{State: *st, Config: img}, nil
+}
+
+// appPackages returns the spec package names recorded in the layer history of
+// a per-package image.
+func (p *previousImage) appPackages() []string {
+	if p.Config == nil {
+		return nil
+	}
+	var out []string
+	for _, h := range p.Config.History {
+		if g, ok := layersplit.ParseHistoryComment(h.Comment); ok && g.Kind == layersplit.KindApp {
+			out = append(out, g.Packages...)
+		}
+	}
+	return out
+}
+
+// updatePackages returns the packages listed in the DALEC_UPDATE_PACKAGES build arg.
+func updatePackages(client gwclient.Client) []string {
+	v, _ := frontend.GetBuildArg(client, dalec.BuildArgDalecUpdatePackages)
+	return strings.FieldsFunc(v, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+}
+
+// updateContainer builds the container root filesystem by upgrading the
+// packages of a previous image. It returns the new root filesystem and the
+// state to read spec package names from when splitting layers.
+func updateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, c DistroConfig, spec *dalec.Spec, targetKey string, prev *previousImage, prebuilt *llb.State, opts ...llb.ConstraintsOpt) (rootfs, specPkgs llb.State, _ error) {
+	updater, ok := c.(imageUpdater)
+	if !ok {
+		return llb.State{}, llb.State{}, errors.Errorf("updating an existing image is not supported for target %s", targetKey)
+	}
+	bi, err := spec.GetSingleBase(targetKey)
+	if err != nil {
+		return llb.State{}, llb.State{}, err
+	}
+	if bi != nil {
+		return llb.State{}, llb.State{}, errors.Errorf("updating an existing image is not supported with a custom base image")
+	}
+
+	if prev.Config != nil && prev.Config.Config.Labels[layersplit.LabelImageLayers] != dalec.ImageLayersPerPackage {
+		frontend.Warn(ctx, client, prev.State, "the "+dalec.PreviousImageContext+" image was not built with per-package layers, so its layers cannot be reused")
+	}
+
+	if prebuilt != nil {
+		specPkgs = *prebuilt
+	} else {
+		names := prev.appPackages()
+		if len(names) == 0 {
+			return llb.State{}, llb.State{}, errors.Errorf("cannot tell which packages in the %s image belong to the spec: pass the spec packages with --build-context %s=<path or image>",
+				dalec.PreviousImageContext, targetKey+dalec.PreBuiltPkgSuffix)
+		}
+		specPkgs = llb.Scratch().File(
+			llb.Mkfile(layersplit.AppPackagesFile, 0o644, []byte(strings.Join(names, "\n")+"\n")),
+			dalec.WithConstraints(opts...),
+		)
+	}
+
+	rootfs, err = updater.UpdateContainer(ctx, client, sOpt, spec, targetKey, prev.State, prebuilt, updatePackages(client), opts...)
+	if err != nil {
+		return llb.State{}, llb.State{}, err
+	}
+	return rootfs, specPkgs, nil
 }
 
 // splitLayersResult is the output of [splitLayers].

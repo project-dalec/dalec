@@ -6,10 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/internal/layersplit"
+	"github.com/project-dalec/dalec/internal/test"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
 )
@@ -121,6 +123,73 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 				res := solveT(ctx, t, gwc, sr)
 				checkGroups(t, &spec, layerGroups(t, res))
 			}
+		})
+	})
+
+	t.Run("update previous image", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := newSpec(t)
+		spec.Image = &dalec.ImageConfig{Layers: dalec.ImageLayersPerPackage}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			pkgRes := solveT(ctx, t, gwc, newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(testConfig.Target.Package)))
+			pkgSt := resultToState(t, pkgRes)
+
+			prevRes := solveT(ctx, t, gwc, newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target), withBuildContext(ctx, t, dalec.GenericPkg, pkgSt)))
+			prevSt := resultToState(t, prevRes)
+
+			res := solveT(ctx, t, gwc, newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+				withBuildContext(ctx, t, dalec.PreviousImageContext, prevSt),
+				withBuildContext(ctx, t, dalec.GenericPkg, pkgSt),
+			))
+			checkGroups(t, &spec, layerGroups(t, res))
+
+			var upgraded bool
+			for _, op := range test.LLBOpsFromState(ctx, t, resultToState(t, res)) {
+				if op.OpMetadata.ProgressGroup.GetName() == "Update packages" {
+					upgraded = true
+				}
+			}
+			assert.Check(t, upgraded, "expected packages to be upgraded in the previous image")
+		})
+	})
+
+	t.Run("previous image requires per-package layers", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := newSpec(t)
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+				withBuildContext(ctx, t, dalec.PreviousImageContext, llb.Scratch()),
+			)
+			_, err := gwc.Solve(ctx, sr)
+			assert.ErrorContains(t, err, "requires per-package image layers")
+		})
+	})
+
+	t.Run("previous image without spec package information", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		spec := newSpec(t)
+		spec.Image = &dalec.ImageConfig{Layers: dalec.ImageLayersPerPackage}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			sr := newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+				withBuildContext(ctx, t, dalec.PreviousImageContext, llb.Scratch()),
+			)
+			_, err := gwc.Solve(ctx, sr)
+			assert.ErrorContains(t, err, "cannot tell which packages")
 		})
 	})
 

@@ -92,6 +92,7 @@ var Azlinux4Config = &distro.Config{
 	BasePackages:       azlinux4BasePackages(),
 	RepoPlatformConfig: &defaultAzlinuxRepoPlatform,
 	InstallFunc:        distro.DnfInstall,
+	UpgradeFunc:        distro.DnfUpgrade,
 
 	SysextSupported: true,
 	FullName:        AzLinux4FullName,

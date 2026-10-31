@@ -170,6 +170,9 @@ Set `--build-arg DALEC_REQUIRE_PREBUILT_PKG=1` to make the build fail when no
 prebuilt package is provided, instead of silently building the package from
 source.
 
+To update the packages of an image you already built instead of installing
+them all again, see [Updating an existing image](image.md#updating-an-existing-image).
+
 ### Target Defined Artifacts
 
 There are some situations where you may want to have multiple builds and for those different

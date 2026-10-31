@@ -119,12 +119,29 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 
 			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
 
-			// Pre-built package wasn't found so we need to build it.
+			layersMode, err := imageLayersMode(client, spec, targetKey)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			prev, err := getPreviousImage(ctx, client, platform)
+			if err != nil {
+				return nil, nil, err
+			}
+			if prev != nil && layersMode != dalec.ImageLayersPerPackage {
+				return nil, nil, errors.Errorf("the %s build context requires per-package image layers: set image.layers to %s or pass --build-arg %s=%s",
+					dalec.PreviousImageContext, dalec.ImageLayersPerPackage, dalec.BuildArgDalecImageLayers, dalec.ImageLayersPerPackage)
+			}
+
+			// Pre-built package wasn't found so we need to build it, unless an
+			// existing image is being updated: then its spec packages are kept.
 			if !foundPrebuiltPkg {
 				if err := checkPrebuiltPkgRequired(client, targetKey); err != nil {
 					return nil, nil, err
 				}
-				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
+				if prev == nil {
+					pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
+				}
 			}
 
 			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey, imageOpts...)
@@ -132,17 +149,25 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
-			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
-
-			layersMode, err := imageLayersMode(client, spec, targetKey)
-			if err != nil {
-				return nil, nil, err
+			var ctr llb.State
+			splitPkgs := pkgSt
+			if prev != nil {
+				var prebuilt *llb.State
+				if foundPrebuiltPkg {
+					prebuilt = &pkgSt
+				}
+				ctr, splitPkgs, err = updateContainer(ctx, client, sOpt, c, spec, targetKey, prev, prebuilt, opts...)
+				if err != nil {
+					return nil, nil, err
+				}
+			} else {
+				ctr = c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
 			}
+			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
 
 			final := ctr.With(runTests)
 			if layersMode == dalec.ImageLayersPerPackage {
-				split, err := maybeSplitLayers(ctx, client, sOpt, c, spec, targetKey, ctr, pkgSt, opts...)
+				split, err := maybeSplitLayers(ctx, client, sOpt, c, spec, targetKey, ctr, splitPkgs, opts...)
 				if err != nil {
 					return nil, nil, err
 				}

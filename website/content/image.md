@@ -98,6 +98,36 @@ Every build checks that the layers together contain exactly the same files,
 with the same contents, permissions, ownership and extended attributes, as the
 installed root filesystem, and fails if they don't.
 
+#### Updating an existing image
+
+To pick up package updates (for example a security fix in `openssl`) without
+installing every package again, pass the image you already built as the
+`dalec-previous-image` build context:
+
+```shell
+docker buildx build -f spec.yml --target azlinux3/container \
+  --build-context dalec-previous-image=docker-image://registry/myimage:1.0 \
+  --no-cache-filter dalec.container \
+  -t registry/myimage:1.0-1 --push .
+```
+
+Dalec then upgrades the packages installed in that image instead of starting
+from scratch:
+
+- Only packages with an available update (and any new dependencies they need)
+  are downloaded and installed. Set `--build-arg DALEC_UPDATE_PACKAGES=openssl,openssl-libs`
+  to limit the upgrade to specific packages.
+- Your spec's packages are not built or reinstalled; they are kept as they are in
+  the previous image. To ship a new version of them at the same time, pass them as a
+  [prebuilt package](targets.md#prebuilt-packages) build context.
+- The result is split into layers as usual, so every package that did not
+  change produces the same layer as before and is not uploaded or downloaded
+  again. Only the updated packages' layers and the final layer change.
+
+This requires `layers: per-package`, and the previous image should have been
+built with per-package layers too. It is supported for the Azure Linux,
+AlmaLinux and Rocky Linux targets.
+
 {{< callout type="info" >}}
 Per-package layers are experimental. They are currently supported for RPM-based
 targets without a custom base image (`image.bases`). Other targets produce a
