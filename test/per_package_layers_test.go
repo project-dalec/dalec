@@ -56,6 +56,9 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 		assert.Check(t, foundBash, "missing bash layer in %v", groups)
 	}
 
+	// A previous image context without an image config or package information.
+	notAnImage := llb.Scratch().File(llb.Mkfile("/marker", 0o644, []byte("not an image\n")))
+
 	newSpec := func(t *testing.T) dalec.Spec {
 		spec := testLinuxSpec(t, dalec.Spec{})
 		spec.Artifacts = dalec.Artifacts{
@@ -168,7 +171,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 			sr := newSolveRequest(
 				withSpec(ctx, t, &spec),
 				withBuildTarget(target),
-				withBuildContext(ctx, t, dalec.PreviousImageContext, llb.Scratch()),
+				withBuildContext(ctx, t, dalec.PreviousImageContext, notAnImage),
 			)
 			_, err := gwc.Solve(ctx, sr)
 			assert.ErrorContains(t, err, "requires per-package image layers")
@@ -186,7 +189,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 			sr := newSolveRequest(
 				withSpec(ctx, t, &spec),
 				withBuildTarget(target),
-				withBuildContext(ctx, t, dalec.PreviousImageContext, llb.Scratch()),
+				withBuildContext(ctx, t, dalec.PreviousImageContext, notAnImage),
 			)
 			_, err := gwc.Solve(ctx, sr)
 			assert.ErrorContains(t, err, "cannot tell which packages")
