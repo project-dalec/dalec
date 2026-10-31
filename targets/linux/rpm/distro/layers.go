@@ -3,6 +3,7 @@ package distro
 import (
 	"context"
 	"path/filepath"
+	"slices"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -47,10 +48,12 @@ done
 // the updated packages (and any new dependencies they need) are downloaded.
 //
 // pkgs limits the upgrade to the named packages; when empty, every package
-// with an available update is upgraded. When specPkgs is set (a state with the
-// /RPMS/<arch>/*.rpm layout), those spec packages are installed or upgraded
-// too; otherwise the spec packages in prev are kept as they are.
-func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, prev llb.State, specPkgs *llb.State, pkgs []string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+// with an available update is upgraded. The packages in keep (the spec's own
+// packages) are never upgraded from the package repositories. When specPkgs
+// is set (a state with the /RPMS/<arch>/*.rpm layout), those spec packages are
+// installed or upgraded from it; otherwise the spec packages in prev are kept
+// as they are.
+func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, prev llb.State, specPkgs *llb.State, pkgs, keep []string, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	if cfg.UpgradeFunc == nil {
 		return llb.State{}, errors.Errorf("updating an existing image is not supported for target %s", targetKey)
 	}
@@ -74,12 +77,31 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 
 	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
-	rootfs := worker.Run(
-		dalec.WithConstraints(opts...),
-		cfg.Upgrade(pkgs, installOpts...),
-		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
-		llb.WithCustomName("Upgrade packages in the existing image"),
-	).AddMount(workPath, prev)
+	// Spec packages are only changed through specPkgs, never from the
+	// package repositories, even when the same package is published there.
+	kept := make(map[string]bool, len(keep))
+	for _, k := range keep {
+		kept[k] = true
+	}
+	var upgrade []string
+	for _, p := range pkgs {
+		if !kept[p] {
+			upgrade = append(upgrade, p)
+		}
+	}
+
+	rootfs := prev
+	// Skip the upgrade when packages were requested but they are all spec
+	// packages: there is nothing to upgrade from the repositories.
+	if len(pkgs) == 0 || len(upgrade) > 0 {
+		upgradeOpts := append(slices.Clone(installOpts), DnfExclude(keep...))
+		rootfs = worker.Run(
+			dalec.WithConstraints(opts...),
+			cfg.Upgrade(upgrade, upgradeOpts...),
+			frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
+			llb.WithCustomName("Upgrade packages in the existing image"),
+		).AddMount(workPath, prev)
+	}
 
 	if specPkgs != nil {
 		rootfs = worker.Run(

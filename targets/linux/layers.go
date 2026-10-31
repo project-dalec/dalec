@@ -53,7 +53,7 @@ func imageLayersMode(client gwclient.Client, spec *dalec.Spec, targetKey string)
 // imageUpdater is implemented by distros which can update the packages of an
 // existing container image instead of installing every package again.
 type imageUpdater interface {
-	UpdateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, prev llb.State, specPkgs *llb.State, pkgs []string, opts ...llb.ConstraintsOpt) (llb.State, error)
+	UpdateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, prev llb.State, specPkgs *llb.State, pkgs, keep []string, opts ...llb.ConstraintsOpt) (llb.State, error)
 }
 
 // previousImage is a previously built image passed in the
@@ -104,6 +104,25 @@ func (p *previousImage) appPackages() []string {
 	return out
 }
 
+// specPackageNames returns the names of the packages built from the spec for
+// the target (the primary package and its supplemental packages), plus any
+// extra names, sorted and without duplicates.
+func specPackageNames(spec *dalec.Spec, targetKey string, extra []string) []string {
+	names := map[string]bool{spec.Name: true}
+	for key, pkg := range spec.Targets[targetKey].Packages {
+		names[pkg.ResolvedName(spec.Name, key)] = true
+	}
+	for _, n := range extra {
+		names[n] = true
+	}
+	out := make([]string, 0, len(names))
+	for n := range names {
+		out = append(out, n)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // updatePackages returns the packages listed in the DALEC_UPDATE_PACKAGES build arg.
 func updatePackages(client gwclient.Client) []string {
 	v, _ := frontend.GetBuildArg(client, dalec.BuildArgDalecUpdatePackages)
@@ -144,7 +163,7 @@ func updateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.Sou
 		)
 	}
 
-	rootfs, err = updater.UpdateContainer(ctx, client, sOpt, spec, targetKey, prev.State, prebuilt, updatePackages(client), opts...)
+	rootfs, err = updater.UpdateContainer(ctx, client, sOpt, spec, targetKey, prev.State, prebuilt, updatePackages(client), specPackageNames(spec, targetKey, prev.appPackages()), opts...)
 	if err != nil {
 		return llb.State{}, llb.State{}, err
 	}

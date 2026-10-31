@@ -128,3 +128,13 @@ if [ -n "${SSL_CERT_FILE:-}" ] || [ -n "${CURL_CA_BUNDLE:-}" ]; then exit 1; fi
 	out, err := cmd.CombinedOutput()
 	assert.NilError(t, err, string(out))
 }
+
+func TestDnfInstallFlagsExclude(t *testing.T) {
+	var cfg dnfInstallConfig
+	dnfInstallOptions(&cfg, []DnfInstallOpt{DnfAtRoot("/tmp/rootfs"), DnfExclude("foo", "foo-debug")})
+	flags := dnfInstallFlags(&cfg)
+	assert.Check(t, strings.Contains(flags, "--exclude=foo,foo-debug"), flags)
+
+	cfg = dnfInstallConfig{}
+	assert.Check(t, !strings.Contains(dnfInstallFlags(&cfg), "--exclude"))
+}

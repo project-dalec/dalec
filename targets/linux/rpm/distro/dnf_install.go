@@ -43,6 +43,16 @@ type dnfInstallConfig struct {
 
 	postInstallPath   string
 	postInstallScript llb.State
+
+	// excludes lists packages the package manager must not touch.
+	excludes []string
+}
+
+// DnfExclude excludes the given packages from the operation.
+func DnfExclude(pkgs ...string) DnfInstallOpt {
+	return func(cfg *dnfInstallConfig) {
+		cfg.excludes = append(cfg.excludes, pkgs...)
+	}
 }
 
 type DnfInstallOpt func(*dnfInstallConfig)
@@ -119,6 +129,10 @@ func dnfInstallFlags(cfg *dnfInstallConfig) string {
 
 	if !cfg.includeDocs {
 		cmdOpts += " --setopt=tsflags=nodocs"
+	}
+
+	if len(cfg.excludes) > 0 {
+		cmdOpts += " --exclude=" + strings.Join(cfg.excludes, ",")
 	}
 
 	return cmdOpts

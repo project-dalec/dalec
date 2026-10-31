@@ -118,7 +118,8 @@ from scratch:
   are downloaded and installed. Set `--build-arg DALEC_UPDATE_PACKAGES=openssl,openssl-libs`
   to limit the upgrade to specific packages.
 - Your spec's packages are not built or reinstalled; they are kept as they are in
-  the previous image. To ship a new version of them at the same time, pass them as a
+  the previous image, even when a newer version is published in the package
+  repositories. To ship a new version of them at the same time, pass them as a
   [prebuilt package](targets.md#prebuilt-packages) build context.
 - The result is split into layers as usual, so every package that did not
   change produces the same layer as before and is not uploaded or downloaded
