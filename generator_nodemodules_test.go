@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	"github.com/project-dalec/dalec/internal/test"
 	"gotest.tools/v3/assert"
 )
@@ -31,6 +33,88 @@ func TestNodeModRegistry(t *testing.T) {
 				"expected no --registry flag when Registry is unset; got: %v", args)
 		}
 	})
+}
+
+// TestNodeModDepsUnpatchedSource checks that npm installs from the patched
+// source but the returned source does not carry the patches itself, since
+// targets apply the spec patches to the returned state again.
+func TestNodeModDepsUnpatchedSource(t *testing.T) {
+	t.Parallel()
+
+	spec := &Spec{
+		Sources: map[string]Source{
+			"src": {
+				Inline: &SourceInline{Dir: &SourceInlineDir{Files: map[string]*SourceInlineFile{
+					"package.json": {Contents: "{}"},
+				}}},
+				Generate: []*SourceGenerator{{NodeMod: &GeneratorNodeMod{}}},
+			},
+			"fix.patch": {
+				Inline: &SourceInline{File: &SourceInlineFile{Contents: "patch contents"}},
+			},
+		},
+		Patches: map[string][]PatchSpec{
+			"src": {{Source: "fix.patch"}},
+		},
+	}
+	spec.FillDefaults()
+
+	sOpt := SourceOpts{SourceFilter: func() (SourceFilterConfig, error) {
+		return SourceFilterConfig{}, nil
+	}}
+
+	st, ok := spec.NodeModDeps(sOpt, llb.Scratch())["src"]
+	assert.Assert(t, ok, "expected a generated node module source")
+
+	def, err := st.Marshal(t.Context())
+	assert.NilError(t, err)
+
+	ops := make(map[digest.Digest]*pb.Op, len(def.Def))
+	for _, dt := range def.Def {
+		var op pb.Op
+		assert.NilError(t, op.UnmarshalVT(dt))
+		ops[digest.FromBytes(dt)] = &op
+	}
+
+	execContains := func(op *pb.Op, s string) bool {
+		exec := op.GetExec()
+		return exec != nil && strings.Contains(strings.Join(exec.GetMeta().GetArgs(), " "), s)
+	}
+
+	// reachesPatch reports whether a patch exec can be reached from dgst
+	// without passing through the npm install exec, unless it is the start.
+	var reachesPatch func(dgst digest.Digest, start bool) bool
+	reachesPatch = func(dgst digest.Digest, start bool) bool {
+		op := ops[dgst]
+		if execContains(op, "patch -p") {
+			return true
+		}
+		if !start && execContains(op, "npm install") {
+			return false
+		}
+		for _, inp := range op.Inputs {
+			if reachesPatch(digest.Digest(inp.Digest), false) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// The last op is the terminal one which has the final state as input.
+	var terminal pb.Op
+	assert.NilError(t, terminal.UnmarshalVT(def.Def[len(def.Def)-1]))
+	assert.Assert(t, !reachesPatch(digest.Digest(terminal.Inputs[0].Digest), false),
+		"the returned source must not have the patches applied")
+
+	var npmInstalls int
+	for dgst, op := range ops {
+		if !execContains(op, "npm install") {
+			continue
+		}
+		npmInstalls++
+		assert.Assert(t, reachesPatch(dgst, true), "npm install must run against the patched source")
+	}
+	assert.Equal(t, npmInstalls, 1)
 }
 
 // nodeModInstallArgs builds the LLB for a single-source spec whose only source
