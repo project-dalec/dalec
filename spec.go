@@ -230,6 +230,9 @@ type GomodReplace struct {
 	// Update is the replacement module path or local directory
 	Update string `yaml:"new" json:"new"`
 
+	// _isStruct records that the directive was specified with the old and new
+	// fields rather than as a string so that it is marshalled in the same form.
+	_isStruct  bool       `json:"-" yaml:"-"`
 	_sourceMap *sourceMap `json:"-" yaml:"-"`
 }
 
@@ -294,6 +297,7 @@ func (r *GomodReplace) UnmarshalYAML(ctx context.Context, node ast.Node) error {
 		if r.Original == "" || r.Update == "" {
 			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
 		}
+		r._isStruct = false
 		r._sourceMap = newSourceMap(ctx, node)
 		return nil
 	}
@@ -310,15 +314,27 @@ func (r *GomodReplace) UnmarshalYAML(ctx context.Context, node ast.Node) error {
 	if r.Original == "" || r.Update == "" {
 		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
 	}
+	r._isStruct = true
 	r._sourceMap = newSourceMap(ctx, node)
 	return nil
 }
 
-func (r *GomodReplace) MarshalYAML() ([]byte, error) {
+// MarshalYAML and MarshalJSON use value receivers so that they are also used
+// when encoding a GomodReplace value rather than a pointer to one, such as the
+// entries of [GomodEdits.Replace] when marshalling a whole spec.
+func (r GomodReplace) MarshalYAML() ([]byte, error) {
+	if r._isStruct {
+		type internal GomodReplace
+		return yaml.Marshal(internal(r))
+	}
 	return yaml.Marshal(r.String())
 }
 
-func (r *GomodReplace) MarshalJSON() ([]byte, error) {
+func (r GomodReplace) MarshalJSON() ([]byte, error) {
+	if r._isStruct {
+		type internal GomodReplace
+		return json.Marshal(internal(r))
+	}
 	return json.Marshal(r.String())
 }
 
@@ -335,6 +351,7 @@ func (r *GomodReplace) UnmarshalJSON(b []byte) error {
 		if r.Original == "" || r.Update == "" {
 			return errors.Errorf("invalid gomod replace %q, entries must be non-empty", raw)
 		}
+		r._isStruct = false
 		return nil
 	}
 
@@ -348,6 +365,7 @@ func (r *GomodReplace) UnmarshalJSON(b []byte) error {
 	if r.Original == "" || r.Update == "" {
 		return errors.Errorf("invalid gomod replace, old and new must be non-empty")
 	}
+	r._isStruct = true
 	return nil
 }
 
