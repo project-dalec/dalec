@@ -848,6 +848,10 @@ EOF
 
 		if strings.HasSuffix(testConfig.Target.Package, "/rpm") {
 			testRPMMinimalContainer(ctx, t, testConfig)
+			t.Run("per_package_layers", func(t *testing.T) {
+				t.Parallel()
+				testRPMPerPackageLayers(ctx, t, testConfig)
+			})
 			return
 		}
 

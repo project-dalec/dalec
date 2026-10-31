@@ -78,6 +78,10 @@ func MergeSpecImage(spec *Spec, targetKey string) *ImageConfig {
 			cfg.MinimizationProfile = i.MinimizationProfile
 		}
 
+		if i.Layers != "" {
+			cfg.Layers = i.Layers
+		}
+
 		if i.Entrypoint != "" {
 			cfg.Entrypoint = i.Entrypoint
 		}

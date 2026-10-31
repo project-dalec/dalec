@@ -28,6 +28,15 @@ const (
 	// This does not disable BuildKit's solve-level proxy network enforcement.
 	BuildArgDalecDisableProxyConfig = "DALEC_DISABLE_PROXY_CONFIG"
 
+	// BuildArgDalecImageLayers overrides the spec's image layers mode
+	// (see [ImageConfig.Layers]) for container targets.
+	BuildArgDalecImageLayers = "DALEC_IMAGE_LAYERS"
+
+	// BuildArgDalecRequirePrebuiltPkg makes container builds fail when no
+	// prebuilt package is provided through a build context, instead of
+	// building the package from source.
+	BuildArgDalecRequirePrebuiltPkg = "DALEC_REQUIRE_PREBUILT_PKG"
+
 	parseModeIgnoreComments = 0
 )
 
@@ -42,6 +51,10 @@ func knownArg(key string) bool {
 	case "BUILDKIT_SYNTAX":
 		return true
 	case "DALEC_DISABLE_DIFF_MERGE":
+		return true
+	case BuildArgDalecImageLayers:
+		return true
+	case BuildArgDalecRequirePrebuiltPkg:
 		return true
 	case "DALEC_DISABLE_PASSTHROUGH":
 		return true

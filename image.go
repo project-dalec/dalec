@@ -16,6 +16,16 @@ type DockerImageConfig = dockerspec.DockerOCIImageConfig
 
 const ImageMinimizationProfileDefault = "default"
 
+const (
+	// ImageLayersSingle writes the container root filesystem as a single layer.
+	// This is the default.
+	ImageLayersSingle = "single"
+	// ImageLayersPerPackage writes one layer per installed package (or group of
+	// related packages) plus a final layer with the package database and other
+	// files that are generated or modified during install.
+	ImageLayersPerPackage = "per-package"
+)
+
 // ImageConfig is the configuration for the output image.
 // When the target output is a container image, this is used to configure the image.
 type ImageConfig struct {
@@ -23,6 +33,14 @@ type ImageConfig struct {
 	// policy. An empty value leaves the image unchanged; "default" enables the
 	// target-specific default policy.
 	MinimizationProfile string `yaml:"minimization_profile,omitempty" json:"minimization_profile,omitempty"`
+	// Layers controls how the container root filesystem is split into image layers.
+	// An empty value or "single" writes a single layer.
+	// "per-package" writes one layer per installed package (or group of related
+	// packages) plus a final layer with the package database and generated files,
+	// so that updating one package only changes its own layer.
+	// This is experimental and currently only supported for RPM-based targets
+	// without a custom base image.
+	Layers string `yaml:"layers,omitempty" json:"layers,omitempty" jsonschema:"enum=single,enum=per-package"`
 	// Entrypoint sets the image's "entrypoint" field.
 	// This is used to control the default command to run when the image is run.
 	Entrypoint string `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
@@ -166,6 +184,10 @@ func (i *ImageConfig) validate() error {
 		errs = append(errs, errors.Errorf("unsupported image minimization profile %q", i.MinimizationProfile))
 	}
 
+	if err := ValidateImageLayers(i.Layers); err != nil {
+		errs = append(errs, err)
+	}
+
 	for i, base := range i.Bases {
 		if err := base.validate(); err != nil && !errorIsOnly(err, errNoImageSourcePath) {
 			errs = append(errs, errors.Wrapf(err, "bases[%d]", i))
@@ -177,6 +199,16 @@ func (i *ImageConfig) validate() error {
 	}
 
 	return goerrors.Join(errs...)
+}
+
+// ValidateImageLayers checks that v is a supported value for [ImageConfig.Layers].
+func ValidateImageLayers(v string) error {
+	switch v {
+	case "", ImageLayersSingle, ImageLayersPerPackage:
+		return nil
+	default:
+		return errors.Errorf("unsupported image layers mode %q, expected %q or %q", v, ImageLayersSingle, ImageLayersPerPackage)
+	}
 }
 
 func (i *ImageConfig) fillDefaults() {

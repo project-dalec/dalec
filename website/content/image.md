@@ -52,6 +52,58 @@ image:
   minimization_profile: default
 ```
 
+### Layers
+
+`layers` controls how the container root filesystem is stored as image layers.
+An empty value or `single` writes one layer, which is the default.
+
+Set `layers` to `per-package` to write one layer per installed package (or group
+of related packages) plus a final layer with the package database and files that
+are generated or modified during install:
+
+```yaml
+image:
+  layers: per-package
+```
+
+You can also set it for a single build with
+`--build-arg DALEC_IMAGE_LAYERS=per-package`, which overrides the spec.
+
+With per-package layers, updating one package only changes that package's layer
+and the final layer. Every other layer stays byte-for-byte identical, so
+registries and machines that already have it don't upload or download it again.
+For example, rebuilding the image to pick up an `openssl` fix (see
+[Prebuilt packages](targets.md#prebuilt-packages)) only replaces the `openssl`
+layer and the final layer.
+
+How files are split:
+
+- Files owned by a package go into that package's layer. Packages from the same
+  source package (for example `openssl` and `openssl-libs`) share a layer.
+  Each package built from the spec gets its own layer.
+- The package database, files not owned by any package, `%ghost` files and files
+  changed after install (as reported by `rpm -V`) go into the final layer.
+- Directory timestamps in the layers are set to `SOURCE_DATE_EPOCH` when it is
+  provided, or to 0 otherwise, so identical packages produce identical layers.
+- Images are limited to 64 layers. When there are more packages, the smallest
+  ones are grouped into a single `misc` layer.
+
+Each layer has an image history entry whose comment records its contents, for
+example `dalec.layer.v1 kind=os name=openssl packages=openssl,openssl-libs`.
+The final layer is recorded as `dalec.layer.v1 kind=state name=state`, and the
+image gets the label `dev.dalec.image.layers=per-package`. Tools such as image
+patchers can use these to find which layer holds a package.
+
+Every build checks that the layers together contain exactly the same files,
+with the same contents, permissions, ownership and extended attributes, as the
+installed root filesystem, and fails if they don't.
+
+{{< callout type="info" >}}
+Per-package layers are experimental. They are currently supported for RPM-based
+targets without a custom base image (`image.bases`). Other targets produce a
+single layer and print a warning.
+{{< /callout >}}
+
 ### Base
 
 The `base` field is used to specify the base image for the output container.
