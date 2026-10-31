@@ -3112,6 +3112,92 @@ func Value() string {
 		})
 	})
 
+	t.Run("go module replace with node modules", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		pg := dalec.ProgressGroup("Setup gomod and nodemod context")
+
+		contextSt := llb.Scratch().
+			File(llb.Mkfile("/go.mod", 0o644, []byte("module example.com/app\n\ngo 1.18\n\nrequire example.com/dep v0.0.0\n")), pg).
+			File(llb.Mkfile("/main.go", 0o644, []byte(`package main
+
+import (
+	"fmt"
+
+	"example.com/dep"
+)
+
+func main() {
+	fmt.Println(dep.Value())
+}
+`)), pg).
+			File(llb.Mkdir("/dep", 0o755), pg).
+			File(llb.Mkfile("/dep/go.mod", 0o644, []byte("module example.com/dep\n\ngo 1.18\n")), pg).
+			File(llb.Mkfile("/dep/dep.go", 0o644, []byte(`package dep
+
+func Value() string {
+	return "local dep"
+}
+`)), pg).
+			File(llb.Mkfile("/package.json", 0o644, []byte(`{"name":"test-gomod-nodemod","version":"1.0.0","private":true,"dependencies":{"local-dep":"file:./node-dep"}}`)), pg).
+			File(llb.Mkdir("/node-dep", 0o755), pg).
+			File(llb.Mkfile("/node-dep/package.json", 0o644, []byte(`{"name":"local-dep","version":"1.0.0","main":"index.js"}`)), pg).
+			File(llb.Mkfile("/node-dep/index.js", 0o644, []byte(`module.exports = "local node dep";`)), pg)
+
+		const contextName = "gomod-nodemod-package-test"
+
+		// The node module generator must not hand the package build a source
+		// which already has the generated go.mod patch applied, otherwise the
+		// patch is applied a second time and the build fails.
+		spec := &dalec.Spec{
+			Name:        "test-build-with-gomod-and-nodemod",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod edits and node modules on the same source",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Context: &dalec.SourceContext{Name: contextName},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									Replace: []dalec.GomodReplace{
+										{Original: "example.com/dep", Update: "./dep"},
+									},
+								},
+							},
+						},
+						{NodeMod: &dalec.GeneratorNodeMod{}},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+					testConfig.GetPackage("npm"):    {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					{Command: "grep -F 'replace example.com/dep => ./dep' ./src/go.mod"},
+					{Command: "cd ./src && go build"},
+					{Command: "test \"$(cd ./src && go run .)\" = 'local dep'"},
+					{Command: "test -d ./src/node_modules/local-dep"},
+					{Command: `cd ./src && test "$(node -p 'require("local-dep")')" = 'local node dep'`},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec), withBuildContext(ctx, t, contextName, contextSt))
+			solveT(ctx, t, client, req)
+		})
+	})
+
 	t.Run("cargo home", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
