@@ -217,6 +217,11 @@ type GomodEdits struct {
 	// has been absorbed into its parent module in a newer version
 	// (e.g. google.golang.org/grpc/stats/opentelemetry merged into grpc at v1.79.0).
 	Drop []string `yaml:"drop,omitempty" json:"drop,omitempty"`
+	// Godebug sets godebug directives in go.mod via go mod edit -godebug.
+	// Each entry is a "key=value" pair (e.g. "tlsmlkem=0") which changes the
+	// default GODEBUG setting of binaries built from the module.
+	// This requires Go 1.23 or newer to generate the edits.
+	Godebug []string `yaml:"godebug,omitempty" json:"godebug,omitempty"`
 }
 
 // GomodReplace represents a go.mod replace directive.
