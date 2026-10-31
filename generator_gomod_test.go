@@ -217,6 +217,114 @@ func TestGomodReplaceGoModEditArg(t *testing.T) {
 	}
 }
 
+func TestGomodEditArgs_Godebug(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		gen          *GeneratorGomod
+		expectErr    bool
+		expectedArgs string
+	}{
+		{
+			name: "godebug converts to godebug arg",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Godebug: []string{"tlsmlkem=0"},
+				},
+			},
+			expectedArgs: "-godebug=tlsmlkem=0",
+		},
+		{
+			name: "multiple godebugs",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Godebug: []string{"tlsmlkem=0", " tlssecpmlkem=0 "},
+				},
+			},
+			expectedArgs: "-godebug=tlsmlkem=0\n-godebug=tlssecpmlkem=0",
+		},
+		{
+			name: "mixed replace, drop and godebug",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Replace: []GomodReplace{
+						{Original: "example.com/grpc", Update: "example.com/grpc@v1.79.3"},
+					},
+					Drop:    []string{"example.com/grpc/stats/otel"},
+					Godebug: []string{"tlsmlkem=0"},
+				},
+			},
+			expectedArgs: "-replace=example.com/grpc=example.com/grpc@v1.79.3\n-droprequire=example.com/grpc/stats/otel\n-godebug=tlsmlkem=0",
+		},
+		{
+			name: "godebug without value errors",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Godebug: []string{"tlsmlkem"},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "godebug with empty key errors",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Godebug: []string{"=0"},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "godebug with empty value errors",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Godebug: []string{"tlsmlkem="},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "godebug with comma errors",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Godebug: []string{"tlsmlkem=0,tlssecpmlkem=0"},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "godebug with newline errors",
+			gen: &GeneratorGomod{
+				Edits: &GomodEdits{
+					Godebug: []string{"tlsmlkem=0\n-replace=example.com/a=example.com/b@v1.0.0"},
+				},
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			args, err := gomodEditArgs(tt.gen)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if args != tt.expectedArgs {
+				t.Errorf("expected %q, got %q", tt.expectedArgs, args)
+			}
+		})
+	}
+}
+
 func TestGomodEditArgs_DropRequire(t *testing.T) {
 	t.Parallel()
 

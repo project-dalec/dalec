@@ -565,6 +565,28 @@ sources:
 
 In this example, `grpc/stats/opentelemetry` was merged into the main `grpc` module at v1.79.0. The replace directive upgrades grpc, and the drop directive removes the now-orphaned sub-module requirement that would otherwise cause `go mod tidy` to fail.
 
+#### Godebug directives
+
+The `gomod` generator can also set [`godebug` directives](https://go.dev/doc/godebug) in `go.mod`. These change the default `GODEBUG` settings of binaries built from the module, for example to turn off a behavior introduced by a newer Go release, without having to patch the source by hand.
+
+When godebug directives are specified, Dalec runs `go mod edit -godebug=<key>=<value>` for each entry. Each entry must be in `key=value` form. Setting godebug directives with `go mod edit` requires Go 1.23 or newer.
+
+**Example using godebug directives:**
+
+```yaml
+sources:
+  myapp:
+    git:
+      url: https://github.com/example/myapp.git
+      commit: v1.0.0
+    generate:
+      - gomod:
+          edits:
+            godebug:
+              - tlsmlkem=0
+              - tlssecpmlkem=0
+```
+
 ### Cargohome
 
 Similar to that of the `gomod` generator, we can generate `cargohome` dependencies. The syntax is as follows:

@@ -142,6 +142,16 @@ func gomodEditArgs(g *GeneratorGomod) (string, error) {
 		args = append(args, "-droprequire="+mod)
 	}
 
+	// Process godebug directives
+	for _, d := range g.Edits.Godebug {
+		d = strings.TrimSpace(d)
+		key, value, ok := strings.Cut(d, "=")
+		if !ok || key == "" || value == "" || strings.ContainsAny(d, " \t\r\n\"`',") {
+			return "", errors.Errorf("invalid gomod godebug %q: expected key=value", d)
+		}
+		args = append(args, "-godebug="+d)
+	}
+
 	if len(args) == 0 {
 		return "", nil
 	}
