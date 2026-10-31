@@ -62,6 +62,15 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 	opts = append(opts, dalec.ProgressGroup("Split image layers"))
 	frontendSt := frontend.GetCurrentFrontend(client)
 
+	// Solve the installed root filesystem once and use that exact result for
+	// every step below. Otherwise steps that ignore the cache (for example
+	// with --no-cache-filter) could run the install again between the plan
+	// and the final solve, and the split would not match what is verified.
+	rootfs, err := solveToState(ctx, client, rootfs, opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "building container root filesystem")
+	}
+
 	withFrontend := llb.AddMount(layerSplitFrontendPath, frontendSt, llb.SourcePath("/frontend"), llb.Readonly)
 	withRoot := llb.AddMount(layerSplitRootPath, rootfs, llb.Readonly)
 
@@ -162,6 +171,22 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 	).Root()
 
 	return &splitLayersResult{State: merged, Verify: verify, Groups: plan.Groups}, nil
+}
+
+func solveToState(ctx context.Context, client gwclient.Client, st llb.State, opts ...llb.ConstraintsOpt) (llb.State, error) {
+	def, err := st.Marshal(ctx, dalec.WithConstraints(opts...))
+	if err != nil {
+		return llb.State{}, err
+	}
+	res, err := client.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB()})
+	if err != nil {
+		return llb.State{}, err
+	}
+	ref, err := res.SingleRef()
+	if err != nil {
+		return llb.State{}, err
+	}
+	return ref.ToState()
 }
 
 // addLayerHistory appends one image history entry per layer group, so tools
