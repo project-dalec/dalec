@@ -101,43 +101,6 @@ func TestCompareReportsDifferences(t *testing.T) {
 	assert.Check(t, diffs[1].Actual == nil, "/b should be missing")
 	assert.Check(t, diffs[2].Expected == nil, "/c should be unexpected")
 
-	err = runVerify(expected, actual, "")
+	err = runVerify(expected, actual)
 	assert.ErrorContains(t, err, "verification failed")
-}
-
-func TestVerifyIgnoresStateMtimes(t *testing.T) {
-	root := testRoot(t)
-	plan, err := BuildPlan(root, testInputs(), Options{})
-	assert.NilError(t, err)
-
-	planDir := t.TempDir()
-	dt, err := MarshalPlan(plan)
-	assert.NilError(t, err)
-	assert.NilError(t, os.WriteFile(filepath.Join(planDir, PlanFile), dt, 0o644))
-	f, err := os.Create(filepath.Join(planDir, AssignFile))
-	assert.NilError(t, err)
-	assert.NilError(t, WriteAssign(f, plan.Assign))
-	assert.NilError(t, f.Close())
-
-	base := t.TempDir()
-	outs := make([]string, len(plan.Groups))
-	for i := range plan.Groups {
-		outs[i] = filepath.Join(base, strconv.Itoa(i))
-		assert.NilError(t, os.Mkdir(outs[i], 0o755))
-	}
-	assert.NilError(t, Copy(root, plan.Assign, outs, 0))
-	merged := t.TempDir()
-	mergeInto(t, merged, outs)
-
-	// A state file with a different timestamp is accepted.
-	other := time.Unix(2_000_000, 0)
-	assert.NilError(t, os.Chtimes(filepath.Join(merged, "etc/unowned.conf"), other, other))
-	assert.NilError(t, runVerify(root, merged, planDir))
-
-	// Without the plan, every timestamp is compared.
-	assert.ErrorContains(t, runVerify(root, merged, ""), "verification failed")
-
-	// A package file with a different timestamp is rejected.
-	assert.NilError(t, os.Chtimes(filepath.Join(merged, "usr/bin/myapp"), other, other))
-	assert.ErrorContains(t, runVerify(root, merged, planDir), "verification failed")
 }

@@ -127,17 +127,6 @@ func fileSHA256(p string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// ClearMtimes zeroes the recorded modification time of the given paths, so
-// they are not compared by [Compare].
-func ClearMtimes(tree map[string]Entry, paths map[string]bool) {
-	for p := range paths {
-		if e, ok := tree[p]; ok {
-			e.Mtime = 0
-			tree[p] = e
-		}
-	}
-}
-
 // Diff describes a difference between two trees.
 type Diff struct {
 	Path     string

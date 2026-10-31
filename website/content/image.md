@@ -95,11 +95,8 @@ image gets the label `dev.dalec.image.layers=per-package`. Tools such as image
 patchers can use these to find which layer holds a package.
 
 Every build checks that the layers together contain exactly the same files,
-with the same contents, permissions, ownership, extended attributes and
-timestamps, as the installed root filesystem, and fails if they don't.
-Timestamps of files in the final layer are not compared: they only record when
-the install ran, and an unchanged install may reuse the layers of an earlier
-build.
+with the same contents, permissions, ownership and extended attributes, as the
+installed root filesystem, and fails if they don't.
 
 {{< callout type="info" >}}
 Per-package layers are experimental. They are currently supported for RPM-based
