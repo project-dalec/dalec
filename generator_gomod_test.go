@@ -105,6 +105,146 @@ new: github.com/cpuguy83/tar2go@v0.3.1
 	}
 }
 
+func TestGomodReplaceMarshalPreservesForm(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		input     string
+		unmarshal func([]byte, interface{}) error
+		marshal   func(interface{}) ([]byte, error)
+	}{
+		{
+			name:      "YAML string format",
+			input:     "example.com/module => example.com/module@v1.2.3\n",
+			unmarshal: yaml.Unmarshal,
+			marshal:   yaml.Marshal,
+		},
+		{
+			name:      "YAML struct format",
+			input:     "old: example.com/module\nnew: example.com/module@v1.2.3\n",
+			unmarshal: yaml.Unmarshal,
+			marshal:   yaml.Marshal,
+		},
+		{
+			name:      "JSON string format",
+			input:     `"example.com/module =\u003e example.com/module@v1.2.3"`,
+			unmarshal: json.Unmarshal,
+			marshal:   json.Marshal,
+		},
+		{
+			name:      "JSON struct format",
+			input:     `{"old":"example.com/module","new":"example.com/module@v1.2.3"}`,
+			unmarshal: json.Unmarshal,
+			marshal:   json.Marshal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var repl GomodReplace
+			if err := tt.unmarshal([]byte(tt.input), &repl); err != nil {
+				t.Fatalf("failed to unmarshal: %v", err)
+			}
+
+			// Marshal both the value and a pointer to it since go-yaml does
+			// not use pointer receiver marshalers when encoding a value.
+			for _, v := range []interface{}{repl, &repl} {
+				out, err := tt.marshal(v)
+				if err != nil {
+					t.Fatalf("failed to marshal %T: %v", v, err)
+				}
+				if string(out) != tt.input {
+					t.Errorf("unexpected output marshalling %T:\nwant:\n%s\ngot:\n%s", v, tt.input, out)
+				}
+			}
+		})
+	}
+
+	t.Run("unmarshal into existing value", func(t *testing.T) {
+		t.Parallel()
+
+		const input = "example.com/module => example.com/module@v1.2.3\n"
+
+		var repl GomodReplace
+		if err := yaml.Unmarshal([]byte("old: example.com/other\nnew: ./other\n"), &repl); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+		if err := yaml.Unmarshal([]byte(input), &repl); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		out, err := yaml.Marshal(repl)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+		if string(out) != input {
+			t.Errorf("unexpected output:\nwant:\n%s\ngot:\n%s", input, out)
+		}
+	})
+
+	t.Run("new value marshals as string", func(t *testing.T) {
+		t.Parallel()
+
+		repl := GomodReplace{Original: "example.com/module", Update: "./module"}
+
+		out, err := yaml.Marshal(repl)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+		if want := "example.com/module => ./module\n"; string(out) != want {
+			t.Errorf("unexpected YAML output:\nwant:\n%s\ngot:\n%s", want, out)
+		}
+
+		out, err = json.Marshal(repl)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+		if want := `"example.com/module =\u003e ./module"`; string(out) != want {
+			t.Errorf("unexpected JSON output:\nwant:\n%s\ngot:\n%s", want, out)
+		}
+	})
+
+	t.Run("spec round trip", func(t *testing.T) {
+		t.Parallel()
+
+		dt := []byte(`name: test
+version: 0.0.1
+revision: "1"
+sources:
+  src:
+    context: {}
+    generate:
+      - gomod:
+          edits:
+            replace:
+              - example.com/a => example.com/a@v1.2.3
+              - old: example.com/b
+                new: ./b
+`)
+		spec, err := LoadSpec(dt)
+		if err != nil {
+			t.Fatalf("failed to load spec: %v", err)
+		}
+
+		out, err := yaml.Marshal(spec)
+		if err != nil {
+			t.Fatalf("failed to marshal spec: %v", err)
+		}
+
+		for _, want := range []string{
+			"- example.com/a => example.com/a@v1.2.3\n",
+			"- old: example.com/b\n",
+		} {
+			if !strings.Contains(string(out), want) {
+				t.Errorf("replace directive changed form, expected output to contain %q, got:\n%s", want, out)
+			}
+		}
+	})
+}
+
 func TestGomodReplaceGoModEditArg(t *testing.T) {
 	t.Parallel()
 
