@@ -105,6 +105,25 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 		})
 	})
 
+	t.Run("rebuilt package with identical contents", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		// Rebuilding the package gives its files new timestamps but the same
+		// contents. The second build must use the new timestamps instead of
+		// reusing a cached layer from the first build.
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			for _, rev := range []string{"1", "2"} {
+				spec := newSpec(t)
+				spec.Revision = rev
+				spec.Image = &dalec.ImageConfig{Layers: dalec.ImageLayersPerPackage}
+				sr := newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target))
+				res := solveT(ctx, t, gwc, sr)
+				checkGroups(t, &spec, layerGroups(t, res))
+			}
+		})
+	})
+
 	t.Run("require prebuilt package", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)

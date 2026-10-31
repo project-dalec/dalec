@@ -2,7 +2,6 @@ package linux
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 
 	"github.com/moby/buildkit/client/llb"
@@ -127,16 +126,17 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 		dalec.WithConstraints(opts...),
 	)
 
+	// Each output mount becomes one layer. Unchanged packages produce
+	// byte-identical layers because the copy preserves file metadata from the
+	// package and normalizes directory timestamps.
+	//
+	// Note: the layers must not be passed through a file op copy to get
+	// content-based cache keys. BuildKit's content checksum ignores
+	// modification times, so a cache hit could reuse a layer whose file
+	// timestamps differ from the installed root filesystem.
 	layers := make([]llb.State, 0, len(plan.Groups))
-	for i, g := range plan.Groups {
-		out := copyRun.AddMount(layerSplitOutPath+"/"+strconv.Itoa(i), llb.Scratch())
-		// Copying through a file op makes the layer cache key depend on the
-		// layer contents, so unchanged layers are reused across builds.
-		layers = append(layers, llb.Scratch().File(
-			llb.Copy(out, "/", "/", &llb.CopyInfo{CopyDirContentsOnly: true, AllowEmptyWildcard: true}),
-			llb.WithCustomName(fmt.Sprintf("Layer %d: %s %s", i, g.Kind, g.Name)),
-			dalec.WithConstraints(opts...),
-		))
+	for i := range plan.Groups {
+		layers = append(layers, copyRun.AddMount(layerSplitOutPath+"/"+strconv.Itoa(i), llb.Scratch()))
 	}
 
 	merged := layers[0]
