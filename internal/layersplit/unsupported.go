@@ -24,6 +24,9 @@ func Tree(string) (map[string]Entry, error) {
 	return nil, errUnsupported
 }
 
+// ClearMtimes is only supported on linux.
+func ClearMtimes(map[string]Entry, map[string]bool) {}
+
 // Compare is only supported on linux.
 func Compare(map[string]Entry, map[string]Entry) []Diff {
 	return nil

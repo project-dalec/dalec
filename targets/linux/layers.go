@@ -130,10 +130,12 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 	// byte-identical layers because the copy preserves file metadata from the
 	// package and normalizes directory timestamps.
 	//
-	// Note: the layers must not be passed through a file op copy to get
-	// content-based cache keys. BuildKit's content checksum ignores
-	// modification times, so a cache hit could reuse a layer whose file
-	// timestamps differ from the installed root filesystem.
+	// Note: the layers must not be passed through a separate file op copy to
+	// get content-based cache keys per layer. BuildKit's content checksum
+	// ignores modification times, so a per-layer cache hit could reuse a layer
+	// whose package file timestamps differ from the installed root
+	// filesystem. The exec above is keyed by the whole root filesystem,
+	// including the package database, which records package file timestamps.
 	layers := make([]llb.State, 0, len(plan.Groups))
 	for i := range plan.Groups {
 		layers = append(layers, copyRun.AddMount(layerSplitOutPath+"/"+strconv.Itoa(i), llb.Scratch()))
@@ -149,9 +151,11 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 			layerSplitFrontendPath, layersplit.CmdName, "verify",
 			"--expected", layerSplitRootPath,
 			"--actual", layerSplitActualPath,
+			"--plan", layerSplitPlanPath,
 		}),
 		withFrontend,
 		withRoot,
+		llb.AddMount(layerSplitPlanPath, planSt, llb.Readonly),
 		llb.AddMount(layerSplitActualPath, merged, llb.Readonly),
 		llb.WithCustomName("Verify per-package image layers match the installed root filesystem"),
 		dalec.WithConstraints(opts...),

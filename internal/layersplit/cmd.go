@@ -32,7 +32,7 @@ const (
 //
 //	plan   --root DIR --dump DIR --out DIR [--max-layers N]
 //	copy   --root DIR --plan DIR --out DIR [--dir-mtime SECONDS]
-//	verify --expected DIR --actual DIR
+//	verify --expected DIR --actual DIR [--plan DIR]
 func Cmd(_ context.Context, args []string) {
 	if err := run(args); err != nil {
 		fmt.Fprintln(os.Stderr, CmdName+":", err)
@@ -64,7 +64,7 @@ func run(args []string) error {
 	case "copy":
 		return runCopy(*root, *planDir, *out, *dirMtime)
 	case "verify":
-		return runVerify(*expected, *actual)
+		return runVerify(*expected, *actual, *planDir)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -183,7 +183,46 @@ func runCopy(root, planDir, out string, dirMtime int64) error {
 	return Copy(root, assign, outs, dirMtime)
 }
 
-func runVerify(expected, actual string) error {
+// runVerify checks that actual (the merged layers) matches expected (the
+// installed root filesystem).
+//
+// When planDir is set, modification times of paths in the state layer are not
+// compared. BuildKit may reuse an earlier split when the root filesystem has
+// the same content: its content checksum ignores modification times. Files
+// owned by packages keep the timestamps recorded in the package database,
+// which is part of that checksum, so they are always compared exactly. Files
+// in the state layer are generated during install and their timestamps only
+// reflect when the install ran.
+func readStatePaths(planDir string) (map[string]bool, error) {
+	dt, err := os.ReadFile(filepath.Join(planDir, PlanFile))
+	if err != nil {
+		return nil, err
+	}
+	plan, err := UnmarshalPlan(dt)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(filepath.Join(planDir, AssignFile))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	assign, err := ReadAssign(f)
+	if err != nil {
+		return nil, err
+	}
+
+	state := len(plan.Groups) - 1
+	out := make(map[string]bool)
+	for p, idx := range assign {
+		if idx == state {
+			out[p] = true
+		}
+	}
+	return out, nil
+}
+
+func runVerify(expected, actual, planDir string) error {
 	want, err := Tree(expected)
 	if err != nil {
 		return fmt.Errorf("reading expected tree: %w", err)
@@ -191,6 +230,15 @@ func runVerify(expected, actual string) error {
 	got, err := Tree(actual)
 	if err != nil {
 		return fmt.Errorf("reading actual tree: %w", err)
+	}
+
+	if planDir != "" {
+		statePaths, err := readStatePaths(planDir)
+		if err != nil {
+			return err
+		}
+		ClearMtimes(want, statePaths)
+		ClearMtimes(got, statePaths)
 	}
 
 	diffs := Compare(want, got)
