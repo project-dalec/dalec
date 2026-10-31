@@ -35,7 +35,7 @@ func Cargohome(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 				Run(llb.Shlex("cargo --version"), pg).Root()
 		}
 
-		st := spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform), pg)
+		st := depsOrScratch(spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform), pg))
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

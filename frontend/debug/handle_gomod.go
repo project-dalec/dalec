@@ -39,7 +39,7 @@ func Gomods(ctx context.Context, client gwclient.Client) (*gwclient.Result, erro
 		}
 		worker = worker.With(addedHosts(client))
 
-		st := spec.GomodDeps(sOpt, worker, dalec.Platform(platform), pg)
+		st := depsOrScratch(spec.GomodDeps(sOpt, worker, dalec.Platform(platform), pg))
 
 		def, err := st.Marshal(ctx)
 		if err != nil {

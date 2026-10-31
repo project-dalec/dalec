@@ -159,6 +159,36 @@ func TestHandlerBuiltinTargets(t *testing.T) {
 	})
 }
 
+// TestHandlerDebugDepsWithoutGenerators is a regression test for the debug routes that
+// build generator dependencies. A spec without any gomod or cargohome generator must not
+// panic the frontend; the routes return an empty result instead.
+func TestHandlerDebugDepsWithoutGenerators(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:    "test-debug-no-generators",
+		Version: "0.0.1",
+		Sources: map[string]dalec.Source{
+			"src": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{Contents: "hello world"},
+				},
+			},
+		},
+	}
+
+	for _, target := range []string{"debug/gomods", "debug/cargohome"} {
+		t.Run(target, func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(baseCtx, t)
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(target))
+				solveT(ctx, t, gwc, sr)
+			})
+		})
+	}
+}
+
 func TestHandlerSubrequestResolve(t *testing.T) {
 	t.Parallel()
 	ctx := startTestSpan(baseCtx, t)

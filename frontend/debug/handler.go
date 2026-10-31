@@ -1,11 +1,22 @@
 package debug
 
 import (
+	"github.com/moby/buildkit/client/llb"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/project-dalec/dalec/frontend"
 )
 
 const DebugRoute = "debug"
+
+// depsOrScratch returns the state pointed to by deps, or an empty state if deps
+// is nil. The spec's *Deps methods return nil when no source in the spec uses
+// the corresponding generator.
+func depsOrScratch(deps *llb.State) llb.State {
+	if deps == nil {
+		return llb.Scratch()
+	}
+	return *deps
+}
 
 // Routes returns the flat routes for the debug handler, prefixed with the given prefix.
 // Debug routes are never spec-defined since no spec would have a "debug" target key.
