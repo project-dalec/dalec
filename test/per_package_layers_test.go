@@ -272,8 +272,11 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 			// previous image instead of upgrading it from the repository.
 			newer := appSpec()
 			newer.Revision = "2"
-			// Building the package does not need the test repository.
+			// The newer package only has to exist in the repository, so build it
+			// without the test repository, its dependency or tests.
 			newer.Dependencies.ExtraRepos = nil
+			delete(newer.Dependencies.Runtime, depName)
+			newer.Tests = nil
 			newer.Sources["src"].Inline.Dir.Files["hello"] = &dalec.SourceInlineFile{Contents: "#!/bin/sh\necho newer\n", Permissions: 0o755}
 			newerPkg := reqToState(ctx, gwc, newSolveRequest(withSpec(ctx, t, &newer), withBuildTarget(testConfig.Target.Package)), t)
 
