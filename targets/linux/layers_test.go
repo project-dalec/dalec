@@ -56,3 +56,12 @@ func TestPreviousImageAppPackages(t *testing.T) {
 	assert.Check(t, cmp.DeepEqual(prev.appPackages(), []string{"foo", "foo-meta", "foo-old"}))
 	assert.Check(t, cmp.Len((&previousImage{}).appPackages(), 0))
 }
+
+func TestSpecPackageNamesFromPreviousImageAreValidated(t *testing.T) {
+	for _, n := range []string{"foo", "foo-debug", "python3.12", "c++-libs"} {
+		assert.Check(t, updatePackageName.MatchString(n), n)
+	}
+	for _, n := range []string{"$(id)", "a,b", "-x", "a b", "`id`"} {
+		assert.Check(t, !updatePackageName.MatchString(n), n)
+	}
+}

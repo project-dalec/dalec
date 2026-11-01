@@ -48,7 +48,8 @@ type dnfInstallConfig struct {
 	excludes []string
 }
 
-// DnfExclude excludes the given packages from the operation.
+// DnfExclude excludes the given packages from an upgrade (see [DnfUpgrade]).
+// They are passed as quoted arguments, never interpolated into the script.
 func DnfExclude(pkgs ...string) DnfInstallOpt {
 	return func(cfg *dnfInstallConfig) {
 		cfg.excludes = append(cfg.excludes, pkgs...)
@@ -129,10 +130,6 @@ func dnfInstallFlags(cfg *dnfInstallConfig) string {
 
 	if !cfg.includeDocs {
 		cmdOpts += " --setopt=tsflags=nodocs"
-	}
-
-	if len(cfg.excludes) > 0 {
-		cmdOpts += " --exclude=" + strings.Join(cfg.excludes, ",")
 	}
 
 	return cmdOpts
@@ -412,14 +409,24 @@ func DnfInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.Run
 func DnfUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
 	// Packages are passed as quoted arguments rather than in the subcommand,
 	// which is interpolated into the install script.
-	return dnfCommand(cfg, releaseVer, "dnf", []string{"upgrade"}, pkgs)
+	return dnfCommand(cfg, releaseVer, "dnf", []string{"upgrade"}, upgradeArgs(cfg, pkgs))
+}
+
+// upgradeArgs returns the quoted arguments for an upgrade: one --exclude
+// option per excluded package, then the packages to upgrade.
+func upgradeArgs(cfg *dnfInstallConfig, pkgs []string) []string {
+	args := make([]string, 0, len(cfg.excludes)+len(pkgs))
+	for _, e := range cfg.excludes {
+		args = append(args, "--exclude="+e)
+	}
+	return append(args, pkgs...)
 }
 
 // TdnfUpgrade uses tdnf (or dnf, when available) to upgrade installed packages.
 // With no packages, every installed package with an available update is
 // upgraded.
 func TdnfUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
-	return dnfCommand(cfg, releaseVer, "tdnf", []string{"upgrade"}, pkgs)
+	return dnfCommand(cfg, releaseVer, "tdnf", []string{"upgrade"}, upgradeArgs(cfg, pkgs))
 }
 
 // TdnfInstall uses tdnf to install packages

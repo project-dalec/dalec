@@ -133,21 +133,12 @@ if [ -n "${SSL_CERT_FILE:-}" ] || [ -n "${CURL_CA_BUNDLE:-}" ]; then exit 1; fi
 	assert.NilError(t, err, string(out))
 }
 
-func TestDnfInstallFlagsExclude(t *testing.T) {
-	var cfg dnfInstallConfig
-	dnfInstallOptions(&cfg, []DnfInstallOpt{DnfAtRoot("/tmp/rootfs"), DnfExclude("foo", "foo-debug")})
-	flags := dnfInstallFlags(&cfg)
-	assert.Check(t, strings.Contains(flags, "--exclude=foo,foo-debug"), flags)
-
-	cfg = dnfInstallConfig{}
-	assert.Check(t, !strings.Contains(dnfInstallFlags(&cfg), "--exclude"))
-}
-
 func TestUpgradePassesPackagesAsArguments(t *testing.T) {
 	ctx := context.Background()
 	for name, upgrade := range map[string]PackageInstaller{"dnf": DnfUpgrade, "tdnf": TdnfUpgrade} {
 		t.Run(name, func(t *testing.T) {
 			var cfg dnfInstallConfig
+			dnfInstallOptions(&cfg, []DnfInstallOpt{DnfExclude("app", "$(touch /pwned-exclude)")})
 			st := llb.Image("worker").Run(upgrade(&cfg, "3.0", []string{"$(touch /pwned)", "openssl"})).Root()
 
 			var args []string
@@ -165,7 +156,7 @@ func TestUpgradePassesPackagesAsArguments(t *testing.T) {
 				}
 			}
 			assert.Assert(t, len(args) >= 2)
-			assert.Check(t, cmp.DeepEqual(args[len(args)-2:], []string{"$(touch /pwned)", "openssl"}))
+			assert.Check(t, cmp.DeepEqual(args[len(args)-4:], []string{"--exclude=app", "--exclude=$(touch /pwned-exclude)", "$(touch /pwned)", "openssl"}))
 			assert.Check(t, !strings.Contains(scripts, "pwned"), "package names must not be interpolated into the script")
 			assert.Check(t, strings.Contains(scripts, `dnf_sub_cmd="upgrade"`))
 		})

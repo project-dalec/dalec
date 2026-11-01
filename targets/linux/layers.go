@@ -171,6 +171,13 @@ func updateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.Sou
 	// in the previous image's layer history (for example if a package was
 	// renamed), even when none of them has files of its own.
 	names := specPackageNames(spec, targetKey, prev.appPackages())
+	// Names recorded in the previous image come from its config, so treat
+	// them as untrusted input like the build arg.
+	for _, n := range names {
+		if !updatePackageName.MatchString(n) {
+			return llb.State{}, llb.State{}, errors.Errorf("invalid spec package name %q (from the spec or recorded in the %s image)", n, dalec.PreviousImageContext)
+		}
+	}
 	pkgs, err := updatePackages(client)
 	if err != nil {
 		return llb.State{}, llb.State{}, err
