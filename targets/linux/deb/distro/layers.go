@@ -130,15 +130,19 @@ apt_opts="-o Dir::State::status=${status} -o Dir::Cache::Archives=${out} --yes -
 # Package names may contain glob characters, which must not expand to files.
 set -f
 pkgs=$(cat "${lists}/packages")
-if [ -z "${pkgs}" ]; then
+if [ -z "${pkgs}" ] && [ "${DALEC_UPDATE_REQUESTED}" != "true" ]; then
     # Every installed package with an available update.
     pkgs=$(apt-get ${apt_opts} --simulate --with-new-pkgs upgrade | awk '/^Inst / { print $2 }')
 fi
 
-if [ -n "${pkgs}" ] || [ -n "${local_debs}" ]; then
+if [ -n "${pkgs}" ]; then
     # --only-upgrade skips named packages that are not installed, but still
     # installs new dependencies of the upgraded packages.
-    apt-get ${apt_opts} --download-only install --only-upgrade ${pkgs} ${local_debs}
+    apt-get ${apt_opts} --download-only install --only-upgrade ${pkgs}
+fi
+if [ -n "${local_debs}" ]; then
+    # Supplied spec packages may be new, so they are not limited to upgrades.
+    apt-get ${apt_opts} --download-only install ${local_debs}
 fi
 rm -rf "${out}/partial" "${out}/lock"
 
@@ -161,15 +165,47 @@ if ! ls "${debs}"/*.deb > /dev/null 2>&1; then
     exit 0
 fi
 
-# The worker may exclude paths (such as docs) from installed packages, which
-# fresh builds of minimal images do not do.
-if [ "${DALEC_MINIMAL_IMAGE}" = "true" ]; then
-    rm -f /etc/dpkg/dpkg.cfg.d/excludes
+# dpkg may be configured to exclude paths (such as docs) from installed
+# packages. Fresh builds of minimal images never exclude them, and other
+# images don't when the spec has docs or licenses.
+excludes=/etc/dpkg/dpkg.cfg.d/excludes
+if [ -f "${excludes}" ]; then
+    if [ "${DALEC_MINIMAL_IMAGE}" = "true" ]; then
+        rm -f "${excludes}"
+    elif [ "${DALEC_KEEP_USR_SHARE_DOC}" = "true" ]; then
+        mv "${excludes}" /tmp/dalec-dpkg-excludes
+        trap 'mv /tmp/dalec-dpkg-excludes "${excludes}"' EXIT
+    fi
 fi
 
 mkdir -p /var/lib/dpkg/info /var/lib/dpkg/updates /var/lib/dpkg/triggers /var/lib/dpkg/alternatives
-dpkg --force-confdef --force-confold --install "${debs}"/*.deb
-dpkg --force-confdef --force-confold --configure --pending
+
+# Returns success when the package in the given archive is installed at the
+# archive's version.
+installed() {
+    pkg=$(dpkg-deb -f "$1" Package)
+    ver=$(dpkg-deb -f "$1" Version)
+    dpkg-query -W -f='${db:Status-Status} ${Version}\n' "${pkg}" 2>/dev/null | grep -qx "installed ${ver}"
+}
+
+# dpkg can refuse to unpack a package whose pre-dependencies, in the same
+# batch, are not configured yet. Install in passes until every package is
+# installed, and fail when a pass makes no progress.
+pending=$(ls "${debs}"/*.deb)
+while [ -n "${pending}" ]; do
+    dpkg --force-confdef --force-confold --install ${pending} || true
+    dpkg --force-confdef --force-confold --configure --pending || true
+    left=""
+    for f in ${pending}; do
+        installed "${f}" || left="${left} ${f}"
+    done
+    left=$(echo ${left})
+    if [ "${left}" = "$(echo ${pending})" ]; then
+        echo "failed to install:" ${left} >&2
+        exit 1
+    fi
+    pending="${left}"
+done
 `
 
 // updateCleanupScript removes what the install left behind: the worker's own
@@ -323,6 +359,9 @@ func (c *Config) UpdateContainer(ctx context.Context, client gwclient.Client, sO
 		dalec.WithMountedAptCache(c.AptCachePrefix, opts...),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		aptProxyConfig(sOpt),
+		// Packages were requested, but none of them can be upgraded from the
+		// repositories (they are all spec packages).
+		llb.AddEnv("DALEC_UPDATE_REQUESTED", strconv.FormatBool(len(pkgs) > 0)),
 		llb.Args([]string{"/bin/sh", updateScriptPath + "/download.sh"}),
 		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 		llb.WithCustomName("Download updated packages"),
@@ -330,21 +369,22 @@ func (c *Config) UpdateContainer(ctx context.Context, client gwclient.Client, sO
 
 	// prev is on top, so its files (including the dpkg database) win over
 	// the worker's.
+	artifacts := spec.GetArtifacts(targetKey)
+	keepUsrShareDoc := llb.AddEnv("DALEC_KEEP_USR_SHARE_DOC", strconv.FormatBool(artifacts.HasDocs() || len(artifacts.Licenses) > 0))
+
 	installed := llb.Merge([]llb.State{worker, prev}, dalec.WithConstraints(opts...)).Run(
 		dalec.WithConstraints(opts...),
 		llb.AddMount(updateScriptPath, scripts, llb.Readonly),
 		llb.AddMount(updateDebsPath, debs, llb.Readonly),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		llb.AddEnv("DALEC_MINIMAL_IMAGE", strconv.FormatBool(c.DefaultOutputImage == "")),
+		keepUsrShareDoc,
 		llb.Args([]string{"/bin/sh", updateScriptPath + "/install.sh"}),
 		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 		llb.WithCustomName("Install updated packages"),
 	).Root()
 
 	minimal := llb.AddEnv("DALEC_MINIMAL_IMAGE", strconv.FormatBool(c.DefaultOutputImage == ""))
-
-	artifacts := spec.GetArtifacts(targetKey)
-	keepUsrShareDoc := artifacts.HasDocs() || len(artifacts.Licenses) > 0
 
 	rootfs := worker.Run(
 		dalec.WithConstraints(opts...),
@@ -353,7 +393,7 @@ func (c *Config) UpdateContainer(ctx context.Context, client gwclient.Client, sO
 		llb.AddMount(updateLowerPath, prev, llb.Readonly),
 		llb.AddMount(updateToolsPath, worker, llb.Readonly),
 		linux.WithLayerSplitFrontend(client),
-		llb.AddEnv("DALEC_KEEP_USR_SHARE_DOC", strconv.FormatBool(keepUsrShareDoc)),
+		keepUsrShareDoc,
 		minimal,
 		llb.Args([]string{"/bin/sh", updateScriptPath + "/cleanup.sh"}),
 		llb.WithCustomName("Remove build tools from the updated image"),

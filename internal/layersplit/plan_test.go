@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -468,6 +469,18 @@ func TestPruneTools(t *testing.T) {
 		"/var/lib/tools/new":   "created by a maintainer script",
 		"/usr/share/new/file1": "new",
 	}, map[string]string{"/bin": "usr/bin", "/opt": "usr"})
+	// Copies of the tools' files keep their modification times, like the
+	// merged root filesystem does. One of them is then rewritten by a
+	// maintainer script, with the same size.
+	for _, p := range []string{"/usr/bin/sh", "/usr/bin/dpkg", "/usr/lib/tools.so", "/etc/tools/conf", "/var/lib/tools/data"} {
+		fi, err := os.Stat(filepath.Join(tools, p))
+		assert.NilError(t, err)
+		assert.NilError(t, os.Chtimes(filepath.Join(root, p), fi.ModTime(), fi.ModTime()))
+	}
+	writeTree(t, tools, map[string]string{"/var/lib/dpkg/info/newdep.list": "old"}, nil)
+	old := time.Unix(1700000000, 0)
+	assert.NilError(t, os.Chtimes(filepath.Join(tools, "/var/lib/dpkg/info/newdep.list"), old, old))
+	writeTree(t, root, map[string]string{"/var/lib/dpkg/info/newdep.list": "new"}, nil)
 
 	assert.NilError(t, PruneTools(root, lower, tools, []string{"/lib/../usr/lib/tools.so", "/bin/unrelated"}))
 
@@ -478,7 +491,7 @@ func TestPruneTools(t *testing.T) {
 	for _, p := range []string{"/usr/bin/sh", "/usr/bin/dpkg", "/etc/tools/conf", "/etc/tools", "/var/lib/tools/data"} {
 		assert.Check(t, !exists(p), "%s should be removed", p)
 	}
-	for _, p := range []string{"/usr/bin/app", "/usr/lib/tools.so", "/usr/lib/new.so", "/etc/shared", "/var/lib/tools/new", "/usr/share/new/file1", "/bin", "/opt"} {
+	for _, p := range []string{"/var/lib/dpkg/info/newdep.list", "/usr/bin/app", "/usr/lib/tools.so", "/usr/lib/new.so", "/etc/shared", "/var/lib/tools/new", "/usr/share/new/file1", "/bin", "/opt"} {
 		assert.Check(t, exists(p), "%s should be kept", p)
 	}
 }

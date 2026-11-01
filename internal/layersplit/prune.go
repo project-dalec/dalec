@@ -16,9 +16,11 @@ import (
 // (the root filesystem being updated) merged on top of tools (a tools image
 // that provided the programs to run the command). Entries of tools which
 // lower does not have were only visible to the command and are removed from
-// root, unless they are listed in keep (for example because a package
-// installed by the command owns them). Entries which neither lower nor tools
-// have were created by the command and are left alone.
+// root, unless the command changed them (for example a maintainer script
+// writing a file the tools image also has) or they are listed in keep (for
+// example because a package installed by the command owns them). Entries
+// which neither lower nor tools have were created by the command and are left
+// alone.
 //
 // keep paths are resolved inside root. Directories are only removed when they
 // are empty.
@@ -88,6 +90,13 @@ func PruneTools(root, lower, tools string, keep []string) error {
 			dirs = append(dirs, p)
 			return nil
 		}
+		tfi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if changed, err := entryChanged(tfi, full, fi, target); err != nil || changed {
+			return err
+		}
 		if err := os.Remove(target); err != nil {
 			return fmt.Errorf("removing %s: %w", p, err)
 		}
@@ -112,6 +121,34 @@ func PruneTools(root, lower, tools string, keep []string) error {
 		return fmt.Errorf("removing %s: %w", p, err)
 	}
 	return nil
+}
+
+// entryChanged reports whether the entry b (at path pb) differs from a (at
+// path pa) in type, permissions, ownership, size, modification time or link
+// target. Rewriting a file, even with the same contents, changes its
+// modification time.
+func entryChanged(a fs.FileInfo, pa string, b fs.FileInfo, pb string) (bool, error) {
+	if a.Mode() != b.Mode() || a.Size() != b.Size() || !a.ModTime().Equal(b.ModTime()) {
+		return true, nil
+	}
+	if au, ag, ok := ownerOf(a); ok {
+		bu, bg, _ := ownerOf(b)
+		if au != bu || ag != bg {
+			return true, nil
+		}
+	}
+	if a.Mode()&fs.ModeSymlink != 0 {
+		la, err := os.Readlink(pa)
+		if err != nil {
+			return false, err
+		}
+		lb, err := os.Readlink(pb)
+		if err != nil {
+			return false, err
+		}
+		return la != lb, nil
+	}
+	return false, nil
 }
 
 type entryState int
