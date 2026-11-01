@@ -198,11 +198,36 @@ func applyMetadata(src, dst string, st *unix.Stat_t, isLink bool) error {
 		return fmt.Errorf("chown: %w", err)
 	}
 	if !isLink {
+		if err := removeInheritedACLs(src, dst); err != nil {
+			return err
+		}
 		if err := unix.Chmod(dst, st.Mode&0o7777); err != nil {
 			return fmt.Errorf("chmod: %w", err)
 		}
 	}
 	return copyXattrs(src, dst, isLink)
+}
+
+// posixACLXattrs are the extended attributes holding POSIX ACLs. A new file
+// inherits them from its parent directory's default ACL.
+var posixACLXattrs = []string{"system.posix_acl_access", "system.posix_acl_default"}
+
+// removeInheritedACLs removes POSIX ACLs that dst inherited from its parent
+// directory but src does not have. It runs before the mode is set, since
+// removing an access ACL can otherwise leave its mask in the group bits.
+func removeInheritedACLs(src, dst string) error {
+	for _, name := range posixACLXattrs {
+		if _, err := unix.Lgetxattr(src, name, nil); err == nil {
+			continue
+		}
+		if _, err := unix.Lgetxattr(dst, name, nil); err != nil {
+			continue
+		}
+		if err := unix.Lremovexattr(dst, name); err != nil {
+			return fmt.Errorf("remove inherited %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func copyXattrs(src, dst string, isLink bool) error {

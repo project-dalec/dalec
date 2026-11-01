@@ -224,6 +224,13 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 		getGroup(key, kind, name).pkgs[pkg] = true
 	}
 
+	type inode struct{ dev, ino uint64 }
+	type linked struct {
+		path string
+		size int64
+	}
+	hardlinks := make(map[inode][]linked)
+
 	assignKey := make(map[string]string)
 	err := filepath.WalkDir(root, func(full string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -262,12 +269,41 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 				return err
 			}
 			g.Size += fi.Size()
+			if dev, ino, nlink, ok := inodeOf(fi); ok && nlink > 1 {
+				k := inode{dev, ino}
+				hardlinks[k] = append(hardlinks[k], linked{p, fi.Size()})
+			}
 		}
 		assignKey[p] = key
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// Hardlinks only survive within a single layer. When the paths of one
+	// file land in different groups, move all of them to the state layer so
+	// they stay linked.
+	for _, paths := range hardlinks {
+		split := false
+		for _, l := range paths[1:] {
+			if assignKey[l.path] != assignKey[paths[0].path] {
+				split = true
+				break
+			}
+		}
+		if !split {
+			continue
+		}
+		for _, l := range paths {
+			old := groups[assignKey[l.path]]
+			old.Paths--
+			old.Size -= l.size
+			state := groups[stateKey]
+			state.Paths++
+			state.Size += l.size
+			assignKey[l.path] = stateKey
+		}
 	}
 
 	var osKeys, appKeys []string

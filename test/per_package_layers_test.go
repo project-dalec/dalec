@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -178,7 +179,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 		})
 	})
 
-	t.Run("previous image without spec package information", func(t *testing.T) {
+	t.Run("previous image without a package database", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)
 
@@ -192,7 +193,92 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 				withBuildContext(ctx, t, dalec.PreviousImageContext, notAnImage),
 			)
 			_, err := gwc.Solve(ctx, sr)
-			assert.ErrorContains(t, err, "cannot tell which packages")
+			assert.ErrorContains(t, err, "has no RPM package database")
+		})
+	})
+
+	t.Run("update previous image from a newer repository", func(t *testing.T) {
+		if testConfig.Worker.TestRepoConfig == nil || testConfig.Worker.CreateRepo == nil {
+			t.Skip("no test repository support for this target")
+		}
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+
+		const keyName = "public.gpg"
+		repoPath := filepath.Join("/opt/repo", createRepoSuffix())
+		depName := "dalec-test-ppl-update-dep"
+
+		depSpec := func(version string) *dalec.Spec {
+			return &dalec.Spec{
+				Name:        depName,
+				Version:     version,
+				Revision:    "1",
+				Description: "Runtime dependency updated from a local repository",
+				License:     "MIT",
+				Sources: map[string]dalec.Source{
+					"dep-version": {Inline: &dalec.SourceInline{File: &dalec.SourceInlineFile{
+						Contents:    "#!/bin/sh\necho \"dep " + version + "\"\n",
+						Permissions: 0o755,
+					}}},
+				},
+				Artifacts: dalec.Artifacts{Binaries: map[string]dalec.ArtifactConfig{"dep-version": {}}},
+			}
+		}
+
+		appSpec := func() dalec.Spec {
+			spec := newSpec(t)
+			spec.Image = &dalec.ImageConfig{Layers: dalec.ImageLayersPerPackage}
+			spec.Dependencies.Runtime[depName] = dalec.PackageConstraints{}
+			spec.Dependencies.ExtraRepos = []dalec.PackageRepositoryConfig{{
+				Config: testConfig.Worker.TestRepoConfig(keyName, repoPath),
+				Keys:   map[string]dalec.Source{keyName: {Context: &dalec.SourceContext{Name: "repo-public-key"}, Path: keyName}},
+				Data:   []dalec.SourceMount{{Dest: repoPath, Spec: dalec.Source{Context: &dalec.SourceContext{Name: "test-repo"}}}},
+				Envs:   []string{"install"},
+			}}
+			return spec
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+			w := reqToState(ctx, gwc, newSolveRequest(withBuildTarget(testConfig.Target.Worker), withSpec(ctx, t, nil)), t)
+			key := generateGPGKey(w, false)
+			repo := func(version string) llb.State {
+				pkg := reqToState(ctx, gwc, newSolveRequest(withSpec(ctx, t, depSpec(version)), withBuildTarget(testConfig.Target.Package)), t)
+				withRepo := w.With(testConfig.Worker.CreateRepo(pkg, repoPath, testConfig.Worker.SignRepo(key, repoPath)))
+				return llb.Scratch().File(llb.Copy(withRepo, repoPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
+			}
+
+			readFile := func(res *gwclient.Result, name string) string {
+				ref, err := res.SingleRef()
+				assert.NilError(t, err)
+				dt, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: name})
+				assert.NilError(t, err)
+				return string(dt)
+			}
+
+			spec := appSpec()
+			prev := solveT(ctx, t, gwc, newSolveRequest(
+				withSpec(ctx, t, &spec),
+				withBuildTarget(target),
+				withBuildContext(ctx, t, "test-repo", repo("1.0.0")),
+				withBuildContext(ctx, t, "repo-public-key", key),
+			))
+			assert.Check(t, cmp.Contains(readFile(prev, "/usr/bin/dep-version"), "dep 1.0.0"))
+
+			// Updating must not build the spec's package: make building it fail.
+			update := appSpec()
+			update.Build.Steps = []dalec.BuildStep{{Command: "echo the spec package must not be built when updating an image; exit 1"}}
+
+			res := solveT(ctx, t, gwc, newSolveRequest(
+				withSpec(ctx, t, &update),
+				withBuildTarget(target),
+				withBuildContext(ctx, t, "test-repo", repo("2.0.0")),
+				withBuildContext(ctx, t, "repo-public-key", key),
+				withBuildContext(ctx, t, dalec.PreviousImageContext, resultToState(t, prev)),
+			))
+
+			assert.Check(t, cmp.Contains(readFile(res, "/usr/bin/dep-version"), "dep 2.0.0"), "dependency should be upgraded")
+			assert.Check(t, cmp.Equal(readFile(res, "/usr/bin/hello"), readFile(prev, "/usr/bin/hello")), "spec package should be kept")
+			checkGroups(t, &update, layerGroups(t, res))
 		})
 	})
 

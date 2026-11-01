@@ -17,6 +17,12 @@ rpm_root() {
 seed_packages() {
 	local dir rpm_file path
 
+	# Extra seed package names, one per line (used when updating an existing
+	# image, where the spec packages may not be mounted).
+	if [ -f /tmp/dalec/internal/rpm/minimize-seeds ]; then
+		cat /tmp/dalec/internal/rpm/minimize-seeds
+	fi
+
 	for dir in /tmp/rpms /tmp/rpms-base; do
 		[ -d "${dir}" ] || continue
 
@@ -229,6 +235,9 @@ rm -rf \
 	"${rootfs}/var/log/tdnf.log" \
 	"${rootfs}/var/log/yum.log" 2>/dev/null || true
 `
+
+// minimizeSeedsPath is where [minimizeInstall] reads extra seed package names.
+const minimizeSeedsPath = "/tmp/dalec/internal/rpm/minimize-seeds"
 
 func minimizeInstall(opts ...llb.ConstraintsOpt) DnfInstallOpt {
 	opts = append(opts, dalec.ProgressGroup("Minimize RPM container"))

@@ -271,3 +271,31 @@ func TestParsers(t *testing.T) {
 		assert.ErrorContains(t, err, "version")
 	})
 }
+
+func TestBuildPlanKeepsHardlinksTogether(t *testing.T) {
+	root := testRoot(t)
+	// One file with paths owned by two different packages.
+	assert.NilError(t, os.Link(filepath.Join(root, "usr/bin/openssl"), filepath.Join(root, "usr/bin/myapp-openssl")))
+	// A hardlink set owned by a single package stays in its layer.
+	assert.NilError(t, os.Link(filepath.Join(root, "usr/bin/myapp"), filepath.Join(root, "usr/bin/myapp-alias")))
+
+	in := testInputs()
+	in.Files = append(in.Files,
+		OwnedFile{Package: "myapp", Path: "/usr/bin/myapp-openssl"},
+		OwnedFile{Package: "myapp", Path: "/usr/bin/myapp-alias"},
+	)
+	plan, err := BuildPlan(root, in, Options{})
+	assert.NilError(t, err)
+
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/openssl"), "state:state"))
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/myapp-openssl"), "state:state"))
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/myapp"), "app:myapp"))
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/myapp-alias"), "app:myapp"))
+
+	// Group counters follow the moved paths.
+	total := 0
+	for _, g := range plan.Groups {
+		total += g.Paths
+	}
+	assert.Check(t, cmp.Equal(total, len(plan.Assign)))
+}

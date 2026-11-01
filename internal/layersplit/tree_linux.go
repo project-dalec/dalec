@@ -26,19 +26,24 @@ type Entry struct {
 	Rdev   uint64
 	Mtime  int64
 	Xattrs string
+	// Hardlink is the first path (in sorted order) sharing this file's
+	// inode, when the file has more than one path in the tree.
+	Hardlink string
 }
 
 func (e Entry) String() string {
-	return fmt.Sprintf("type=%o mode=%o uid=%d gid=%d size=%d sha256=%s link=%q rdev=%d mtime=%d xattrs=%s",
-		e.Type, e.Mode, e.UID, e.GID, e.Size, e.SHA256, e.Link, e.Rdev, e.Mtime, e.Xattrs)
+	return fmt.Sprintf("type=%o mode=%o uid=%d gid=%d size=%d sha256=%s link=%q rdev=%d mtime=%d xattrs=%s hardlink=%q",
+		e.Type, e.Mode, e.UID, e.GID, e.Size, e.SHA256, e.Link, e.Rdev, e.Mtime, e.Xattrs, e.Hardlink)
 }
 
 // Tree walks root and returns an entry for every path below it.
 // Directory timestamps are not recorded since they are not stable across
 // layer extraction.
 func Tree(root string) (map[string]Entry, error) {
+	type inode struct{ dev, ino uint64 }
 	out := make(map[string]Entry)
-	err := filepath.WalkDir(root, func(full string, _ fs.DirEntry, err error) error {
+	links := make(map[inode][]string)
+	err := filepath.WalkDir(root, func(full string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -53,10 +58,37 @@ func Tree(root string) (map[string]Entry, error) {
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}
-		out["/"+filepath.ToSlash(rel)] = e
+		p := "/" + filepath.ToSlash(rel)
+		out[p] = e
+		if d.Type().IsRegular() {
+			fi, err := d.Info()
+			if err != nil {
+				return err
+			}
+			if dev, ino, nlink, ok := inodeOf(fi); ok && nlink > 1 {
+				k := inode{dev, ino}
+				links[k] = append(links[k], p)
+			}
+		}
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Record hardlink relationships so a copy that breaks them is detected.
+	for _, paths := range links {
+		if len(paths) < 2 {
+			continue
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			e := out[p]
+			e.Hardlink = paths[0]
+			out[p] = e
+		}
+	}
+	return out, nil
 }
 
 func entryFor(p string) (Entry, error) {

@@ -149,21 +149,20 @@ func updateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.Sou
 		frontend.Warn(ctx, client, prev.State, "the "+dalec.PreviousImageContext+" image was not built with per-package layers, so its layers cannot be reused")
 	}
 
+	// The spec's packages are known from the spec itself, plus any recorded
+	// in the previous image's layer history (for example if a package was
+	// renamed), even when none of them has files of its own.
+	names := specPackageNames(spec, targetKey, prev.appPackages())
 	if prebuilt != nil {
 		specPkgs = *prebuilt
 	} else {
-		names := prev.appPackages()
-		if len(names) == 0 {
-			return llb.State{}, llb.State{}, errors.Errorf("cannot tell which packages in the %s image belong to the spec: pass the spec packages with --build-context %s=<path or image>",
-				dalec.PreviousImageContext, targetKey+dalec.PreBuiltPkgSuffix)
-		}
 		specPkgs = llb.Scratch().File(
 			llb.Mkfile(layersplit.AppPackagesFile, 0o644, []byte(strings.Join(names, "\n")+"\n")),
 			dalec.WithConstraints(opts...),
 		)
 	}
 
-	rootfs, err = updater.UpdateContainer(ctx, client, sOpt, spec, targetKey, prev.State, prebuilt, updatePackages(client), specPackageNames(spec, targetKey, prev.appPackages()), opts...)
+	rootfs, err = updater.UpdateContainer(ctx, client, sOpt, spec, targetKey, prev.State, prebuilt, updatePackages(client), names, opts...)
 	if err != nil {
 		return llb.State{}, llb.State{}, err
 	}

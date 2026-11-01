@@ -80,7 +80,8 @@ How files are split:
 
 - Files owned by a package go into that package's layer. Packages from the same
   source package (for example `openssl` and `openssl-libs`) share a layer.
-  Each package built from the spec gets its own layer.
+  Each package built from the spec gets its own layer. Hardlinked files whose
+  paths belong to different packages go into the final layer, so they stay linked.
 - The package database, files not owned by any package, `%ghost` files and files
   changed after install (as reported by `rpm -V`) go into the final layer.
 - Directory timestamps in the layers are set to `SOURCE_DATE_EPOCH` when it is
@@ -121,6 +122,8 @@ from scratch:
   the previous image, even when a newer version is published in the package
   repositories. To ship a new version of them at the same time, pass them as a
   [prebuilt package](targets.md#prebuilt-packages) build context.
+- The image's `minimization_profile` and `post` symlinks are applied again
+  after the update, like in a fresh build.
 - The result is split into layers as usual, so every package that did not
   change produces the same layer as before and is not uploaded or downloaded
   again. Only the updated packages' layers and the final layer change.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -90,27 +91,77 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 		}
 	}
 
-	rootfs := prev
+	// The previous image must have an RPM database to upgrade.
+	rootfs := worker.Run(
+		dalec.WithConstraints(opts...),
+		dalec.ShArgs(`[ -n "$(rpm --root `+workPath+` -qa 2>/dev/null)" ] || { echo "the `+dalec.PreviousImageContext+` image has no RPM package database" >&2; exit 1; }`),
+		llb.WithCustomName("Check the existing image has an RPM package database"),
+	).AddMount(workPath, prev)
+
+	runUpgrade := len(pkgs) == 0 || len(upgrade) > 0
+	runInstall := specPkgs != nil
+
+	// Re-run minimization after the last package transaction, so packages
+	// pulled in by the update are minimized like in a fresh build. The spec
+	// and base packages are passed as seeds since the spec packages may not
+	// be mounted.
+	var minimizeOpts []DnfInstallOpt
+	if spec.GetImageMinimizationProfile(targetKey) == dalec.ImageMinimizationProfileDefault {
+		seeds := slices.Clone(keep)
+		for _, b := range cfg.BasePackages {
+			seeds = append(seeds, b.Name)
+		}
+		seedSt := llb.Scratch().File(llb.Mkfile("seeds", 0o644, []byte(strings.Join(seeds, "\n")+"\n")), dalec.WithConstraints(opts...))
+		minimizeOpts = []DnfInstallOpt{
+			DnfWithMounts(llb.AddMount(minimizeSeedsPath, seedSt, llb.SourcePath("seeds"), llb.Readonly)),
+			minimizeInstall(opts...),
+		}
+	}
+
 	// Skip the upgrade when packages were requested but they are all spec
 	// packages: there is nothing to upgrade from the repositories.
-	if len(pkgs) == 0 || len(upgrade) > 0 {
+	if runUpgrade {
 		upgradeOpts := append(slices.Clone(installOpts), DnfExclude(keep...))
+		if !runInstall {
+			upgradeOpts = append(upgradeOpts, minimizeOpts...)
+		}
 		rootfs = worker.Run(
 			dalec.WithConstraints(opts...),
 			cfg.Upgrade(upgrade, upgradeOpts...),
 			frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 			llb.WithCustomName("Upgrade packages in the existing image"),
-		).AddMount(workPath, prev)
+		).AddMount(workPath, rootfs)
 	}
 
-	if specPkgs != nil {
+	if runInstall {
 		rootfs = worker.Run(
 			dalec.WithConstraints(opts...),
-			cfg.Install([]string{filepath.Join(rpmMountDir, "*/*.rpm")}, installOpts...),
+			cfg.Install([]string{filepath.Join(rpmMountDir, "*/*.rpm")}, append(slices.Clone(installOpts), minimizeOpts...)...),
 			llb.AddMount(rpmMountDir, *specPkgs, llb.SourcePath("/RPMS")),
 			frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 			llb.WithCustomName("Install spec packages into the existing image"),
 		).AddMount(workPath, rootfs)
+	}
+
+	// Re-apply the configured symlinks: the spec may add new ones and a
+	// package update may have replaced existing ones. Existing links (or
+	// files) at those paths are removed first so they can be recreated.
+	if post := spec.GetImagePost(targetKey); post != nil && len(post.Symlinks) > 0 {
+		var paths []string
+		for _, tgt := range post.Symlinks {
+			if tgt.Path != "" {
+				paths = append(paths, tgt.Path)
+			}
+			paths = append(paths, tgt.Paths...)
+		}
+		slices.Sort(paths)
+		const removeLinks = `for p in "$@"; do f="` + workPath + `$p"; if [ -L "$f" ] || [ -f "$f" ]; then rm -f "$f"; fi; done`
+		rootfs = worker.Run(
+			dalec.WithConstraints(opts...),
+			llb.Args(append([]string{"/bin/sh", "-c", removeLinks, "remove-links"}, paths...)),
+			llb.WithCustomName("Remove existing post-install symlinks"),
+		).AddMount(workPath, rootfs)
+		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, frontend.NativeSymlinkSupport(client), opts...))
 	}
 
 	return rootfs, nil
