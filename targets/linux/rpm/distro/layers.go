@@ -153,11 +153,9 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 	// package update may have replaced existing ones. Existing links (or
 	// files) at those paths are removed first so they can be recreated.
 	if post := spec.GetImagePost(targetKey); post != nil && len(post.Symlinks) > 0 {
+		// Spec loading normalizes the deprecated Path field into Paths.
 		var paths []string
 		for _, tgt := range post.Symlinks {
-			if tgt.Path != "" {
-				paths = append(paths, tgt.Path)
-			}
 			paths = append(paths, tgt.Paths...)
 		}
 		slices.Sort(paths)
