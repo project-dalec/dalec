@@ -168,7 +168,8 @@ the container step is cached.
 
 Set `--build-arg DALEC_REQUIRE_PREBUILT_PKG=1` to make the build fail when no
 prebuilt package is provided, instead of silently building the package from
-source.
+source. The Windows container target does not use prebuilt packages, so it
+rejects this option.
 
 To update the packages of an image you already built instead of installing
 them all again, see [Updating an existing image](image.md#updating-an-existing-image).

@@ -6,13 +6,21 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // RemoveLinks removes the symlinks or regular files at the given paths inside
-// root, so they can be created again. Paths are resolved inside root: parent
+// root, so they can be created again. Deeper paths are removed first. Paths are resolved inside root: parent
 // symlinks (including absolute ones) and ".." components cannot reach outside
 // of it. Missing paths and directories are left alone.
 func RemoveLinks(root string, paths []string) error {
+	// Remove the deepest paths first: a destination below another link's path
+	// is only reachable while that link still exists.
+	paths = slices.Clone(paths)
+	slices.SortStableFunc(paths, func(a, b string) int {
+		return len(splitPath(b)) - len(splitPath(a))
+	})
+
 	for _, p := range paths {
 		canonical, err := ResolveInRoot(root, p)
 		if err != nil {

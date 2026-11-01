@@ -381,3 +381,23 @@ func TestRemoveLinksResolvesDotDotAfterSymlinks(t *testing.T) {
 	_, err = os.Stat(filepath.Join(root, "victim"))
 	assert.NilError(t, err, "/victim must be kept")
 }
+
+func TestRemoveLinksNested(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"/usr/bin/hello": "hello", "/usr/share/x/keep": "x"}, map[string]string{
+		// /opt/a points at a directory, and /opt/a/b was created through it.
+		"/opt/a":         "/usr/share/x",
+		"/usr/share/x/b": "/usr/bin/hello",
+	})
+
+	// The parent link comes first in sorted order; the nested link must still
+	// be removed.
+	assert.NilError(t, RemoveLinks(root, []string{"/opt/a", "/opt/a/b"}))
+
+	for _, p := range []string{"/opt/a", "/usr/share/x/b"} {
+		_, err := os.Lstat(filepath.Join(root, p))
+		assert.Check(t, os.IsNotExist(err), p)
+	}
+	_, err := os.Stat(filepath.Join(root, "usr/share/x/keep"))
+	assert.NilError(t, err)
+}

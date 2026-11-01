@@ -40,7 +40,7 @@ type ImageConfig struct {
 	// so that updating one package only changes its own layer.
 	// This is experimental and currently only supported for RPM-based targets
 	// without a custom base image.
-	Layers string `yaml:"layers,omitempty" json:"layers,omitempty" jsonschema:"enum=single,enum=per-package"`
+	Layers string `yaml:"layers,omitempty" json:"layers,omitempty" jsonschema:"enum=,enum=single,enum=per-package"`
 	// Entrypoint sets the image's "entrypoint" field.
 	// This is used to control the default command to run when the image is run.
 	Entrypoint string `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`

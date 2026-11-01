@@ -1302,6 +1302,7 @@
 				},
 				"layers": {
 					"enum": [
+						"",
 						"single",
 						"per-package"
 					],
