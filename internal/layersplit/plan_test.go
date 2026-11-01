@@ -401,3 +401,30 @@ func TestRemoveLinksNested(t *testing.T) {
 	_, err := os.Stat(filepath.Join(root, "usr/share/x/keep"))
 	assert.NilError(t, err)
 }
+
+func TestRemoveLinksResolvesBeforeRemoving(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"/opt/data/keep": "x"}, map[string]string{
+		"/alias":          "usr/share/link",
+		"/usr/share/link": "../../opt/data",
+		"/opt/data/x":     "/usr/bin/hello",
+	})
+
+	// /alias/x goes through /usr/share/link, which is removed too. It must
+	// still remove /opt/data/x, whatever the order.
+	for _, order := range [][]string{{"/alias/x", "/usr/share/link"}, {"/usr/share/link", "/alias/x"}} {
+		writeTree(t, root, nil, nil)
+		_ = os.Remove(filepath.Join(root, "usr/share/link"))
+		_ = os.Remove(filepath.Join(root, "opt/data/x"))
+		assert.NilError(t, os.Symlink("../../opt/data", filepath.Join(root, "usr/share/link")))
+		assert.NilError(t, os.Symlink("/usr/bin/hello", filepath.Join(root, "opt/data/x")))
+
+		assert.NilError(t, RemoveLinks(root, order))
+		for _, p := range []string{"/usr/share/link", "/opt/data/x"} {
+			_, err := os.Lstat(filepath.Join(root, p))
+			assert.Check(t, os.IsNotExist(err), "%s with order %v", p, order)
+		}
+		_, err := os.Stat(filepath.Join(root, "opt/data/keep"))
+		assert.NilError(t, err)
+	}
+}
