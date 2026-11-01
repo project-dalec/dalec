@@ -159,11 +159,14 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 			paths = append(paths, tgt.Paths...)
 		}
 		slices.Sort(paths)
-		// Destinations may be relative to the root ("usr/bin/link") or absolute.
-		const removeLinks = `for p in "$@"; do f="` + workPath + `/${p#/}"; if [ -L "$f" ] || [ -f "$f" ]; then rm -f "$f"; fi; done`
+		// Paths are resolved inside the root filesystem by the frontend's
+		// layer-split helper, so they cannot reach outside of it.
+		const frontendPath = "/tmp/internal/dalec/layers/frontend"
+		args := append([]string{frontendPath, layersplit.CmdName, "rmlinks", "--root", workPath, "--"}, paths...)
 		rootfs = worker.Run(
 			dalec.WithConstraints(opts...),
-			llb.Args(append([]string{"/bin/sh", "-c", removeLinks, "remove-links"}, paths...)),
+			llb.Args(args),
+			llb.AddMount(frontendPath, frontend.GetCurrentFrontend(client), llb.SourcePath("/frontend"), llb.Readonly),
 			llb.WithCustomName("Remove existing post-install symlinks"),
 		).AddMount(workPath, rootfs)
 		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, frontend.NativeSymlinkSupport(client), opts...))

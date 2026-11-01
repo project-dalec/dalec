@@ -33,6 +33,7 @@ const (
 //	plan   --root DIR --dump DIR --out DIR [--max-layers N]
 //	copy   --root DIR --plan DIR --out DIR [--dir-mtime SECONDS]
 //	verify --expected DIR --actual DIR
+//	rmlinks --root DIR PATH...
 func Cmd(_ context.Context, args []string) {
 	if err := run(args); err != nil {
 		fmt.Fprintln(os.Stderr, CmdName+":", err)
@@ -65,6 +66,8 @@ func run(args []string) error {
 		return runCopy(*root, *planDir, *out, *dirMtime)
 	case "verify":
 		return runVerify(*expected, *actual)
+	case "rmlinks":
+		return RemoveLinks(*root, flags.Args())
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}

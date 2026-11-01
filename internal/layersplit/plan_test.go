@@ -316,3 +316,43 @@ func TestBuildPlanSpecPackages(t *testing.T) {
 		assert.Check(t, g.Name != "myapp-meta", "a package without files has no layer")
 	}
 }
+
+func TestRemoveLinks(t *testing.T) {
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim")
+	assert.NilError(t, os.WriteFile(victim, []byte("keep"), 0o644))
+
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"/usr/bin/app":   "app",
+		"/etc/file-link": "a regular file",
+		"/data/keep":     "x",
+	}, map[string]string{
+		"/app-link":        "/usr/bin/app",
+		"/usr/lib64":       "lib",
+		"/escape":          outside, // absolute symlink to a directory outside the root
+		"/usr/local/bin/r": "../../bin/app",
+	})
+
+	err := RemoveLinks(root, []string{
+		"/app-link",          // symlink: removed
+		"usr/local/bin/r",    // relative path: removed
+		"/etc/file-link",     // regular file: removed
+		"/data",              // directory: kept
+		"/missing",           // missing: ignored
+		"/escape/victim",     // resolves inside root, not to the outside file
+		"/../../.." + victim, // ".." cannot leave the root
+		"/" + filepath.Base(outside) + "/../victim",
+	})
+	assert.NilError(t, err)
+
+	for _, p := range []string{"/app-link", "/usr/local/bin/r", "/etc/file-link"} {
+		_, err := os.Lstat(filepath.Join(root, p))
+		assert.Check(t, os.IsNotExist(err), p)
+	}
+	_, err = os.Stat(filepath.Join(root, "data/keep"))
+	assert.Check(t, err, "directories are kept")
+	dt, err := os.ReadFile(victim)
+	assert.NilError(t, err, "files outside the root must not be removed")
+	assert.Check(t, cmp.Equal(string(dt), "keep"))
+}
