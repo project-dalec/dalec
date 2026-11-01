@@ -52,6 +52,11 @@ const (
 
 	// LabelImageLayers is the image label set on images using per-package layers.
 	LabelImageLayers = "dev.dalec.image.layers"
+
+	// LabelSpecPackages is the image label listing every installed package
+	// built from the spec (comma separated), including packages without files
+	// of their own, which have no layer.
+	LabelSpecPackages = "dev.dalec.image.spec-packages"
 )
 
 // stateDirs are directories whose whole contents always go to the state layer
@@ -124,6 +129,8 @@ func ParseHistoryComment(s string) (Group, bool) {
 type Plan struct {
 	Version int     `json:"version"`
 	Groups  []Group `json:"groups"`
+	// SpecPackages lists every installed package built from the spec, sorted.
+	SpecPackages []string `json:"specPackages,omitempty"`
 	// Assign maps each path (absolute, relative to the root) to the index of
 	// its group in Groups. It is written to a separate file, see [WriteAssign].
 	Assign map[string]int `json:"-"`
@@ -355,6 +362,12 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 
 	ordered := append(append(osKeys, appKeys...), stateKey)
 	plan := &Plan{Version: PlanVersion, Assign: make(map[string]int, len(assignKey))}
+	for pkg := range in.App {
+		if _, installed := in.Packages[pkg]; installed {
+			plan.SpecPackages = append(plan.SpecPackages, pkg)
+		}
+	}
+	sort.Strings(plan.SpecPackages)
 	index := make(map[string]int, len(ordered))
 	for i, key := range ordered {
 		g := groups[key]

@@ -173,7 +173,7 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				}
 				if split != nil {
 					final = split.Verify.With(testrunner.WithFinalState(split.State.With(runTests), frontend.TestWithClientFrontend(client)))
-					addLayerHistory(img, split.Groups)
+					addLayerHistory(img, split.Groups, split.SpecPackages)
 				}
 			}
 

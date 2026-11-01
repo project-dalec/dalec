@@ -299,3 +299,20 @@ func TestBuildPlanKeepsHardlinksTogether(t *testing.T) {
 	}
 	assert.Check(t, cmp.Equal(total, len(plan.Assign)))
 }
+
+func TestBuildPlanSpecPackages(t *testing.T) {
+	root := testRoot(t)
+	in := testInputs()
+	// An installed spec metapackage without files, and a spec package that is
+	// not installed.
+	in.Packages["myapp-meta"] = "myapp"
+	in.App["myapp-meta"] = true
+	in.App["myapp-missing"] = true
+
+	plan, err := BuildPlan(root, in, Options{})
+	assert.NilError(t, err)
+	assert.Check(t, cmp.DeepEqual(plan.SpecPackages, []string{"myapp", "myapp-debug", "myapp-meta"}))
+	for _, g := range plan.Groups {
+		assert.Check(t, g.Name != "myapp-meta", "a package without files has no layer")
+	}
+}

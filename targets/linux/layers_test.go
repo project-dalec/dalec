@@ -3,7 +3,10 @@ package linux
 import (
 	"testing"
 
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-dalec/dalec"
+	"github.com/project-dalec/dalec/internal/layersplit"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
 )
@@ -39,4 +42,17 @@ func TestParseUpdatePackages(t *testing.T) {
 		_, err := parseUpdatePackages(bad)
 		assert.Check(t, cmp.ErrorContains(err, "invalid package name"), bad)
 	}
+}
+
+func TestPreviousImageAppPackages(t *testing.T) {
+	img := &dockerspec.DockerOCIImage{}
+	img.Config.Labels = map[string]string{layersplit.LabelSpecPackages: "foo,foo-meta"}
+	img.History = []ocispecs.History{
+		{Comment: layersplit.Group{Name: "glibc", Kind: layersplit.KindOS, Packages: []string{"glibc"}}.HistoryComment()},
+		{Comment: layersplit.Group{Name: "foo-old", Kind: layersplit.KindApp, Packages: []string{"foo-old"}}.HistoryComment()},
+		{Comment: "buildkit.exporter.image.v0"},
+	}
+	prev := &previousImage{Config: img}
+	assert.Check(t, cmp.DeepEqual(prev.appPackages(), []string{"foo", "foo-meta", "foo-old"}))
+	assert.Check(t, cmp.Len((&previousImage{}).appPackages(), 0))
 }

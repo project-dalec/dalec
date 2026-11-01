@@ -29,6 +29,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 		var img dalec.DockerImageSpec
 		assert.NilError(t, json.Unmarshal(dt, &img))
 		assert.Check(t, cmp.Equal(img.Config.Labels[layersplit.LabelImageLayers], dalec.ImageLayersPerPackage))
+		assert.Check(t, cmp.Contains(img.Config.Labels[layersplit.LabelSpecPackages], "test-container-build"))
 
 		var groups []layersplit.Group
 		for _, h := range img.History {

@@ -92,7 +92,9 @@ How files are split:
 Each layer has an image history entry whose comment records its contents, for
 example `dalec.layer.v1 kind=os name=openssl packages=openssl,openssl-libs`.
 The final layer is recorded as `dalec.layer.v1 kind=state name=state`, and the
-image gets the label `dev.dalec.image.layers=per-package`. Tools such as image
+image gets the label `dev.dalec.image.layers=per-package`. The label
+`dev.dalec.image.spec-packages` lists every installed package built from the
+spec, including packages without files of their own. Tools such as image
 patchers can use these to find which layer holds a package.
 
 Every build checks that the layers together contain exactly the same files,

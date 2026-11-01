@@ -90,13 +90,16 @@ func getPreviousImage(ctx context.Context, client gwclient.Client, platform *oci
 	return &previousImage{State: *st, Config: img}, nil
 }
 
-// appPackages returns the spec package names recorded in the layer history of
-// a per-package image.
+// appPackages returns the spec package names recorded in a per-package
+// image: in its spec packages label and in its layer history.
 func (p *previousImage) appPackages() []string {
 	if p.Config == nil {
 		return nil
 	}
 	var out []string
+	if v := p.Config.Config.Labels[layersplit.LabelSpecPackages]; v != "" {
+		out = append(out, strings.Split(v, ",")...)
+	}
 	for _, h := range p.Config.History {
 		if g, ok := layersplit.ParseHistoryComment(h.Comment); ok && g.Kind == layersplit.KindApp {
 			out = append(out, g.Packages...)
@@ -199,6 +202,8 @@ type splitLayersResult struct {
 	Verify llb.State
 	// Groups describes each layer of State, in order.
 	Groups []layersplit.Group
+	// SpecPackages lists the installed packages built from the spec.
+	SpecPackages []string
 }
 
 // splitLayers splits the installed container root filesystem rootfs into one
@@ -318,7 +323,7 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 		dalec.WithConstraints(splitOpts...),
 	).Root()
 
-	return &splitLayersResult{State: merged, Verify: verify, Groups: plan.Groups}, nil
+	return &splitLayersResult{State: merged, Verify: verify, Groups: plan.Groups, SpecPackages: plan.SpecPackages}, nil
 }
 
 func solveToState(ctx context.Context, client gwclient.Client, st llb.State, opts ...llb.ConstraintsOpt) (llb.State, error) {
@@ -338,8 +343,9 @@ func solveToState(ctx context.Context, client gwclient.Client, st llb.State, opt
 }
 
 // addLayerHistory appends one image history entry per layer group, so tools
-// can tell which packages each layer holds.
-func addLayerHistory(img *dalec.DockerImageSpec, groups []layersplit.Group) {
+// can tell which packages each layer holds, and records the installed spec
+// packages in a label.
+func addLayerHistory(img *dalec.DockerImageSpec, groups []layersplit.Group, specPackages []string) {
 	for _, g := range groups {
 		img.History = append(img.History, ocispecs.History{
 			CreatedBy: g.HistoryCreatedBy(),
@@ -350,4 +356,7 @@ func addLayerHistory(img *dalec.DockerImageSpec, groups []layersplit.Group) {
 		img.Config.Labels = make(map[string]string)
 	}
 	img.Config.Labels[layersplit.LabelImageLayers] = dalec.ImageLayersPerPackage
+	if len(specPackages) > 0 {
+		img.Config.Labels[layersplit.LabelSpecPackages] = strings.Join(specPackages, ",")
+	}
 }
