@@ -101,8 +101,8 @@ rm -f /var/lib/apt/lists/_*
 rm -rf /var/lib/apt/lists/partial/*
 apt update
 
-# Spec packages are replaced by the supplied spec packages, if any, and are
-# otherwise kept as they are: hold them so apt never changes them.
+# Spec packages are never changed from the repositories: they are replaced by
+# the supplied spec packages, if any, and otherwise kept as they are.
 local_debs=""
 supplied=""
 for f in /spec-packages/*.deb; do
@@ -110,22 +110,32 @@ for f in /spec-packages/*.deb; do
     local_debs="${local_debs} ${f}"
     supplied="${supplied} $(dpkg-deb -f "${f}" Package)"
 done
-hold=""
-for k in $(cat "${lists}/keep"); do
+keep=$(cat "${lists}/keep")
+unsupplied=""
+for k in ${keep}; do
     case " ${supplied} " in *" ${k} "*) continue ;; esac
-    hold="${hold} ${k}"
+    unsupplied="${unsupplied} ${k}"
 done
 
-status=/tmp/dalec-update-status
-awk -v hold="${hold}" '
-    BEGIN { n = split(hold, h, " "); for (i = 1; i <= n; i++) held[h[i]] = 1 }
-    /^Package: / { pkg = $2 }
-    /^Status: install / && (pkg in held) { sub(/^Status: install /, "Status: hold ") }
-    { print }
-' "${admin}/status" > "${status}"
+# Writes a copy of the dpkg status with the given packages on hold, so apt
+# never changes them.
+hold() {
+    awk -v hold="$2" '
+        BEGIN { n = split(hold, h, " "); for (i = 1; i <= n; i++) held[h[i]] = 1 }
+        /^Package: / { pkg = $2 }
+        /^Status: install / && (pkg in held) { sub(/^Status: install /, "Status: hold ") }
+        { print }
+    ' "${admin}/status" > "$1"
+}
+# Repository upgrades hold every spec package; the supplied spec packages
+# are installed separately.
+hold /tmp/dalec-update-status "${keep}"
+hold /tmp/dalec-update-status-local "${unsupplied}"
 
 mkdir -p "${out}/partial"
-apt_opts="-o Dir::State::status=${status} -o Dir::Cache::Archives=${out} --yes --no-remove"
+common_opts="-o Dir::Cache::Archives=${out} --yes --no-remove"
+apt_opts="-o Dir::State::status=/tmp/dalec-update-status ${common_opts}"
+local_opts="-o Dir::State::status=/tmp/dalec-update-status-local ${common_opts}"
 
 # Package names may contain glob characters, which must not expand to files.
 set -f
@@ -142,7 +152,7 @@ if [ -n "${pkgs}" ]; then
 fi
 if [ -n "${local_debs}" ]; then
     # Supplied spec packages may be new, so they are not limited to upgrades.
-    apt-get ${apt_opts} --download-only install ${local_debs}
+    apt-get ${local_opts} --download-only install ${local_debs}
 fi
 rm -rf "${out}/partial" "${out}/lock"
 
@@ -206,6 +216,16 @@ while [ -n "${pending}" ]; do
     fi
     pending="${left}"
 done
+
+# Configuring can also run triggers of packages that were already installed:
+# make sure nothing is left unconfigured or broken, like fresh builds do.
+dpkg --force-confdef --force-confold --configure --pending
+audit=$(dpkg --audit 2>&1 || true)
+if [ -n "${audit}" ]; then
+    echo "dpkg --audit reported problems after the update:" >&2
+    echo "${audit}" >&2
+    exit 1
+fi
 `
 
 // updateCleanupScript removes what the install left behind: the worker's own
