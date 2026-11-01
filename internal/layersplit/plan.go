@@ -451,8 +451,11 @@ func ResolveInRoot(root, p string) (string, error) {
 		fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(next)))
 		if err != nil {
 			if os.IsNotExist(err) {
-				// Nothing below a missing directory can be a symlink.
-				return path.Join(append([]string{next}, pending...)...), nil
+				// Keep going through the missing directory: a later ".." can
+				// lead back to existing directories whose symlinks must still
+				// be resolved inside root.
+				cur = next
+				continue
 			}
 			return "", err
 		}

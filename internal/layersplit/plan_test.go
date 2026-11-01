@@ -183,6 +183,9 @@ func TestResolveInRoot(t *testing.T) {
 		"/rel/x":           "/usr/share/x",
 		"/../../x/../..":   "/",
 		"/./usr/./lib/x":   "/usr/lib/x",
+		// Symlinks reached after a missing directory are still resolved.
+		"/missing/../lib/x":      "/usr/lib/x",
+		"/missing/a/../../abs/x": "/usr/lib/x",
 	}
 	for in, want := range cases {
 		got, err := ResolveInRoot(root, in)
@@ -342,13 +345,14 @@ func TestRemoveLinks(t *testing.T) {
 	})
 
 	err := RemoveLinks(root, []string{
-		"/app-link",          // symlink: removed
-		"usr/local/bin/r",    // relative path: removed
-		"/etc/file-link",     // regular file: removed
-		"/data",              // directory: kept
-		"/missing",           // missing: ignored
-		"/escape/victim",     // resolves inside root, not to the outside file
-		"/../../.." + victim, // ".." cannot leave the root
+		"/app-link",                 // symlink: removed
+		"usr/local/bin/r",           // relative path: removed
+		"/etc/file-link",            // regular file: removed
+		"/data",                     // directory: kept
+		"/missing",                  // missing: ignored
+		"/escape/victim",            // resolves inside root, not to the outside file
+		"/missing/../escape/victim", // a missing directory does not skip resolving /escape
+		"/../../.." + victim,        // ".." cannot leave the root
 		"/" + filepath.Base(outside) + "/../victim",
 	})
 	assert.NilError(t, err)
