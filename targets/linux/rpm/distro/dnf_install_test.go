@@ -1,6 +1,7 @@
 package distro
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
+	"github.com/project-dalec/dalec/internal/test"
 	"gotest.tools/v3/assert"
+	"gotest.tools/v3/assert/cmp"
 )
 
 func TestConfigureDnfProxyAddsCACertOptions(t *testing.T) {
@@ -137,4 +141,33 @@ func TestDnfInstallFlagsExclude(t *testing.T) {
 
 	cfg = dnfInstallConfig{}
 	assert.Check(t, !strings.Contains(dnfInstallFlags(&cfg), "--exclude"))
+}
+
+func TestUpgradePassesPackagesAsArguments(t *testing.T) {
+	ctx := context.Background()
+	for name, upgrade := range map[string]PackageInstaller{"dnf": DnfUpgrade, "tdnf": TdnfUpgrade} {
+		t.Run(name, func(t *testing.T) {
+			var cfg dnfInstallConfig
+			st := llb.Image("worker").Run(upgrade(&cfg, "3.0", []string{"$(touch /pwned)", "openssl"})).Root()
+
+			var args []string
+			var scripts string
+			for _, op := range test.LLBOpsFromState(ctx, t, st) {
+				if e := op.Op.GetExec(); e != nil {
+					args = e.Meta.Args
+				}
+				if f := op.Op.GetFile(); f != nil {
+					for _, a := range f.Actions {
+						if mk := a.GetMkfile(); mk != nil {
+							scripts += string(mk.Data)
+						}
+					}
+				}
+			}
+			assert.Assert(t, len(args) >= 2)
+			assert.Check(t, cmp.DeepEqual(args[len(args)-2:], []string{"$(touch /pwned)", "openssl"}))
+			assert.Check(t, !strings.Contains(scripts, "pwned"), "package names must not be interpolated into the script")
+			assert.Check(t, strings.Contains(scripts, `dnf_sub_cmd="upgrade"`))
+		})
+	}
 }

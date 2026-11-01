@@ -248,3 +248,19 @@ func minimizeInstall(opts ...llb.ConstraintsOpt) DnfInstallOpt {
 
 	return DnfWithPostInstallScript(scriptPath, script)
 }
+
+// minimizeRun runs the minimization script on its own, outside of a package
+// transaction, against the root filesystem mounted at /tmp/rootfs.
+func minimizeRun(seeds llb.State, opts ...llb.ConstraintsOpt) llb.RunOption {
+	opts = append(opts, dalec.ProgressGroup("Minimize RPM container"))
+
+	const scriptPath = "/tmp/dalec/internal/rpm/minimize.sh"
+
+	script := llb.Scratch().File(llb.Mkfile("minimize.sh", 0o755, []byte(rpmMinimizeScript)), opts...)
+
+	return dalec.WithRunOptions(
+		llb.Args([]string{scriptPath}),
+		llb.AddMount(scriptPath, script, llb.SourcePath("minimize.sh"), llb.Readonly),
+		llb.AddMount(minimizeSeedsPath, seeds, llb.SourcePath("seeds"), llb.Readonly),
+	)
+}

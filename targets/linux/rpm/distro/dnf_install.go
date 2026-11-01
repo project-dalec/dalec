@@ -410,14 +410,16 @@ func DnfInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.Run
 // DnfUpgrade uses dnf to upgrade installed packages. With no packages, every
 // installed package with an available update is upgraded.
 func DnfUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
-	return dnfCommand(cfg, releaseVer, "dnf", append([]string{"upgrade"}, pkgs...), nil)
+	// Packages are passed as quoted arguments rather than in the subcommand,
+	// which is interpolated into the install script.
+	return dnfCommand(cfg, releaseVer, "dnf", []string{"upgrade"}, pkgs)
 }
 
 // TdnfUpgrade uses tdnf (or dnf, when available) to upgrade installed packages.
 // With no packages, every installed package with an available update is
 // upgraded.
 func TdnfUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
-	return dnfCommand(cfg, releaseVer, "tdnf", append([]string{"upgrade"}, pkgs...), nil)
+	return dnfCommand(cfg, releaseVer, "tdnf", []string{"upgrade"}, pkgs)
 }
 
 // TdnfInstall uses tdnf to install packages

@@ -2,6 +2,7 @@ package linux
 
 import (
 	"context"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -124,9 +125,23 @@ func specPackageNames(spec *dalec.Spec, targetKey string, extra []string) []stri
 }
 
 // updatePackages returns the packages listed in the DALEC_UPDATE_PACKAGES build arg.
-func updatePackages(client gwclient.Client) []string {
+func updatePackages(client gwclient.Client) ([]string, error) {
 	v, _ := frontend.GetBuildArg(client, dalec.BuildArgDalecUpdatePackages)
-	return strings.FieldsFunc(v, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	return parseUpdatePackages(v)
+}
+
+// updatePackageName matches the package names and globs accepted in
+// DALEC_UPDATE_PACKAGES. Names must not look like package manager options.
+var updatePackageName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._+~^:*?-]*$`)
+
+func parseUpdatePackages(v string) ([]string, error) {
+	pkgs := strings.FieldsFunc(v, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	for _, p := range pkgs {
+		if !updatePackageName.MatchString(p) {
+			return nil, errors.Errorf("invalid package name %q in %s", p, dalec.BuildArgDalecUpdatePackages)
+		}
+	}
+	return pkgs, nil
 }
 
 // updateContainer builds the container root filesystem by upgrading the
@@ -153,16 +168,22 @@ func updateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.Sou
 	// in the previous image's layer history (for example if a package was
 	// renamed), even when none of them has files of its own.
 	names := specPackageNames(spec, targetKey, prev.appPackages())
-	if prebuilt != nil {
-		specPkgs = *prebuilt
-	} else {
-		specPkgs = llb.Scratch().File(
-			llb.Mkfile(layersplit.AppPackagesFile, 0o644, []byte(strings.Join(names, "\n")+"\n")),
-			dalec.WithConstraints(opts...),
-		)
+	pkgs, err := updatePackages(client)
+	if err != nil {
+		return llb.State{}, llb.State{}, err
 	}
 
-	rootfs, err = updater.UpdateContainer(ctx, client, sOpt, spec, targetKey, prev.State, prebuilt, updatePackages(client), names, opts...)
+	// The layer split reads spec package names from the list and from any
+	// prebuilt RPMs, so names recorded in the previous image are kept even
+	// when prebuilt packages are supplied.
+	nameList := llb.Mkfile("/"+layersplit.AppPackagesFile, 0o644, []byte(strings.Join(names, "\n")+"\n"))
+	if prebuilt != nil {
+		specPkgs = prebuilt.File(nameList, dalec.WithConstraints(opts...))
+	} else {
+		specPkgs = llb.Scratch().File(nameList, dalec.WithConstraints(opts...))
+	}
+
+	rootfs, err = updater.UpdateContainer(ctx, client, sOpt, spec, targetKey, prev.State, prebuilt, pkgs, names, opts...)
 	if err != nil {
 		return llb.State{}, llb.State{}, err
 	}

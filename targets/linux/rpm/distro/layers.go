@@ -107,11 +107,7 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 	// be mounted.
 	var minimizeOpts []DnfInstallOpt
 	if spec.GetImageMinimizationProfile(targetKey) == dalec.ImageMinimizationProfileDefault {
-		seeds := slices.Clone(keep)
-		for _, b := range cfg.BasePackages {
-			seeds = append(seeds, b.Name)
-		}
-		seedSt := llb.Scratch().File(llb.Mkfile("seeds", 0o644, []byte(strings.Join(seeds, "\n")+"\n")), dalec.WithConstraints(opts...))
+		seedSt := seedsState(keep, cfg.BasePackages, opts...)
 		minimizeOpts = []DnfInstallOpt{
 			DnfWithMounts(llb.AddMount(minimizeSeedsPath, seedSt, llb.SourcePath("seeds"), llb.Readonly)),
 			minimizeInstall(opts...),
@@ -130,6 +126,16 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 			cfg.Upgrade(upgrade, upgradeOpts...),
 			frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 			llb.WithCustomName("Upgrade packages in the existing image"),
+		).AddMount(workPath, rootfs)
+	}
+
+	// Without any package transaction, minimization still has to run so the
+	// requested profile applies (for example to a previously unminimized image).
+	if !runUpgrade && !runInstall && minimizeOpts != nil {
+		rootfs = worker.Run(
+			dalec.WithConstraints(opts...),
+			minimizeRun(seedsState(keep, cfg.BasePackages, opts...), opts...),
+			llb.WithCustomName("Minimize the existing image"),
 		).AddMount(workPath, rootfs)
 	}
 
@@ -166,4 +172,14 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 	}
 
 	return rootfs, nil
+}
+
+// seedsState returns a state with the minimization seed list: the kept spec
+// packages and the distro's base packages.
+func seedsState(keep []string, base []dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
+	seeds := slices.Clone(keep)
+	for _, b := range base {
+		seeds = append(seeds, b.Name)
+	}
+	return llb.Scratch().File(llb.Mkfile("seeds", 0o644, []byte(strings.Join(seeds, "\n")+"\n")), dalec.WithConstraints(opts...))
 }
