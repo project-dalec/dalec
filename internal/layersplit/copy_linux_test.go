@@ -104,3 +104,68 @@ func TestCompareReportsDifferences(t *testing.T) {
 	err = runVerify(expected, actual)
 	assert.ErrorContains(t, err, "verification failed")
 }
+
+func TestCompareDetectsBrokenHardlinks(t *testing.T) {
+	expected := t.TempDir()
+	actual := t.TempDir()
+	writeTree(t, expected, map[string]string{"/a": "same"}, nil)
+	assert.NilError(t, os.Link(filepath.Join(expected, "a"), filepath.Join(expected, "b")))
+	writeTree(t, actual, map[string]string{"/a": "same", "/b": "same"}, nil)
+	for _, root := range []string{expected, actual} {
+		for _, p := range []string{"a", "b"} {
+			assert.NilError(t, os.Chtimes(filepath.Join(root, p), time.Unix(1, 0), time.Unix(1, 0)))
+		}
+	}
+
+	want, err := Tree(expected)
+	assert.NilError(t, err)
+	got, err := Tree(actual)
+	assert.NilError(t, err)
+	assert.Check(t, cmp.Equal(want["/b"].Hardlink, "/a"))
+	assert.Check(t, cmp.Len(Compare(want, got), 2))
+}
+
+func TestCopyDoesNotAddInheritedACLs(t *testing.T) {
+	setfacl, err := exec.LookPath("setfacl")
+	if err != nil {
+		t.Skip("setfacl is not available")
+	}
+
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"/data/file": "x"}, nil)
+	// The directory gets a default ACL after its file was created, so the
+	// file has no ACL of its own.
+	if out, err := exec.Command(setfacl, "-d", "-m", "u::rwx,g::r-x,o::---", filepath.Join(root, "data")).CombinedOutput(); err != nil {
+		t.Skipf("ACLs are not supported here: %v: %s", err, out)
+	}
+
+	in := Inputs{
+		Packages: map[string]string{"pkg": "pkg"},
+		Files:    []OwnedFile{{Package: "pkg", Path: "/data/file"}, {Package: "pkg", Path: "/data"}},
+	}
+	plan, err := BuildPlan(root, in, Options{})
+	assert.NilError(t, err)
+
+	base := t.TempDir()
+	outs := make([]string, len(plan.Groups))
+	for i := range plan.Groups {
+		outs[i] = filepath.Join(base, strconv.Itoa(i))
+		assert.NilError(t, os.Mkdir(outs[i], 0o755))
+	}
+	assert.NilError(t, Copy(root, plan.Assign, outs, 0))
+
+	idx := plan.Assign["/data/file"]
+	_, err = unix.Lgetxattr(filepath.Join(outs[idx], "data/file"), "system.posix_acl_access", nil)
+	assert.Check(t, err != nil, "copied file must not inherit the directory's default ACL")
+	_, err = unix.Lgetxattr(filepath.Join(outs[idx], "data"), "system.posix_acl_default", nil)
+	assert.NilError(t, err, "the directory keeps its own default ACL")
+
+	// The copy verifies against the original.
+	merged := t.TempDir()
+	mergeInto(t, merged, outs)
+	want, err := Tree(root)
+	assert.NilError(t, err)
+	got, err := Tree(merged)
+	assert.NilError(t, err)
+	assert.Check(t, cmp.Len(Compare(want, got), 0))
+}
