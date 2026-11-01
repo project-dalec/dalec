@@ -241,8 +241,11 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 			w := reqToState(ctx, gwc, newSolveRequest(withBuildTarget(testConfig.Target.Worker), withSpec(ctx, t, nil)), t)
 			key := generateGPGKey(w, false)
-			repo := func(version string) llb.State {
+			repo := func(version string, extra ...llb.State) llb.State {
 				pkg := reqToState(ctx, gwc, newSolveRequest(withSpec(ctx, t, depSpec(version)), withBuildTarget(testConfig.Target.Package)), t)
+				if len(extra) > 0 {
+					pkg = llb.Merge(append([]llb.State{pkg}, extra...))
+				}
 				withRepo := w.With(testConfig.Worker.CreateRepo(pkg, repoPath, testConfig.Worker.SignRepo(key, repoPath)))
 				return llb.Scratch().File(llb.Copy(withRepo, repoPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
 			}
@@ -264,6 +267,14 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 			))
 			assert.Check(t, cmp.Contains(readFile(prev, "/usr/bin/dep-version"), "dep 1.0.0"))
 
+			// The repository also publishes a newer revision of the spec's own
+			// package. The update must keep the spec package from the
+			// previous image instead of upgrading it from the repository.
+			newer := appSpec()
+			newer.Revision = "2"
+			newer.Sources["src"].Inline.Dir.Files["hello"] = &dalec.SourceInlineFile{Contents: "#!/bin/sh\necho newer\n", Permissions: 0o755}
+			newerPkg := reqToState(ctx, gwc, newSolveRequest(withSpec(ctx, t, &newer), withBuildTarget(testConfig.Target.Package)), t)
+
 			// Updating must not build the spec's package: make building it fail.
 			update := appSpec()
 			update.Build.Steps = []dalec.BuildStep{{Command: "echo the spec package must not be built when updating an image; exit 1"}}
@@ -271,13 +282,13 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 			res := solveT(ctx, t, gwc, newSolveRequest(
 				withSpec(ctx, t, &update),
 				withBuildTarget(target),
-				withBuildContext(ctx, t, "test-repo", repo("2.0.0")),
+				withBuildContext(ctx, t, "test-repo", repo("2.0.0", newerPkg)),
 				withBuildContext(ctx, t, "repo-public-key", key),
 				withBuildContext(ctx, t, dalec.PreviousImageContext, resultToState(t, prev)),
 			))
 
 			assert.Check(t, cmp.Contains(readFile(res, "/usr/bin/dep-version"), "dep 2.0.0"), "dependency should be upgraded")
-			assert.Check(t, cmp.Equal(readFile(res, "/usr/bin/hello"), readFile(prev, "/usr/bin/hello")), "spec package should be kept")
+			assert.Check(t, cmp.Equal(readFile(res, "/usr/bin/hello"), readFile(prev, "/usr/bin/hello")), "spec package should be kept, not upgraded from the repository")
 			checkGroups(t, &update, layerGroups(t, res))
 		})
 	})
