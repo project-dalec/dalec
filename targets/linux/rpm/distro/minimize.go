@@ -17,6 +17,12 @@ rpm_root() {
 seed_packages() {
 	local dir rpm_file path
 
+	# Extra seed package names, one per line (used when updating an existing
+	# image, where the spec packages may not be mounted).
+	if [ -f /tmp/dalec/internal/rpm/minimize-seeds ]; then
+		cat /tmp/dalec/internal/rpm/minimize-seeds
+	fi
+
 	for dir in /tmp/rpms /tmp/rpms-base; do
 		[ -d "${dir}" ] || continue
 
@@ -230,6 +236,9 @@ rm -rf \
 	"${rootfs}/var/log/yum.log" 2>/dev/null || true
 `
 
+// minimizeSeedsPath is where [minimizeInstall] reads extra seed package names.
+const minimizeSeedsPath = "/tmp/dalec/internal/rpm/minimize-seeds"
+
 func minimizeInstall(opts ...llb.ConstraintsOpt) DnfInstallOpt {
 	opts = append(opts, dalec.ProgressGroup("Minimize RPM container"))
 
@@ -238,4 +247,20 @@ func minimizeInstall(opts ...llb.ConstraintsOpt) DnfInstallOpt {
 	script := llb.Scratch().File(llb.Mkfile("minimize.sh", 0o755, []byte(rpmMinimizeScript)), opts...)
 
 	return DnfWithPostInstallScript(scriptPath, script)
+}
+
+// minimizeRun runs the minimization script on its own, outside of a package
+// transaction, against the root filesystem mounted at /tmp/rootfs.
+func minimizeRun(seeds llb.State, opts ...llb.ConstraintsOpt) llb.RunOption {
+	opts = append(opts, dalec.ProgressGroup("Minimize RPM container"))
+
+	const scriptPath = "/tmp/dalec/internal/rpm/minimize.sh"
+
+	script := llb.Scratch().File(llb.Mkfile("minimize.sh", 0o755, []byte(rpmMinimizeScript)), opts...)
+
+	return dalec.WithRunOptions(
+		llb.Args([]string{scriptPath}),
+		llb.AddMount(scriptPath, script, llb.SourcePath("minimize.sh"), llb.Readonly),
+		llb.AddMount(minimizeSeedsPath, seeds, llb.SourcePath("seeds"), llb.Readonly),
+	)
 }

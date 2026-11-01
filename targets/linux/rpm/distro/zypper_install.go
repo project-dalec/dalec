@@ -28,6 +28,15 @@ func ZypperInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.
 	return zypperCommand(cfg, []string{"install"}, pkgs)
 }
 
+// ZypperUpgrade upgrades installed packages using zypper. With no packages,
+// every installed package with an available update is upgraded. Packages
+// excluded with [DnfExclude] are never upgraded: zypper has no exclude option,
+// so they are left out of the upgrade and the build fails if the upgrade
+// changed them anyway (for example to satisfy a dependency).
+func ZypperUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
+	return zypperCommand(cfg, []string{"update"}, upgradeArgs(cfg, pkgs))
+}
+
 const zypperProxyConfigScript = `
 cleanup_zypper_proxy() {
 	if [ -n "${DALEC_ZYPPER_PROXY_ANCHOR_ACTIVE:-}" ]; then
@@ -105,8 +114,11 @@ configure_zypper_proxy() {
 }
 `
 
-func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []string) llb.RunOption {
-	const importKeysPath = "/tmp/dalec/internal/zypper/import-keys.sh"
+const zypperImportKeysPath = "/tmp/dalec/internal/zypper/import-keys.sh"
+
+// zypperScript renders the script which runs the zypper subcommand.
+func zypperScript(cfg *dnfInstallConfig, zypperSubCmd []string) ([]byte, error) {
+	const importKeysPath = zypperImportKeysPath
 
 	// zypper cannot install into a foreign-architecture rootfs the way dnf can
 	// (it has no --forcearch). cfg.root is only set for cross-arch/rootfs
@@ -136,6 +148,12 @@ func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []st
 	// vendor/version differences that arise when pulling from the Microsoft
 	// prod repos alongside the base SUSE repos.
 	installFlags := []string{"--auto-agree-with-licenses", "--allow-downgrade", "--allow-vendor-change"}
+	update := len(zypperSubCmd) == 1 && zypperSubCmd[0] == "update"
+	if update {
+		// Only upgrade what is installed: recommended packages of the upgraded
+		// packages are not pulled in.
+		installFlags = []string{"--auto-agree-with-licenses", "--allow-vendor-change", "--no-recommends"}
+	}
 	installFlagsStr := strings.Join(installFlags, " ")
 	zypperSubCmdStr := strings.Join(zypperSubCmd, " ")
 
@@ -153,6 +171,7 @@ global_flags={{ shellQuote .GlobalFlags }}
 zypper_sub_cmd={{ shellQuote .ZypperSubCmd }}
 install_flags={{ shellQuote .InstallFlags }}
 post_install_path={{ shellQuote .PostInstallPath }}
+install_root={{ shellQuote .Root }}
 
 if [ -x "$import_keys_path" ]; then
 	"$import_keys_path"
@@ -171,7 +190,7 @@ trap cleanup_zypper_proxy EXIT
 # "rpm.install.excludedocs = yes" enabled, so when docs ARE requested we must
 # explicitly force it to "no" to override that base-image default.
 excludedocs={{ if .IncludeDocs }}no{{ else }}yes{{ end }}
-zypp_conf="/etc/zypp/zypp.conf"
+zypp_conf="${DALEC_ZYPP_CONF:-/etc/zypp/zypp.conf}"
 mkdir -p "$(dirname "$zypp_conf")"
 if [ -f "$zypp_conf" ] && grep -Eq '^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs' "$zypp_conf"; then
 	sed -i -E "s|^[[:space:]]*#?[[:space:]]*rpm\.install\.excludedocs.*|rpm.install.excludedocs = $excludedocs|" "$zypp_conf"
@@ -187,8 +206,19 @@ fi
 shopt -s globstar nullglob
 install_args=()
 local_rpms=()
+excludes=()
 for arg in "${@}"; do
 	case "$arg" in
+	--exclude=*)
+		excludes+=( "${arg#--exclude=}" )
+		;;
+{{- if .Update }}
+	*)
+		# Upgrade arguments are package names, which may contain wildcards
+		# for zypper; never expand them as file globs.
+		install_args+=( "$arg" )
+		;;
+{{- end }}
 	*[*?[]*)
 		expanded=( $arg )
 		for expanded_arg in "${expanded[@]}"; do
@@ -246,7 +276,56 @@ EOF
 	zypper $global_flags refresh --force "$local_repo_alias"
 fi
 
+{{- if .Update }}
+rpm_root=()
+if [ -n "$install_root" ]; then
+	rpm_root=( --root "$install_root" )
+fi
+
+# Versions of the excluded packages, checked after the upgrade.
+excluded_versions() {
+	if (( ${#excludes[@]} > 0 )); then
+		rpm "${rpm_root[@]}" -q --qf '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' -- "${excludes[@]}" 2>/dev/null | grep -v 'is not installed' || true
+	fi
+}
+before="$(excluded_versions)"
+
+is_excluded() {
+	local e
+	for e in "${excludes[@]}"; do
+		[ "$e" = "$1" ] && return 0
+	done
+	return 1
+}
+
+if (( ${#install_args[@]} == 0 )); then
+	# zypper has no exclude option: list the available updates and leave out
+	# the excluded packages.
+	# Capture the output first so a failure to list the updates fails the
+	# build instead of looking like there are no updates.
+	updates_xml="$(zypper $global_flags --xmlout list-updates)"
+	while read -r name; do
+		if [ -n "$name" ] && ! is_excluded "$name"; then
+			install_args+=( "$name" )
+		fi
+	done < <(printf '%s\n' "$updates_xml" | grep -o '<update [^>]*>' | sed -n 's/.* name="\([^"]*\)".*/\1/p' | sort -u || true)
+fi
+
+if (( ${#install_args[@]} > 0 )); then
+	zypper $global_flags $zypper_sub_cmd $install_flags "${install_args[@]}"
+else
+	echo "No packages to update"
+fi
+
+after="$(excluded_versions)"
+if [ "$before" != "$after" ]; then
+	echo "the update changed excluded packages:" >&2
+	diff <(echo "$before") <(echo "$after") >&2 || true
+	exit 1
+fi
+{{- else }}
 zypper $global_flags $zypper_sub_cmd $install_flags "${install_args[@]}"
+{{- end }}
 
 if [ -n "$post_install_path" ]; then
 	"$post_install_path"
@@ -261,6 +340,8 @@ fi
 		InstallFlags    string
 		PostInstallPath string
 		IncludeDocs     bool
+		Update          bool
+		Root            string
 	}{
 		ImportKeysPath:  importKeysPath,
 		GlobalFlags:     globalFlagsStr,
@@ -268,7 +349,16 @@ fi
 		InstallFlags:    installFlagsStr,
 		PostInstallPath: cfg.postInstallPath,
 		IncludeDocs:     cfg.includeDocs,
+		Update:          update,
+		Root:            cfg.root,
 	})
+	return installScriptBuf.Bytes(), err
+}
+
+func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []string) llb.RunOption {
+	const importKeysPath = zypperImportKeysPath
+
+	scriptDt, err := zypperScript(cfg, zypperSubCmd)
 	if err != nil {
 		// The template is a compile-time constant, so Execute realistically only
 		// fails on a programmer error. Surface it as an errored llb state (which
@@ -279,7 +369,7 @@ fi
 		return dalec.ErrorStateOption(fmt.Errorf("rendering zypper install script: %w", err))
 	}
 
-	installScript := llb.Scratch().File(llb.Mkfile("install.sh", 0o700, installScriptBuf.Bytes()), cfg.constraints...)
+	installScript := llb.Scratch().File(llb.Mkfile("install.sh", 0o700, scriptDt), cfg.constraints...)
 	const installScriptPath = "/tmp/dalec/internal/zypper/install.sh"
 
 	runOpts := []llb.RunOption{

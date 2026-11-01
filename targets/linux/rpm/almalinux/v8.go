@@ -32,5 +32,6 @@ var ConfigV8 = &distro.Config{
 	BasePackages:       basePackages(V8TargetKey),
 	RepoPlatformConfig: &defaultPlatformConfig,
 	InstallFunc:        distro.DnfInstall,
+	UpgradeFunc:        distro.DnfUpgrade,
 	FullName:           v8FullName,
 }

@@ -7,6 +7,7 @@ import (
 	"path"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 
 	"github.com/containerd/platforms"
@@ -57,6 +58,9 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 	}
 
 	targetKey := frontend.GetTargetKey(client)
+	if err := checkContainerOptions(ctx, client, dc, spec, targetKey); err != nil {
+		return nil, err
+	}
 	bases := spec.GetImageBases(targetKey)
 
 	if len(bases) == 0 {
@@ -228,4 +232,38 @@ func copySymlinks(post *dalec.PostInstall, opts ...llb.ConstraintsOpt) llb.State
 
 		return s
 	}
+}
+
+// checkContainerOptions rejects container options that the Windows target
+// does not support, instead of silently ignoring them.
+func checkContainerOptions(ctx context.Context, client gwclient.Client, dc *dockerui.Client, spec *dalec.Spec, targetKey string) error {
+	if v, ok := frontend.GetBuildArg(client, dalec.BuildArgDalecRequirePrebuiltPkg); ok && v != "" {
+		required, err := strconv.ParseBool(v)
+		if err != nil {
+			return errors.Wrapf(err, "invalid value for %s", dalec.BuildArgDalecRequirePrebuiltPkg)
+		}
+		if required {
+			return errors.Errorf("%s is not supported for target %s: prebuilt packages are not used, the package is always built", dalec.BuildArgDalecRequirePrebuiltPkg, targetKey)
+		}
+	}
+
+	nc, err := dc.NamedContext(dalec.PreviousImageContext, dockerui.ContextOpt{})
+	if err != nil {
+		return err
+	}
+	if nc != nil {
+		return errors.Errorf("the %s build context is not supported for target %s", dalec.PreviousImageContext, targetKey)
+	}
+
+	mode := spec.GetImageLayers(targetKey)
+	if v, ok := frontend.GetBuildArg(client, dalec.BuildArgDalecImageLayers); ok && v != "" {
+		mode = v
+	}
+	if err := dalec.ValidateImageLayers(mode); err != nil {
+		return errors.Wrap(err, dalec.BuildArgDalecImageLayers)
+	}
+	if mode == dalec.ImageLayersPerPackage {
+		frontend.Warn(ctx, client, llb.Scratch(), "per-package image layers are not supported for target "+targetKey+"; producing a single layer instead")
+	}
+	return nil
 }
