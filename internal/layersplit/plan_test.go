@@ -166,6 +166,8 @@ func TestResolveInRoot(t *testing.T) {
 		"/loop/a":   "../loop/b",
 		"/loop/b":   "a",
 		"/usr/link": "../lib",
+		"/alias":    "usr/bin",
+		"/rel":      "alias/../share",
 	})
 
 	cases := map[string]string{
@@ -176,6 +178,11 @@ func TestResolveInRoot(t *testing.T) {
 		"/missing/a/b":   "/missing/a/b",
 		"/lib/missing/b": "/usr/lib/missing/b",
 		"/usr/../lib/x":  "/usr/lib/x",
+		// ".." applies to the resolved directory: /alias is /usr/bin.
+		"/alias/../victim": "/usr/victim",
+		"/rel/x":           "/usr/share/x",
+		"/../../x/../..":   "/",
+		"/./usr/./lib/x":   "/usr/lib/x",
 	}
 	for in, want := range cases {
 		got, err := ResolveInRoot(root, in)
@@ -351,8 +358,22 @@ func TestRemoveLinks(t *testing.T) {
 		assert.Check(t, os.IsNotExist(err), p)
 	}
 	_, err = os.Stat(filepath.Join(root, "data/keep"))
-	assert.Check(t, err, "directories are kept")
+	assert.NilError(t, err, "directories are kept")
 	dt, err := os.ReadFile(victim)
 	assert.NilError(t, err, "files outside the root must not be removed")
 	assert.Check(t, cmp.Equal(string(dt), "keep"))
+}
+
+func TestRemoveLinksResolvesDotDotAfterSymlinks(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"/victim": "keep", "/usr/victim": "remove"}, map[string]string{"/alias": "usr/bin"})
+	assert.NilError(t, os.MkdirAll(filepath.Join(root, "usr/bin"), 0o755))
+
+	// /alias is /usr/bin, so /alias/../victim is /usr/victim, not /victim.
+	assert.NilError(t, RemoveLinks(root, []string{"/alias/../victim"}))
+
+	_, err := os.Stat(filepath.Join(root, "usr/victim"))
+	assert.Check(t, os.IsNotExist(err), "/usr/victim should be removed")
+	_, err = os.Stat(filepath.Join(root, "victim"))
+	assert.NilError(t, err, "/victim must be kept")
 }

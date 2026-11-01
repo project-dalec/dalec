@@ -19,6 +19,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,6 +176,10 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 	// parent of each directory since most files share their parents.
 	parents := make(map[string]string)
 	resolve := func(p string) (string, error) {
+		if slices.Contains(splitPath(p), "..") {
+			// ".." depends on how the parents resolve; don't cache.
+			return ResolveInRoot(root, p)
+		}
 		p = path.Clean("/" + p)
 		dir := path.Dir(p)
 		if c, ok := parents[dir]; ok {
@@ -421,6 +426,10 @@ func sortedKeys(m map[string]bool) []string {
 // ResolveInRoot returns the canonical form of the absolute path p inside root:
 // every symlink in a parent directory is resolved (scoped to root), while the
 // final path component is left as is. Missing components are kept literally.
+//
+// ".." components are applied to the directory resolved so far, like the
+// kernel does, so "/alias/../x" with "/alias -> usr/bin" is "/usr/x". They can
+// never move above root.
 func ResolveInRoot(root, p string) (string, error) {
 	const maxLinks = 255
 
@@ -430,6 +439,10 @@ func ResolveInRoot(root, p string) (string, error) {
 	for len(pending) > 0 {
 		part := pending[0]
 		pending = pending[1:]
+		if part == ".." {
+			cur = path.Dir(cur)
+			continue
+		}
 		next := path.Join(cur, part)
 		if len(pending) == 0 {
 			return next, nil
@@ -438,6 +451,7 @@ func ResolveInRoot(root, p string) (string, error) {
 		fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(next)))
 		if err != nil {
 			if os.IsNotExist(err) {
+				// Nothing below a missing directory can be a symlink.
 				return path.Join(append([]string{next}, pending...)...), nil
 			}
 			return "", err
@@ -455,19 +469,22 @@ func ResolveInRoot(root, p string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if !path.IsAbs(target) {
-			target = path.Join(cur, target)
+		// Absolute targets restart at root; relative targets continue from
+		// the directory containing the link (cur).
+		if path.IsAbs(target) {
+			cur = "/"
 		}
 		pending = append(splitPath(target), pending...)
-		cur = "/"
 	}
 	return cur, nil
 }
 
+// splitPath splits p into its components, dropping empty and "." components.
+// ".." components are kept so they can be resolved against symlinks.
 func splitPath(p string) []string {
 	var out []string
-	for _, part := range strings.Split(path.Clean("/"+p), "/") {
-		if part != "" {
+	for _, part := range strings.Split(p, "/") {
+		if part != "" && part != "." {
 			out = append(out, part)
 		}
 	}
