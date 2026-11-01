@@ -171,10 +171,27 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 		maxLayers = DefaultMaxLayers
 	}
 
+	// Resolving a path walks its parent directories; cache the canonical
+	// parent of each directory since most files share their parents.
+	parents := make(map[string]string)
+	resolve := func(p string) (string, error) {
+		p = path.Clean("/" + p)
+		dir := path.Dir(p)
+		if c, ok := parents[dir]; ok {
+			return path.Join(c, path.Base(p)), nil
+		}
+		r, err := ResolveInRoot(root, p)
+		if err != nil {
+			return "", err
+		}
+		parents[dir] = path.Dir(r)
+		return r, nil
+	}
+
 	owners := make(map[string][]string)
 	ghost := make(map[string]bool)
 	for _, f := range in.Files {
-		p, err := ResolveInRoot(root, f.Path)
+		p, err := resolve(f.Path)
 		if err != nil {
 			return nil, fmt.Errorf("resolving %s: %w", f.Path, err)
 		}
@@ -187,7 +204,7 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 
 	modified := make(map[string]bool, len(in.Modified))
 	for _, m := range in.Modified {
-		p, err := ResolveInRoot(root, m)
+		p, err := resolve(m)
 		if err != nil {
 			return nil, fmt.Errorf("resolving %s: %w", m, err)
 		}
@@ -342,6 +359,7 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 		})
 		miscKey := KindOS + ":" + MiscGroupName + "\x00"
 		misc := getGroup(miscKey, KindOS, MiscGroupName)
+		folded := make(map[string]bool, len(osKeys)-(budget-1))
 		for _, key := range osKeys[budget-1:] {
 			g := groups[key]
 			misc.Paths += g.Paths
@@ -349,12 +367,13 @@ func BuildPlan(root string, in Inputs, opts Options) (*Plan, error) {
 			for pkg := range g.pkgs {
 				misc.pkgs[pkg] = true
 			}
-			for p, k := range assignKey {
-				if k == key {
-					assignKey[p] = miscKey
-				}
-			}
+			folded[key] = true
 			delete(groups, key)
+		}
+		for p, k := range assignKey {
+			if folded[k] {
+				assignKey[p] = miscKey
+			}
 		}
 		osKeys = append(osKeys[:budget-1:budget-1], miscKey)
 	}
