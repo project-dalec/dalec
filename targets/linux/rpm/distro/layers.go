@@ -155,7 +155,8 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 			paths = append(paths, tgt.Paths...)
 		}
 		slices.Sort(paths)
-		const removeLinks = `for p in "$@"; do f="` + workPath + `$p"; if [ -L "$f" ] || [ -f "$f" ]; then rm -f "$f"; fi; done`
+		// Destinations may be relative to the root ("usr/bin/link") or absolute.
+		const removeLinks = `for p in "$@"; do f="` + workPath + `/${p#/}"; if [ -L "$f" ] || [ -f "$f" ]; then rm -f "$f"; fi; done`
 		rootfs = worker.Run(
 			dalec.WithConstraints(opts...),
 			llb.Args(append([]string{"/bin/sh", "-c", removeLinks, "remove-links"}, paths...)),

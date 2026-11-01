@@ -135,7 +135,21 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 		ctx := startTestSpan(ctx, t)
 
 		spec := newSpec(t)
-		spec.Image = &dalec.ImageConfig{Layers: dalec.ImageLayersPerPackage}
+		spec.Image = &dalec.ImageConfig{
+			Layers: dalec.ImageLayersPerPackage,
+			// Post-install symlinks already exist in the previous image and
+			// must be recreated by the update, for absolute and relative paths.
+			Post: &dalec.PostInstall{Symlinks: map[string]dalec.SymlinkTarget{
+				"/usr/bin/hello": {Paths: []string{"/hello-abs", "usr/local/bin/hello-rel"}},
+			}},
+		}
+		spec.Tests = append(spec.Tests, &dalec.TestSpec{
+			Name: "post-install symlinks",
+			Files: map[string]dalec.FileCheckOutput{
+				"/hello-abs":               {LinkTarget: "/usr/bin/hello"},
+				"/usr/local/bin/hello-rel": {LinkTarget: "/usr/bin/hello"},
+			},
+		})
 
 		testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
 			pkgRes := solveT(ctx, t, gwc, newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(testConfig.Target.Package)))
