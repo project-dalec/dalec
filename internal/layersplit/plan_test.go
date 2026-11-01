@@ -228,6 +228,13 @@ func TestParsers(t *testing.T) {
 		assert.Check(t, cmp.DeepEqual(pkgs, map[string]string{"openssl-libs": "openssl", "gpg-pubkey": "gpg-pubkey"}))
 	})
 
+	t.Run("sources", func(t *testing.T) {
+		in := "libssl3t64\topenssl (3.0.13-0ubuntu3.4)\nbash\t\nlibc6\tglibc\n\n"
+		pkgs, err := ParseSources(strings.NewReader(in))
+		assert.NilError(t, err)
+		assert.Check(t, cmp.DeepEqual(pkgs, map[string]string{"libssl3t64": "openssl", "bash": "bash", "libc6": "glibc"}))
+	})
+
 	t.Run("files", func(t *testing.T) {
 		in := "glibc\tnormal\t\t/usr/lib/libc.so.6\n" +
 			"glibc\tnormal\tg\t/etc/ld.so.cache\n" +
@@ -426,5 +433,52 @@ func TestRemoveLinksResolvesBeforeRemoving(t *testing.T) {
 		}
 		_, err := os.Stat(filepath.Join(root, "opt/data/keep"))
 		assert.NilError(t, err)
+	}
+}
+
+func TestPruneTools(t *testing.T) {
+	tools := t.TempDir()
+	writeTree(t, tools, map[string]string{
+		"/usr/bin/sh":         "tools sh",
+		"/usr/bin/dpkg":       "tools dpkg",
+		"/usr/lib/tools.so":   "tools lib",
+		"/etc/shared":         "tools shared",
+		"/etc/tools/conf":     "tools conf",
+		"/var/lib/tools/data": "tools data",
+		"/opt/hidden/file":    "tools hidden",
+	}, map[string]string{"/bin": "usr/bin"})
+
+	lower := t.TempDir()
+	writeTree(t, lower, map[string]string{
+		"/usr/bin/app": "app",
+		"/etc/shared":  "image shared",
+	}, map[string]string{"/bin": "usr/bin", "/opt": "usr"})
+
+	// root is lower merged on top of tools after installing a package.
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"/usr/bin/app":         "app",
+		"/usr/bin/sh":          "tools sh",
+		"/usr/bin/dpkg":        "tools dpkg",
+		"/usr/lib/tools.so":    "reinstalled by an updated package",
+		"/usr/lib/new.so":      "new from the update",
+		"/etc/shared":          "image shared",
+		"/etc/tools/conf":      "tools conf",
+		"/var/lib/tools/data":  "tools data",
+		"/var/lib/tools/new":   "created by a maintainer script",
+		"/usr/share/new/file1": "new",
+	}, map[string]string{"/bin": "usr/bin", "/opt": "usr"})
+
+	assert.NilError(t, PruneTools(root, lower, tools, []string{"/lib/../usr/lib/tools.so", "/bin/unrelated"}))
+
+	exists := func(p string) bool {
+		_, err := os.Lstat(filepath.Join(root, p))
+		return err == nil
+	}
+	for _, p := range []string{"/usr/bin/sh", "/usr/bin/dpkg", "/etc/tools/conf", "/etc/tools", "/var/lib/tools/data"} {
+		assert.Check(t, !exists(p), "%s should be removed", p)
+	}
+	for _, p := range []string{"/usr/bin/app", "/usr/lib/tools.so", "/usr/lib/new.so", "/etc/shared", "/var/lib/tools/new", "/usr/share/new/file1", "/bin", "/opt"} {
+		assert.Check(t, exists(p), "%s should be kept", p)
 	}
 }

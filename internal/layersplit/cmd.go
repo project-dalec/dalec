@@ -19,6 +19,11 @@ const (
 	// AssignFile is the name of the assignment file written by the plan subcommand.
 	AssignFile = "assign"
 
+	// SourcesFile lists installed packages and their source package
+	// ("name\tsource" per line). When present it is used instead of
+	// RPMPackagesFile, so distros other than RPM can provide it directly.
+	SourcesFile = "sources.tsv"
+
 	// RPM dump file names read by the plan subcommand.
 	RPMPackagesFile = "packages.tsv"
 	RPMFilesFile    = "files.tsv"
@@ -34,6 +39,7 @@ const (
 //	copy   --root DIR --plan DIR --out DIR [--dir-mtime SECONDS]
 //	verify --expected DIR --actual DIR
 //	rmlinks --root DIR PATH...
+//	prune  --root DIR --lower DIR --tools DIR [--keep FILE]
 func Cmd(_ context.Context, args []string) {
 	if err := run(args); err != nil {
 		fmt.Fprintln(os.Stderr, CmdName+":", err)
@@ -55,6 +61,9 @@ func run(args []string) error {
 	dirMtime := flags.Int64("dir-mtime", 0, "timestamp for directories in layers, in seconds since the Unix epoch")
 	expected := flags.String("expected", "", "expected root filesystem")
 	actual := flags.String("actual", "", "actual root filesystem")
+	lower := flags.String("lower", "", "root filesystem the command ran on")
+	tools := flags.String("tools", "", "tools root filesystem the command ran with")
+	keep := flags.String("keep", "", "file listing paths to keep, one per line")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -68,6 +77,8 @@ func run(args []string) error {
 		return runVerify(*expected, *actual)
 	case "rmlinks":
 		return RemoveLinks(*root, flags.Args())
+	case "prune":
+		return runPrune(*root, *lower, *tools, *keep)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -117,17 +128,25 @@ func readRPMInputs(dump string) (Inputs, error) {
 		return os.Open(filepath.Join(dump, name))
 	}
 
-	f, err := open(RPMPackagesFile)
-	if err != nil {
-		return in, err
-	}
-	in.Packages, err = ParseRPMPackages(f)
-	f.Close()
-	if err != nil {
-		return in, fmt.Errorf("parsing %s: %w", RPMPackagesFile, err)
+	if f, err := open(SourcesFile); err == nil {
+		in.Packages, err = ParseSources(f)
+		f.Close()
+		if err != nil {
+			return in, fmt.Errorf("parsing %s: %w", SourcesFile, err)
+		}
+	} else {
+		f, err := open(RPMPackagesFile)
+		if err != nil {
+			return in, err
+		}
+		in.Packages, err = ParseRPMPackages(f)
+		f.Close()
+		if err != nil {
+			return in, fmt.Errorf("parsing %s: %w", RPMPackagesFile, err)
+		}
 	}
 
-	f, err = open(RPMFilesFile)
+	f, err := open(RPMFilesFile)
 	if err != nil {
 		return in, err
 	}
@@ -157,6 +176,28 @@ func readRPMInputs(dump string) (Inputs, error) {
 		return in, fmt.Errorf("parsing %s: %w", AppPackagesFile, err)
 	}
 	return in, nil
+}
+
+func runPrune(root, lower, tools, keepFile string) error {
+	if root == "" || lower == "" || tools == "" {
+		return fmt.Errorf("--root, --lower and --tools are required")
+	}
+	var keep []string
+	if keepFile != "" {
+		f, err := os.Open(keepFile)
+		if err != nil {
+			return err
+		}
+		names, err := ParseNames(f)
+		f.Close()
+		if err != nil {
+			return err
+		}
+		for p := range names {
+			keep = append(keep, p)
+		}
+	}
+	return PruneTools(root, lower, tools, keep)
 }
 
 func runCopy(root, planDir, out string, dirMtime int64) error {

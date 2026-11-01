@@ -28,6 +28,15 @@ func ZypperInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.
 	return zypperCommand(cfg, []string{"install"}, pkgs)
 }
 
+// ZypperUpgrade upgrades installed packages using zypper. With no packages,
+// every installed package with an available update is upgraded. Packages
+// excluded with [DnfExclude] are never upgraded: zypper has no exclude option,
+// so they are left out of the upgrade and the build fails if the upgrade
+// changed them anyway (for example to satisfy a dependency).
+func ZypperUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
+	return zypperCommand(cfg, []string{"update"}, upgradeArgs(cfg, pkgs))
+}
+
 const zypperProxyConfigScript = `
 cleanup_zypper_proxy() {
 	if [ -n "${DALEC_ZYPPER_PROXY_ANCHOR_ACTIVE:-}" ]; then
@@ -136,6 +145,12 @@ func zypperCommand(cfg *dnfInstallConfig, zypperSubCmd []string, zypperArgs []st
 	// vendor/version differences that arise when pulling from the Microsoft
 	// prod repos alongside the base SUSE repos.
 	installFlags := []string{"--auto-agree-with-licenses", "--allow-downgrade", "--allow-vendor-change"}
+	update := len(zypperSubCmd) == 1 && zypperSubCmd[0] == "update"
+	if update {
+		// Only upgrade what is installed: recommended packages of the upgraded
+		// packages are not pulled in.
+		installFlags = []string{"--auto-agree-with-licenses", "--allow-vendor-change", "--no-recommends"}
+	}
 	installFlagsStr := strings.Join(installFlags, " ")
 	zypperSubCmdStr := strings.Join(zypperSubCmd, " ")
 
@@ -153,6 +168,7 @@ global_flags={{ shellQuote .GlobalFlags }}
 zypper_sub_cmd={{ shellQuote .ZypperSubCmd }}
 install_flags={{ shellQuote .InstallFlags }}
 post_install_path={{ shellQuote .PostInstallPath }}
+install_root={{ shellQuote .Root }}
 
 if [ -x "$import_keys_path" ]; then
 	"$import_keys_path"
@@ -187,8 +203,12 @@ fi
 shopt -s globstar nullglob
 install_args=()
 local_rpms=()
+excludes=()
 for arg in "${@}"; do
 	case "$arg" in
+	--exclude=*)
+		excludes+=( "${arg#--exclude=}" )
+		;;
 	*[*?[]*)
 		expanded=( $arg )
 		for expanded_arg in "${expanded[@]}"; do
@@ -246,7 +266,53 @@ EOF
 	zypper $global_flags refresh --force "$local_repo_alias"
 fi
 
+{{- if .Update }}
+rpm_root=()
+if [ -n "$install_root" ]; then
+	rpm_root=( --root "$install_root" )
+fi
+
+# Versions of the excluded packages, checked after the upgrade.
+excluded_versions() {
+	if (( ${#excludes[@]} > 0 )); then
+		rpm "${rpm_root[@]}" -q --qf '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' -- "${excludes[@]}" 2>/dev/null | grep -v 'is not installed' || true
+	fi
+}
+before="$(excluded_versions)"
+
+is_excluded() {
+	local e
+	for e in "${excludes[@]}"; do
+		[ "$e" = "$1" ] && return 0
+	done
+	return 1
+}
+
+if (( ${#install_args[@]} == 0 )); then
+	# zypper has no exclude option: list the available updates and leave out
+	# the excluded packages.
+	while read -r name; do
+		if [ -n "$name" ] && ! is_excluded "$name"; then
+			install_args+=( "$name" )
+		fi
+	done < <(zypper $global_flags --xmlout list-updates | grep -o '<update [^>]*>' | sed -n 's/.* name="\([^"]*\)".*/\1/p' | sort -u)
+fi
+
+if (( ${#install_args[@]} > 0 )); then
+	zypper $global_flags $zypper_sub_cmd $install_flags "${install_args[@]}"
+else
+	echo "No packages to update"
+fi
+
+after="$(excluded_versions)"
+if [ "$before" != "$after" ]; then
+	echo "the update changed excluded packages:" >&2
+	diff <(echo "$before") <(echo "$after") >&2 || true
+	exit 1
+fi
+{{- else }}
 zypper $global_flags $zypper_sub_cmd $install_flags "${install_args[@]}"
+{{- end }}
 
 if [ -n "$post_install_path" ]; then
 	"$post_install_path"
@@ -261,6 +327,8 @@ fi
 		InstallFlags    string
 		PostInstallPath string
 		IncludeDocs     bool
+		Update          bool
+		Root            string
 	}{
 		ImportKeysPath:  importKeysPath,
 		GlobalFlags:     globalFlagsStr,
@@ -268,6 +336,8 @@ fi
 		InstallFlags:    installFlagsStr,
 		PostInstallPath: cfg.postInstallPath,
 		IncludeDocs:     cfg.includeDocs,
+		Update:          update,
+		Root:            cfg.root,
 	})
 	if err != nil {
 		// The template is a compile-time constant, so Execute realistically only

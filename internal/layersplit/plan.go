@@ -530,6 +530,33 @@ func ParseRPMPackages(r io.Reader) (map[string]string, error) {
 	return out, sc.Err()
 }
 
+// ParseSources parses "name\tsource" lines, as written by distros that know
+// each package's source package (for example from dpkg's Source field). A
+// source may carry a version ("openssl (3.0.13-0ubuntu3)"), which is dropped,
+// and an empty source means the package is its own source.
+func ParseSources(r io.Reader) (map[string]string, error) {
+	out := make(map[string]string)
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		name, src, _ := strings.Cut(line, "\t")
+		name = strings.TrimSpace(name)
+		src, _, _ = strings.Cut(strings.TrimSpace(src), " ")
+		if name == "" {
+			continue
+		}
+		if src == "" {
+			src = name
+		}
+		out[name] = src
+	}
+	return out, sc.Err()
+}
+
 // ParseRPMFiles parses lines of
 // `rpm -qa --qf '[%{=NAME}\t%{FILESTATES:fstate}\t%{FILEFLAGS:fflags}\t%{FILENAMES}\n]'`.
 // Files that are not installed on disk are skipped.

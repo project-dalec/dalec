@@ -200,6 +200,51 @@ func updateContainer(ctx context.Context, client gwclient.Client, sOpt dalec.Sou
 	return rootfs, specPkgs, nil
 }
 
+// ReapplyPostSymlinks recreates the spec's post-install symlinks in rootfs, an
+// existing root filesystem whose packages were updated: the spec may add new
+// links and a package update may have replaced existing ones. Existing links
+// (or files) at those paths are removed first so they can be created again.
+func ReapplyPostSymlinks(client gwclient.Client, spec *dalec.Spec, targetKey string, worker, rootfs llb.State, opts ...llb.ConstraintsOpt) llb.State {
+	post := spec.GetImagePost(targetKey)
+	if post == nil || len(post.Symlinks) == 0 {
+		return rootfs
+	}
+
+	// Spec loading normalizes the deprecated Path field into Paths.
+	var paths []string
+	for _, tgt := range post.Symlinks {
+		paths = append(paths, tgt.Paths...)
+	}
+	slices.Sort(paths)
+
+	// Paths are resolved inside the root filesystem by the frontend's
+	// layer-split helper, so they cannot reach outside of it.
+	args := append([]string{layerSplitFrontendPath, layersplit.CmdName, "rmlinks", "--root", layerSplitRootPath, "--"}, paths...)
+	rootfs = worker.Run(
+		dalec.WithConstraints(opts...),
+		llb.Args(args),
+		llb.AddMount(layerSplitFrontendPath, frontend.GetCurrentFrontend(client), llb.SourcePath("/frontend"), llb.Readonly),
+		llb.WithCustomName("Remove existing post-install symlinks"),
+	).AddMount(layerSplitRootPath, rootfs)
+	return rootfs.With(dalec.InstallPostSymlinks(post, worker, frontend.NativeSymlinkSupport(client), opts...))
+}
+
+// PruneToolsScript returns a shell command which removes the entries of the
+// root filesystem at root that only came from the tools root filesystem at
+// tools, which was merged under the root filesystem at lower to run commands
+// with the tools' programs. Paths listed in the file keep are left alone. The
+// frontend binary must be mounted with [WithLayerSplitFrontend].
+func PruneToolsScript(root, lower, tools, keep string) string {
+	return layerSplitFrontendPath + " " + layersplit.CmdName + " prune" +
+		" --root " + root + " --lower " + lower + " --tools " + tools + " --keep " + keep
+}
+
+// WithLayerSplitFrontend mounts the frontend binary used by the layer split
+// helpers, such as [PruneToolsScript].
+func WithLayerSplitFrontend(client gwclient.Client) llb.RunOption {
+	return llb.AddMount(layerSplitFrontendPath, frontend.GetCurrentFrontend(client), llb.SourcePath("/frontend"), llb.Readonly)
+}
+
 // splitLayersResult is the output of [splitLayers].
 type splitLayersResult struct {
 	// State is the merged image root filesystem made of one layer per group.

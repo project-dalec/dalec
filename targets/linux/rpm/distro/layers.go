@@ -13,6 +13,7 @@ import (
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/internal/layersplit"
 	"github.com/project-dalec/dalec/targets"
+	"github.com/project-dalec/dalec/targets/linux"
 )
 
 // LayerSplitDumpScript returns a shell script which writes the RPM data
@@ -150,29 +151,8 @@ func (cfg *Config) UpdateContainer(ctx context.Context, client gwclient.Client, 
 	}
 
 	// Re-apply the configured symlinks: the spec may add new ones and a
-	// package update may have replaced existing ones. Existing links (or
-	// files) at those paths are removed first so they can be recreated.
-	if post := spec.GetImagePost(targetKey); post != nil && len(post.Symlinks) > 0 {
-		// Spec loading normalizes the deprecated Path field into Paths.
-		var paths []string
-		for _, tgt := range post.Symlinks {
-			paths = append(paths, tgt.Paths...)
-		}
-		slices.Sort(paths)
-		// Paths are resolved inside the root filesystem by the frontend's
-		// layer-split helper, so they cannot reach outside of it.
-		const frontendPath = "/tmp/internal/dalec/layers/frontend"
-		args := append([]string{frontendPath, layersplit.CmdName, "rmlinks", "--root", workPath, "--"}, paths...)
-		rootfs = worker.Run(
-			dalec.WithConstraints(opts...),
-			llb.Args(args),
-			llb.AddMount(frontendPath, frontend.GetCurrentFrontend(client), llb.SourcePath("/frontend"), llb.Readonly),
-			llb.WithCustomName("Remove existing post-install symlinks"),
-		).AddMount(workPath, rootfs)
-		rootfs = rootfs.With(dalec.InstallPostSymlinks(post, worker, frontend.NativeSymlinkSupport(client), opts...))
-	}
-
-	return rootfs, nil
+	// package update may have replaced existing ones.
+	return linux.ReapplyPostSymlinks(client, spec, targetKey, worker, rootfs, opts...), nil
 }
 
 // seedsState returns a state with the minimization seed list: the kept spec

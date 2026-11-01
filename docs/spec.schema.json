@@ -1310,7 +1310,7 @@
 						"string",
 						"null"
 					],
-					"description": "Layers controls how the container root filesystem is split into image layers.\nAn empty value or \"single\" writes a single layer.\n\"per-package\" writes one layer per installed package (or group of related\npackages) plus a final layer with the package database and generated files,\nso that updating one package only changes its own layer.\nThis is experimental and currently only supported for RPM-based targets\nwithout a custom base image."
+					"description": "Layers controls how the container root filesystem is split into image layers.\nAn empty value or \"single\" writes a single layer.\n\"per-package\" writes one layer per installed package (or group of related\npackages) plus a final layer with the package database and generated files,\nso that updating one package only changes its own layer.\nThis is experimental and currently only supported for RPM, Debian and\nUbuntu targets without a custom base image."
 				},
 				"minimization_profile": {
 					"type": [

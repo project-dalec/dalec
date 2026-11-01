@@ -82,8 +82,9 @@ How files are split:
   source package (for example `openssl` and `openssl-libs`) share a layer.
   Each package built from the spec gets its own layer. Hardlinked files whose
   paths belong to different packages go into the final layer, so they stay linked.
-- The package database, files not owned by any package, `%ghost` files and files
-  changed after install (as reported by `rpm -V`) go into the final layer.
+- The package database, files not owned by any package, `%ghost` files, files
+  changed after install (as reported by `rpm -V` or `dpkg --verify`) and
+  diverted files go into the final layer.
 - Directory timestamps in the layers are set to `SOURCE_DATE_EPOCH` when it is
   provided, or to 0 otherwise, so identical packages produce identical layers.
 - Images are limited to 64 layers. When there are more packages, the smallest
@@ -124,20 +125,24 @@ from scratch:
   the previous image, even when a newer version is published in the package
   repositories. To ship a new version of them at the same time, pass them as a
   [prebuilt package](targets.md#prebuilt-packages) build context.
-- The image's `minimization_profile` and `post` symlinks are applied again
-  after the update, like in a fresh build.
+- The image's `minimization_profile` (RPM targets), the minimal image cleanup
+  (Debian and Ubuntu targets) and `post` symlinks are applied again after the
+  update, like in a fresh build.
+- On Debian and Ubuntu, minimal images have no shell or package manager, so
+  the packages are installed with the build worker's tools, whose files are
+  removed again afterwards.
 - The result is split into layers as usual, so every package that did not
   change produces the same layer as before and is not uploaded or downloaded
   again. Only the updated packages' layers and the final layer change.
 
 This requires `layers: per-package`, and the previous image should have been
 built with per-package layers too. It is supported for the Azure Linux,
-AlmaLinux and Rocky Linux targets.
+AlmaLinux, Rocky Linux, SUSE Linux Enterprise, Debian and Ubuntu targets.
 
 {{< callout type="info" >}}
-Per-package layers are experimental. They are currently supported for RPM-based
-targets without a custom base image (`image.bases`). Other targets produce a
-single layer and print a warning.
+Per-package layers are experimental. They are currently supported for RPM,
+Debian and Ubuntu targets without a custom base image (`image.bases`). Other
+targets produce a single layer and print a warning.
 {{< /callout >}}
 
 ### Base

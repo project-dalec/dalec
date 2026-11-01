@@ -850,12 +850,19 @@ EOF
 			testRPMMinimalContainer(ctx, t, testConfig)
 			t.Run("per_package_layers", func(t *testing.T) {
 				t.Parallel()
-				testRPMPerPackageLayers(ctx, t, testConfig)
+				testPerPackageLayers(ctx, t, testConfig, testConfig.Target.MinimalContainer)
 			})
 			return
 		}
 
 		testContainerTarget(ctx, t, testConfig, testConfig.Target.MinimalContainer)
+
+		if strings.HasSuffix(testConfig.Target.Package, "/deb") {
+			t.Run("per_package_layers", func(t *testing.T) {
+				t.Parallel()
+				testPerPackageLayers(ctx, t, testConfig, testConfig.Target.MinimalContainer)
+			})
+		}
 
 		t.Run("cleanup", func(t *testing.T) {
 			t.Parallel()

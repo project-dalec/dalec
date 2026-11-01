@@ -17,10 +17,15 @@ import (
 	"gotest.tools/v3/assert/cmp"
 )
 
-func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testLinuxConfig) {
+// testPerPackageLayers tests per-package image layers and image updates for
+// target, a minimal container target built without a base image.
+func testPerPackageLayers(ctx context.Context, t *testing.T, testConfig testLinuxConfig, target string) {
 	t.Helper()
 
-	target := testConfig.Target.MinimalContainer
+	packageDB := "RPM"
+	if strings.HasSuffix(testConfig.Target.Package, "/deb") {
+		packageDB = "dpkg"
+	}
 
 	layerGroups := func(t *testing.T, res *gwclient.Result) []layersplit.Group {
 		t.Helper()
@@ -68,7 +73,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 		}
 		spec.Sources = map[string]dalec.Source{
 			"src": {Inline: &dalec.SourceInline{Dir: &dalec.SourceInlineDir{
-				Files: map[string]*dalec.SourceInlineFile{"hello": {Contents: "#!/bin/sh\necho hello\n", Permissions: 0o755}},
+				Files: map[string]*dalec.SourceInlineFile{"hello": {Contents: "#!/bin/bash\necho hello\n", Permissions: 0o755}},
 			}}},
 		}
 		spec.Tests = []*dalec.TestSpec{{
@@ -159,13 +164,29 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 			prevRes := solveT(ctx, t, gwc, newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target), withBuildContext(ctx, t, dalec.GenericPkg, pkgSt)))
 			prevSt := resultToState(t, prevRes)
 
+			// Ship a new revision of the spec's package with the update.
+			newer := spec
+			newer.Revision = "2"
+			newer.Sources = map[string]dalec.Source{
+				"src": {Inline: &dalec.SourceInline{Dir: &dalec.SourceInlineDir{
+					Files: map[string]*dalec.SourceInlineFile{"hello": {Contents: "#!/bin/bash\necho hello updated\n", Permissions: 0o755}},
+				}}},
+			}
+			newerPkg := resultToState(t, solveT(ctx, t, gwc, newSolveRequest(withSpec(ctx, t, &newer), withBuildTarget(testConfig.Target.Package))))
+
 			res := solveT(ctx, t, gwc, newSolveRequest(
-				withSpec(ctx, t, &spec),
+				withSpec(ctx, t, &newer),
 				withBuildTarget(target),
 				withBuildContext(ctx, t, dalec.PreviousImageContext, prevSt),
-				withBuildContext(ctx, t, dalec.GenericPkg, pkgSt),
+				withBuildContext(ctx, t, dalec.GenericPkg, newerPkg),
 			))
-			checkGroups(t, &spec, layerGroups(t, res))
+			checkGroups(t, &newer, layerGroups(t, res))
+
+			ref, err := res.SingleRef()
+			assert.NilError(t, err)
+			dt, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: "/usr/bin/hello"})
+			assert.NilError(t, err)
+			assert.Check(t, cmp.Contains(string(dt), "hello updated"), "spec package should be updated from the prebuilt package")
 
 			var upgraded bool
 			for _, op := range test.LLBOpsFromState(ctx, t, resultToState(t, res)) {
@@ -208,7 +229,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 				withBuildContext(ctx, t, dalec.PreviousImageContext, notAnImage),
 			)
 			_, err := gwc.Solve(ctx, sr)
-			assert.ErrorContains(t, err, "has no RPM package database")
+			assert.ErrorContains(t, err, "has no "+packageDB+" package database")
 		})
 	})
 
@@ -232,7 +253,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 				License:     "MIT",
 				Sources: map[string]dalec.Source{
 					"dep-version": {Inline: &dalec.SourceInline{File: &dalec.SourceInlineFile{
-						Contents:    "#!/bin/sh\necho \"dep " + version + "\"\n",
+						Contents:    "#!/bin/bash\necho \"dep " + version + "\"\n",
 						Permissions: 0o755,
 					}}},
 				},
@@ -292,7 +313,7 @@ func testRPMPerPackageLayers(ctx context.Context, t *testing.T, testConfig testL
 			newer.Dependencies.ExtraRepos = nil
 			delete(newer.Dependencies.Runtime, depName)
 			newer.Tests = nil
-			newer.Sources["src"].Inline.Dir.Files["hello"] = &dalec.SourceInlineFile{Contents: "#!/bin/sh\necho newer\n", Permissions: 0o755}
+			newer.Sources["src"].Inline.Dir.Files["hello"] = &dalec.SourceInlineFile{Contents: "#!/bin/bash\necho newer\n", Permissions: 0o755}
 			newerPkg := reqToState(ctx, gwc, newSolveRequest(withSpec(ctx, t, &newer), withBuildTarget(testConfig.Target.Package)), t)
 
 			// Updating must not build the spec's package: make building it fail.
