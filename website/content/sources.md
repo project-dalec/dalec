@@ -580,6 +580,27 @@ sources:
         cargohome: {} # Generates a cargo home cache to cache dependencies
 ```
 
+#### Authenticated Cargo registries
+
+An authenticated Cargo registry can be used for `cargohome` dependency fetches by passing the registry index and, optionally, its name as frontend build arguments. If the name is omitted, it defaults to `dalec-cargo`:
+
+```text
+DALEC_CARGO_REGISTRY=sparse+https://packages.example.com/Cargo/index/
+DALEC_CARGO_REGISTRY_NAME=private-feed
+```
+
+Pass the registry token as a BuildKit secret with the fixed secret ID `dalec-cargo-token`:
+
+```sh
+docker buildx build \
+  --build-arg DALEC_CARGO_REGISTRY='sparse+https://packages.example.com/Cargo/index/' \
+  --build-arg DALEC_CARGO_REGISTRY_NAME=private-feed \
+  --secret id=dalec-cargo-token,env=AZDO_CARGO_TOKEN \
+  ...
+```
+
+The `dalec-cargo-token` secret is optional. When supplied, `AZDO_CARGO_TOKEN` must contain the token accepted by the registry. Dalec maps the fixed BuildKit secret to Cargo's registry-specific token environment variable internally and mounts it only while running `cargo fetch`. When the secret is omitted, Cargo fetches anonymously; a registry that requires authentication will reject the fetch. The registry URL must use HTTPS. If `DALEC_CARGO_REGISTRY` is not supplied, Dalec keeps the normal Cargo configuration and does not request a secret.
+
 ### Pip
 
 The `pip` generator manages a single pip cache for all sources that specify it in the spec. It is expected that the build dependencies include a Python toolchain with pip suitable for fetching Python package dependencies.

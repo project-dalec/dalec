@@ -345,6 +345,7 @@ func createBuildScript(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
 
 	if spec.HasCargohomes() {
 		fmt.Fprintln(buf, "export CARGO_HOME=\"$(pwd)/"+cargohomeName+"\"")
+		fmt.Fprintln(buf, "export CARGO_NET_OFFLINE=true")
 	}
 
 	if spec.HasPips() {
