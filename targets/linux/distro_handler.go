@@ -139,6 +139,9 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			if split != nil {
 				final = split.Verify.With(testrunner.WithFinalState(split.State.With(runTests), frontend.TestWithClientFrontend(client), testrunner.WithConstraints(append(opts, frontend.IgnoreCache(client))...)))
 				addLayerHistory(img, split.Groups)
+				// The final state requires the split through an op which
+				// takes its constraints when marshalled.
+				opts = append(opts, frontend.IgnoreCache(client))
 			}
 
 			def, err := final.Marshal(ctx, opts...)
