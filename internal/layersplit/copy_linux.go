@@ -15,8 +15,15 @@ import (
 
 // Copy copies every entry of root into the output directory of its group,
 // preserving type, mode, ownership, extended attributes, timestamps and
-// hardlinks within a group. Parent directories are recreated in each output
-// with the metadata they have in root.
+// hardlinks within a group. outs are in layer order: the last one is the top
+// layer (the state layer).
+//
+// Parent directories that a layer only needs to hold its entries are created
+// with fixed metadata ([stableDirMode], owned by root, no extended
+// attributes) in every layer but the top one, which recreates them with their
+// metadata in root. This way a lower layer only depends on its own entries:
+// when a later install step changes a shared directory (for example its
+// mode), only the top layer changes.
 //
 // Directory timestamps are set to dirMtime (seconds since the Unix epoch)
 // instead of being copied: they reflect when packages were installed into a
@@ -40,6 +47,10 @@ func Copy(root string, assign map[string]int, outs []string, dirMtime int64) err
 		created[i] = make(map[string]bool)
 	}
 	var dirs []dirTime
+	top := len(outs) - 1
+	// restore lists the parent directories created with fixed metadata in a
+	// lower layer, which the top layer recreates with their real metadata.
+	restore := make(map[string]bool)
 
 	ensureParents := func(idx int, p string) error {
 		var chain []string
@@ -51,7 +62,16 @@ func Copy(root string, assign map[string]int, outs []string, dirMtime int64) err
 		}
 		for i := len(chain) - 1; i >= 0; i-- {
 			d := chain[i]
-			dt, err := copyDir(root, outs[idx], d)
+			var (
+				dt  dirTime
+				err error
+			)
+			if idx == top {
+				dt, err = copyDir(root, outs[idx], d)
+			} else {
+				dt, err = stableDir(root, outs[idx], d)
+				restore[d] = true
+			}
 			if err != nil {
 				return err
 			}
@@ -103,6 +123,20 @@ func Copy(root string, assign map[string]int, outs []string, dirMtime int64) err
 		}
 	}
 
+	restored := make([]string, 0, len(restore))
+	for d := range restore {
+		restored = append(restored, d)
+	}
+	sort.Strings(restored)
+	for _, d := range restored {
+		if created[top][d] {
+			continue
+		}
+		if err := ensureParents(top, d+"/x"); err != nil {
+			return err
+		}
+	}
+
 	// Directory timestamps change while their children are created, so set
 	// them last, deepest first.
 	sort.Slice(dirs, func(i, j int) bool {
@@ -137,6 +171,41 @@ func copyDir(root, out, p string) (dirTime, error) {
 	}
 	if err := applyMetadata(src, dst, &st, false); err != nil {
 		return dirTime{}, fmt.Errorf("%s: %w", p, err)
+	}
+	return dirTime{path: dst}, nil
+}
+
+// stableDirMode is the mode of parent directories in lower layers, see [Copy].
+const stableDirMode = 0o755
+
+// stableDir creates the directory p in out with fixed metadata, see [Copy].
+func stableDir(root, out, p string) (dirTime, error) {
+	var st unix.Stat_t
+	if err := unix.Lstat(filepath.Join(root, filepath.FromSlash(p)), &st); err != nil {
+		return dirTime{}, fmt.Errorf("stat %s: %w", p, err)
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return dirTime{}, fmt.Errorf("parent %s is not a directory", p)
+	}
+
+	dst := filepath.Join(out, filepath.FromSlash(p))
+	if err := os.Mkdir(dst, 0o700); err != nil {
+		return dirTime{}, fmt.Errorf("mkdir %s: %w", p, err)
+	}
+	// Only root can give files away; unprivileged runs (such as unit tests)
+	// keep their own user.
+	if os.Geteuid() == 0 {
+		if err := unix.Lchown(dst, 0, 0); err != nil {
+			return dirTime{}, fmt.Errorf("chown %s: %w", p, err)
+		}
+	}
+	for _, name := range posixACLXattrs {
+		if err := unix.Lremovexattr(dst, name); err != nil && !errors.Is(err, unix.ENODATA) && !isXattrUnsupported(err) {
+			return dirTime{}, fmt.Errorf("remove inherited %s on %s: %w", name, p, err)
+		}
+	}
+	if err := unix.Chmod(dst, stableDirMode); err != nil {
+		return dirTime{}, fmt.Errorf("chmod %s: %w", p, err)
 	}
 	return dirTime{path: dst}, nil
 }

@@ -49,6 +49,13 @@ if [ -f "${admin}/diversions" ]; then
 	awk 'NR % 3 != 0 { print "diverted " $0 }' "${admin}/diversions" >> "${out}/` + layersplit.VerifyFile + `"
 fi
 
+# dpkg --verify only checks file contents. Ownership and modes set with
+# dpkg-statoverride (for example by a maintainer script) differ from the
+# package, so treat those paths as changed too.
+if [ -f "${admin}/statoverride" ]; then
+	awk 'NF >= 4 { print "statoverride " $4 }' "${admin}/statoverride" >> "${out}/` + layersplit.VerifyFile + `"
+fi
+
 : > "${out}/` + layersplit.AppPackagesFile + `"
 for f in "${pkgs}"/*.deb; do
 	[ -f "${f}" ] || continue

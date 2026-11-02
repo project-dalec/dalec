@@ -360,10 +360,13 @@ func TestParsers(t *testing.T) {
 	t.Run("verify", func(t *testing.T) {
 		in := "S.5....T.  c /etc/passwd\n" +
 			"missing   c /etc/removed\n" +
-			".M.......    /usr/bin/with space\n"
+			".M.......    /usr/bin/with space\n" +
+			// Lines added for dpkg diversions and stat overrides.
+			"diverted /usr/bin/foo.distrib\n" +
+			"statoverride /usr/bin/ping\n"
 		paths, err := ParseRPMVerify(strings.NewReader(in))
 		assert.NilError(t, err)
-		assert.Check(t, cmp.DeepEqual(paths, []string{"/etc/passwd", "/usr/bin/with space"}))
+		assert.Check(t, cmp.DeepEqual(paths, []string{"/etc/passwd", "/usr/bin/with space", "/usr/bin/foo.distrib", "/usr/bin/ping"}))
 	})
 
 	t.Run("assign roundtrip", func(t *testing.T) {

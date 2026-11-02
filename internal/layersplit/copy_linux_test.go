@@ -61,9 +61,14 @@ func TestCopyAndVerify(t *testing.T) {
 	assert.NilError(t, unix.Lstat(filepath.Join(outs[appIdx], "usr/bin/myapp-link"), &b))
 	assert.Check(t, cmp.Equal(a.Ino, b.Ino))
 
-	// Parent directories keep their metadata in every layer.
+	// Parent directories have fixed metadata in lower layers, and their real
+	// metadata in the top layer.
 	glibcIdx := plan.Assign["/usr/share/doc/glibc/NEWS"]
 	fi, err := os.Stat(filepath.Join(outs[glibcIdx], "usr/share/doc"))
+	assert.NilError(t, err)
+	assert.Check(t, cmp.Equal(fi.Mode().Perm(), os.FileMode(stableDirMode)))
+	assert.Check(t, cmp.Equal(fi.ModTime().Unix(), int64(42)))
+	fi, err = os.Stat(filepath.Join(outs[len(outs)-1], "usr/share/doc"))
 	assert.NilError(t, err)
 	assert.Check(t, cmp.Equal(fi.Mode().Perm(), os.FileMode(0o750)))
 	assert.Check(t, cmp.Equal(fi.ModTime().Unix(), int64(42)))
@@ -82,6 +87,74 @@ func TestCopyAndVerify(t *testing.T) {
 	}
 	assert.Check(t, cmp.Equal(want["/usr/lib/libssl.so.3"].Mtime, old.UnixNano()))
 	assert.Check(t, cmp.Equal(want["/usr/bin/openssl"].Mode, uint32(0o4755)))
+}
+
+// TestCopyLowerLayersOnlyDependOnTheirPackages checks that changing the spec
+// packages, including a change they make to a directory shared with other
+// packages, leaves the base and runtime dependency layers unchanged.
+func TestCopyLowerLayersOnlyDependOnTheirPackages(t *testing.T) {
+	split := func(t *testing.T, root string) (map[string][]string, []string) {
+		t.Helper()
+		plan, err := BuildPlan(root, testInputs())
+		assert.NilError(t, err)
+
+		base := t.TempDir()
+		outs := make([]string, len(plan.Groups))
+		for i := range plan.Groups {
+			outs[i] = filepath.Join(base, strconv.Itoa(i))
+			assert.NilError(t, os.Mkdir(outs[i], 0o755))
+		}
+		assert.NilError(t, Copy(root, plan.Assign, outs, 0))
+
+		merged := t.TempDir()
+		mergeInto(t, merged, outs)
+		want, err := Tree(root)
+		assert.NilError(t, err)
+		got, err := Tree(merged)
+		assert.NilError(t, err)
+		assert.Check(t, cmp.Len(Compare(want, got), 0))
+
+		byKind := make(map[string][]string)
+		for i, g := range plan.Groups {
+			byKind[g.Kind] = append(byKind[g.Kind], outs[i])
+		}
+		return byKind, outs
+	}
+
+	// Packages install their files with the timestamps recorded in the
+	// package, so both builds have the same timestamps.
+	pinTimes := func(t *testing.T, root string) string {
+		t.Helper()
+		ts := []unix.Timespec{{Sec: 1_000_000}, {Sec: 1_000_000}}
+		err := filepath.WalkDir(root, func(p string, _ os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			return unix.UtimesNanoAt(unix.AT_FDCWD, p, ts, unix.AT_SYMLINK_NOFOLLOW)
+		})
+		assert.NilError(t, err)
+		return root
+	}
+
+	before, _ := split(t, pinTimes(t, testRoot(t)))
+
+	// A new version of the spec package with different contents, whose
+	// install also changed the mode of /usr/bin, a directory holding files of
+	// every set.
+	root := testRoot(t)
+	assert.NilError(t, os.WriteFile(filepath.Join(root, "usr/bin/myapp"), []byte("myapp v2"), 0o644))
+	assert.NilError(t, os.Chmod(filepath.Join(root, "usr/bin"), 0o775))
+	after, _ := split(t, pinTimes(t, root))
+
+	for _, kind := range []string{KindBase, KindDeps} {
+		assert.Assert(t, cmp.Len(before[kind], 1))
+		assert.Assert(t, cmp.Len(after[kind], 1))
+		want, err := Tree(before[kind][0])
+		assert.NilError(t, err)
+		got, err := Tree(after[kind][0])
+		assert.NilError(t, err)
+		assert.Check(t, cmp.Len(Compare(want, got), 0), "%s layer changed", kind)
+	}
 }
 
 func TestCompareReportsDifferences(t *testing.T) {
