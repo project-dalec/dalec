@@ -131,7 +131,17 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
 			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
 
-			def, err := ctr.With(runTests).Marshal(ctx, opts...)
+			final := ctr.With(runTests)
+			split, err := maybeSplitLayers(ctx, client, sOpt, c, spec, targetKey, ctr, pkgSt, opts...)
+			if err != nil {
+				return nil, nil, err
+			}
+			if split != nil {
+				final = split.Verify.With(testrunner.WithFinalState(split.State.With(runTests), frontend.TestWithClientFrontend(client), testrunner.WithConstraints(append(opts, frontend.IgnoreCache(client))...)))
+				addLayerHistory(img, split.Groups)
+			}
+
+			def, err := final.Marshal(ctx, opts...)
 			if err != nil {
 				return nil, nil, err
 			}

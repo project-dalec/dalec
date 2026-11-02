@@ -846,6 +846,11 @@ EOF
 		skip.If(t, testConfig.Target.MinimalContainer == "", "skipping test as it is not supported for this config")
 		t.Parallel()
 
+		t.Run("image_layers", func(t *testing.T) {
+			t.Parallel()
+			testImageLayers(ctx, t, testConfig.Target.MinimalContainer)
+		})
+
 		if strings.HasSuffix(testConfig.Target.Package, "/rpm") {
 			testRPMMinimalContainer(ctx, t, testConfig)
 			return

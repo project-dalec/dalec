@@ -264,6 +264,37 @@ allowed (for example a metapackage that only declares dependencies). The
 `windowscross` container target installs the binaries from every package into
 the image.
 
+## Container image layers
+
+Container targets that Dalec builds from scratch (the minimal Debian and Ubuntu
+containers and the RPM-based containers without a custom base image) store the
+root filesystem as one layer per package set, ordered from the least to the
+most frequently changing:
+
+1. Base packages: the packages Dalec always installs for the distro, and their
+   dependencies.
+2. Runtime dependencies: the other packages from the distro repositories, which
+   the spec's packages depend on.
+3. The spec's packages, built by Dalec or passed in as prebuilt packages.
+4. The package database and files that are not owned by a package or were
+   changed after install (for example `/etc/passwd` after users are created).
+
+A set without any files gets no layer. Directory timestamps in the layers are
+set to `SOURCE_DATE_EPOCH` when it is provided, or to 0 otherwise, so a set of
+unchanged packages produces an identical layer in every build. For example, a
+new version of the spec's packages only changes their layer and the final one,
+and registries and machines that already have the other layers don't upload or
+download them again. Each layer's image history entry lists its packages.
+
+Every build checks that the layers together contain exactly the same files, with
+the same contents, permissions, ownership and extended attributes, as the
+installed root filesystem, and fails if they don't.
+
+Containers built on top of a base image (with `image.bases`, or the Debian and
+Ubuntu targets that use the distro's image), and builds with a BuildKit that
+does not support diff and merge, keep the base image's layers and add a single
+layer as before.
+
 ## Special considerations
 
 ### Windows
