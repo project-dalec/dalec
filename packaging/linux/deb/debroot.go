@@ -360,6 +360,13 @@ func createBuildScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 	buf := bytes.NewBuffer(nil)
 	writeScriptHeader(buf, cfg)
 
+	if spec.HasCargohomes() {
+		// Dependency fetching happens in the dedicated cargohome generator. The
+		// package build must not reach the network or bypass the prepared cache.
+		fmt.Fprintf(buf, "export CARGO_HOME=\"$(pwd)/%s\"\n", cargohomeName)
+		fmt.Fprintln(buf, "export CARGO_NET_OFFLINE=true")
+	}
+
 	if spec.HasPips() {
 		// Set up pip environment and install dependencies during build
 		fmt.Fprintln(buf, "# Set up pip environment")
