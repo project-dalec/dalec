@@ -252,7 +252,7 @@ func BuildPlan(root string, in Inputs) (*Plan, error) {
 				size = fi.Size()
 			}
 			g.Size += size
-			// Any non-directory can be hardlinked, including symlinks and
+			// Any non-directory can have hard links, including symlinks and
 			// device nodes.
 			if dev, ino, nlink, ok := inodeOf(fi); ok && nlink > 1 {
 				k := inode{dev, ino}
