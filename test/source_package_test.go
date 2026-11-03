@@ -68,6 +68,73 @@ func testSourceOutputBuilds(ctx context.Context, t *testing.T, targetCfg targetC
 	})
 }
 
+func testPatchesFromSameSource(ctx context.Context, t *testing.T, targetCfg targetConfig) {
+	strip := 1
+	spec := &dalec.Spec{
+		Name:        "test-patches-from-same-source",
+		Version:     "0.0.1",
+		Revision:    "1",
+		Description: "Testing distinct patches from one directory source",
+		License:     "MIT",
+		Sources: map[string]dalec.Source{
+			"src": {
+				Inline: &dalec.SourceInline{
+					Dir: &dalec.SourceInlineDir{
+						Files: map[string]*dalec.SourceInlineFile{
+							"first.txt":  {Contents: "original first\n"},
+							"second.txt": {Contents: "original second\n"},
+						},
+					},
+				},
+			},
+			"patches": {
+				Inline: &dalec.SourceInline{
+					Dir: &dalec.SourceInlineDir{
+						Files: map[string]*dalec.SourceInlineFile{
+							"first.patch": {Contents: `--- a/first.txt
++++ b/first.txt
+@@ -1 +1 @@
+-original first
++patched first
+`},
+							"second.patch": {Contents: `--- a/second.txt
++++ b/second.txt
+@@ -1 +1 @@
+-original second
++patched second
+`},
+						},
+					},
+				},
+			},
+		},
+		Patches: map[string][]dalec.PatchSpec{
+			"src": {
+				{
+					Source: "patches",
+					Path:   "first.patch",
+					Strip:  &strip,
+				},
+				{
+					Source: "patches",
+					Path:   "second.patch",
+					Strip:  &strip,
+				},
+			},
+		},
+		Build: dalec.ArtifactBuild{
+			Steps: []dalec.BuildStep{
+				{Command: "grep -qx 'patched first' src/first.txt"},
+				{Command: "grep -qx 'patched second' src/second.txt"},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+		solveT(ctx, t, gwc, newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(targetCfg.Package)))
+	})
+}
+
 // testSourceOutputAppliesGomodEdits verifies that spec preprocessing (gomod
 // replace directives) is applied when producing the deb source package output.
 // The handler previously skipped Preprocess, silently emitting a source package
