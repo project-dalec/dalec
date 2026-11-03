@@ -68,8 +68,9 @@ func sourcePatchesDir(sOpt dalec.SourceOpts, base llb.State, dir, name string, s
 		}
 		st := src.ToState(patchStateName, sOpt, opts...)
 
-		st = base.File(llb.Copy(st, copySrc, filepath.Join(patchesPath, patch.Source)), opts...)
-		seriesBuf.WriteString(patch.Source + "\n")
+		patchName := filepath.Join(patch.Source, patch.Path)
+		st = base.File(llb.Copy(st, copySrc, filepath.Join(patchesPath, patchName), dalec.WithCreateDestPath()), opts...)
+		seriesBuf.WriteString(patchName + "\n")
 		states = append(states, st)
 	}
 
@@ -348,8 +349,8 @@ func createPatchScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 	sorted := dalec.SortMapKeys(spec.Patches)
 	for _, name := range sorted {
 		for _, patch := range spec.Patches[name] {
-			p := filepath.Join("${DEBIAN_DIR:=debian}/dalec/patches", name, patch.Source)
-			fmt.Fprintf(buf, "patch -d %q -p%d -s < %q\n", name, *patch.Strip, p)
+			p := dalec.ShellQuote(filepath.Join(name, patch.Source, patch.Path))
+			fmt.Fprintf(buf, "patch -d %q -p%d -s < \"${DEBIAN_DIR:=debian}/dalec/patches/\"%s\n", name, *patch.Strip, p)
 		}
 	}
 

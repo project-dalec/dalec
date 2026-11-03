@@ -228,6 +228,12 @@ func testLinuxDistro(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		testPatchGitattributesBinaryFile(ctx, t, testConfig.Target)
 	})
 
+	t.Run("patches-from-same-source", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		testPatchesFromSameSource(ctx, t, testConfig.Target)
+	})
+
 	t.Run("test-dalec-empty-artifacts", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(ctx, t)

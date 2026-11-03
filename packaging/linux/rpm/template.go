@@ -608,7 +608,7 @@ func (w *specWrapper) PrepareSources() (fmt.Stringer, error) {
 	patchKeys := dalec.SortMapKeys(w.Spec.Patches)
 	for _, key := range patchKeys {
 		for _, patch := range w.Spec.Patches[key] {
-			fmt.Fprintf(b, "patch -d %q -p%d -s --input \"%%{_builddir}/%s\"\n", key, *patch.Strip, filepath.Join(patch.Source, patch.Path))
+			fmt.Fprintf(b, "patch -d %q -p%d -s --input \"%%{_builddir}/\"%s\n", key, *patch.Strip, dalec.ShellQuote(filepath.Join(patch.Source, patch.Path)))
 		}
 	}
 
