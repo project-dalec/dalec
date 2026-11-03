@@ -133,7 +133,7 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
 
 			final := ctr.With(runTests)
-			split, err := maybeSplitLayers(ctx, client, sOpt, c, spec, targetKey, ctr, pkgSt, opts...)
+			split, err := maybeSplitLayers(ctx, client, c, spec, targetKey, ctr, pkgSt, opts...)
 			if err != nil {
 				return nil, nil, err
 			}

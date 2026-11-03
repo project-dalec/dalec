@@ -62,7 +62,7 @@ type splitLayersResult struct {
 // package set when the distro and builder support it. It returns nil when the
 // container should be a single layer, as it is when built on top of a base
 // image or when BuildKit does not support diff and merge.
-func maybeSplitLayers(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, c DistroConfig, spec *dalec.Spec, targetKey string, ctr, pkgSt llb.State, opts ...llb.ConstraintsOpt) (*splitLayersResult, error) {
+func maybeSplitLayers(ctx context.Context, client gwclient.Client, c DistroConfig, spec *dalec.Spec, targetKey string, ctr, pkgSt llb.State, opts ...llb.ConstraintsOpt) (*splitLayersResult, error) {
 	ls, ok := c.(layerSplitter)
 	if !ok {
 		return nil, nil
@@ -86,9 +86,13 @@ func maybeSplitLayers(ctx context.Context, client gwclient.Client, sOpt dalec.So
 	// the frontend's own platform instead of the target platform, which may
 	// need an emulator that cannot run the frontend binary. The package data
 	// they read is the same on every platform.
+	// The source options are created for that platform, so named contexts
+	// (such as a worker context) resolve for it too.
 	helperPlatform := platforms.Normalize(platforms.DefaultSpec())
-	helperSOpt := sOpt
-	helperSOpt.TargetPlatform = &helperPlatform
+	helperSOpt, err := frontend.SourceOptFromClient(ctx, client, &helperPlatform)
+	if err != nil {
+		return nil, err
+	}
 	worker := c.Worker(helperSOpt, dalec.WithConstraints(opts...), dalec.Platform(&helperPlatform))
 	return splitLayers(ctx, client, worker, helperPlatform, ls, base, ctr, pkgSt, opts...)
 }
