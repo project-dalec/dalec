@@ -316,6 +316,10 @@ func ShArgsf(format string, args ...interface{}) llb.RunOption {
 	return ShArgs(fmt.Sprintf(format, args...))
 }
 
+func ShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 type NativeSymlinkSupport interface {
 	SupportsNativeSymlinks() bool
 }

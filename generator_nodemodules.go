@@ -3,7 +3,6 @@ package dalec
 import (
 	"context"
 	"path/filepath"
-	"strings"
 
 	"github.com/goccy/go-yaml/ast"
 	"github.com/moby/buildkit/client/llb"
@@ -114,9 +113,9 @@ func withNodeMod(g *SourceGenerator, sOpt SourceOpts, worker llb.State, name str
 			// The proxy setup must run in a shell so its environment changes reach
 			// npm. Quote user-controlled values before embedding them in that shell
 			// command so registry URLs cannot be interpreted as shell syntax.
-			installCmd := npmProxyConfigScript + "\nconfigure_npm_proxy\nnpm install --prefix " + shellQuote(installPath)
+			installCmd := npmProxyConfigScript + "\nconfigure_npm_proxy\nnpm install --prefix " + ShellQuote(installPath)
 			if g.NodeMod.Registry != "" {
-				installCmd += " --registry=" + shellQuote(g.NodeMod.Registry)
+				installCmd += " --registry=" + ShellQuote(g.NodeMod.Registry)
 			}
 
 			st := worker.Run(
@@ -133,10 +132,6 @@ func withNodeMod(g *SourceGenerator, sOpt SourceOpts, worker llb.State, name str
 		}
 		return MergeAtPath(llb.Scratch(), append(states, in), "/", opts...)
 	}
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func (s *Spec) nodeModSources() map[string]Source {

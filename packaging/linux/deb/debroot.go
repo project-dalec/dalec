@@ -349,8 +349,8 @@ func createPatchScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 	sorted := dalec.SortMapKeys(spec.Patches)
 	for _, name := range sorted {
 		for _, patch := range spec.Patches[name] {
-			p := filepath.Join("${DEBIAN_DIR:=debian}/dalec/patches", name, patch.Source, patch.Path)
-			fmt.Fprintf(buf, "patch -d %q -p%d -s < %q\n", name, *patch.Strip, p)
+			p := dalec.ShellQuote(filepath.Join(name, patch.Source, patch.Path))
+			fmt.Fprintf(buf, "patch -d %q -p%d -s < \"${DEBIAN_DIR:=debian}/dalec/patches/\"%s\n", name, *patch.Strip, p)
 		}
 	}
 
