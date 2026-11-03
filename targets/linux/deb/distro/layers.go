@@ -39,6 +39,13 @@ if ls "${admin}"/info/*.list > /dev/null 2>&1; then
 	' "${out}/` + layersplit.PackagesFile + `" "${admin}"/info/*.list >> "${out}/` + layersplit.FilesFile + `"
 fi
 
+# When each package was unpacked: dpkg writes its file list then. dpkg --verify
+# does not check timestamps, so files modified after that (for example created
+# by a maintainer script) are found by comparing with this time.
+if ls "${admin}"/info/*.list > /dev/null 2>&1; then
+	stat -c '%Y	%n' "${admin}"/info/*.list > "${out}/` + layersplit.InstalledAtFile + `"
+fi
+
 # Files changed after install. dpkg --verify exits non-zero when it finds
 # differences, which is expected.
 dpkg --root="${root}" --verify > "${out}/` + layersplit.VerifyFile + `" 2>/dev/null || true

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -177,4 +178,27 @@ func scanPairs(r io.Reader, fn func(k, v string)) error {
 		fn(k, v)
 	}
 	return sc.Err()
+}
+
+// ParseInstalledAt parses "seconds\tname" lines, as written by
+// `stat -c '%Y\t%n'` on dpkg's info/<name>.list files: the paths are reduced
+// to the package name.
+func ParseInstalledAt(r io.Reader) (map[string]int64, error) {
+	out := make(map[string]int64)
+	var parseErr error
+	err := scanPairs(r, func(ts, name string) {
+		sec, err := strconv.ParseInt(ts, 10, 64)
+		if err != nil {
+			parseErr = fmt.Errorf("malformed install time %q for %s", ts, name)
+			return
+		}
+		name = name[strings.LastIndex(name, "/")+1:]
+		name = strings.TrimSuffix(name, ".list")
+		name, _, _ = strings.Cut(name, ":")
+		out[name] = sec
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, parseErr
 }

@@ -36,9 +36,9 @@ func (e Entry) String() string {
 		e.Type, e.Mode, e.UID, e.GID, e.Size, e.SHA256, e.Link, e.Rdev, e.Mtime, e.Xattrs, e.Hardlink)
 }
 
-// Tree walks root and returns an entry for every path below it.
-// Directory timestamps are not recorded since they are not stable across
-// layer extraction.
+// Tree walks root and returns an entry for every path below it, except
+// sockets. Directory timestamps are not recorded since they are not stable
+// across layer extraction.
 func Tree(root string) (map[string]Entry, error) {
 	type inode struct{ dev, ino uint64 }
 	out := make(map[string]Entry)
@@ -52,6 +52,11 @@ func Tree(root string) (map[string]Entry, error) {
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+		if d.Type()&fs.ModeSocket != 0 {
+			// Sockets are runtime objects which image layers cannot
+			// hold, so they are not copied either.
 			return nil
 		}
 		e, err := entryFor(full)

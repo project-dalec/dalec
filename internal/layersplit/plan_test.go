@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
@@ -160,6 +161,33 @@ func TestBuildPlanOmitsEmptySets(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Check(t, cmp.DeepEqual(groupKinds(plan), []string{KindDeps, KindState}))
 	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/myapp"), KindDeps))
+}
+
+func TestBuildPlanFilesChangedDuringInstall(t *testing.T) {
+	root := testRoot(t)
+	old := time.Unix(1_000_000, 0)
+	for _, p := range []string{"usr/bin/openssl", "usr/bin/myapp"} {
+		assert.NilError(t, os.Chtimes(filepath.Join(root, p), old, old))
+	}
+	// /usr/bin/bash keeps the time it was written, like a file created by a
+	// maintainer script.
+	installedAt := time.Now().Add(-time.Minute).Unix()
+
+	in := testInputs()
+	in.InstalledAt = map[string]int64{
+		"bash":    installedAt,
+		"openssl": installedAt,
+		// Spec packages are built during the build, so their files are
+		// always recent.
+		"myapp-debug": installedAt,
+	}
+	plan, err := BuildPlan(root, in)
+	assert.NilError(t, err)
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/bash"), KindState))
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/openssl"), KindDeps))
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/bin/myapp-debug"), KindApp))
+	// Packages without an install time are not checked.
+	assert.Check(t, cmp.Equal(groupOf(t, plan, "/usr/lib/libc.so.6"), KindBase))
 }
 
 func TestBuildPlanSharedPathGoesToEarliestLayer(t *testing.T) {
@@ -338,6 +366,17 @@ func TestParsers(t *testing.T) {
 		}))
 
 		assert.ErrorContains(t, ParseDpkgDeps(strings.NewReader("bad line\n"), &d), "malformed")
+	})
+
+	t.Run("install times", func(t *testing.T) {
+		in := "1700000000\t/var/lib/dpkg/info/bash.list\n" +
+			"1700000001\t/var/lib/dpkg/info/libc6:amd64.list\n"
+		got, err := ParseInstalledAt(strings.NewReader(in))
+		assert.NilError(t, err)
+		assert.Check(t, cmp.DeepEqual(got, map[string]int64{"bash": 1700000000, "libc6": 1700000001}))
+
+		_, err = ParseInstalledAt(strings.NewReader("soon\t/var/lib/dpkg/info/bash.list\n"))
+		assert.ErrorContains(t, err, "malformed")
 	})
 
 	t.Run("files", func(t *testing.T) {

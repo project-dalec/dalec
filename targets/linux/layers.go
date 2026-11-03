@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -78,13 +79,20 @@ func maybeSplitLayers(ctx context.Context, client gwclient.Client, sOpt dalec.So
 		return nil, nil
 	}
 
-	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
-	return splitLayers(ctx, client, worker, ls, base, ctr, pkgSt, opts...)
+	// The split helpers run the frontend binary, so they run on a worker of
+	// the frontend's own platform instead of the target platform, which may
+	// need an emulator that cannot run the frontend binary. The package data
+	// they read is the same on every platform.
+	helperPlatform := platforms.Normalize(platforms.DefaultSpec())
+	helperSOpt := sOpt
+	helperSOpt.TargetPlatform = &helperPlatform
+	worker := c.Worker(helperSOpt, dalec.WithConstraints(opts...), dalec.Platform(&helperPlatform))
+	return splitLayers(ctx, client, worker, helperPlatform, ls, base, ctr, pkgSt, opts...)
 }
 
 // splitLayers splits the installed container root filesystem rootfs into one
 // layer per package set plus a final state layer.
-func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, ls layerSplitter, base []string, rootfs, pkgs llb.State, opts ...llb.ConstraintsOpt) (*splitLayersResult, error) {
+func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, helperPlatform ocispecs.Platform, ls layerSplitter, base []string, rootfs, pkgs llb.State, opts ...llb.ConstraintsOpt) (*splitLayersResult, error) {
 	opts = append(opts, dalec.ProgressGroup("Split image layers"), frontend.IgnoreCache(client))
 	frontendSt, err := layerSplitFrontend(ctx, client)
 	if err != nil {
@@ -106,7 +114,7 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 	// install whose generated files differ from this one. The steps are fast
 	// and deterministic, so unchanged package sets still produce identical
 	// layers.
-	splitOpts := append(slices.Clone(opts), llb.IgnoreCache)
+	splitOpts := append(slices.Clone(opts), llb.IgnoreCache, dalec.Platform(&helperPlatform))
 
 	withFrontend := llb.AddMount(layerSplitFrontendPath, frontendSt, llb.SourcePath("/frontend"), llb.Readonly)
 	withRoot := llb.AddMount(layerSplitRootPath, rootfs, llb.Readonly)

@@ -18,12 +18,13 @@ import (
 // hardlinks within a group. outs are in layer order: the last one is the top
 // layer (the state layer).
 //
-// Parent directories that a layer only needs to hold its entries are created
-// with fixed metadata ([stableDirMode], owned by root, no extended
-// attributes) in every layer but the top one, which recreates them with their
-// metadata in root. This way a lower layer only depends on its own entries:
-// when a later install step changes a shared directory (for example its
-// mode), only the top layer changes.
+// Directories are created with fixed metadata ([stableDirMode], owned by
+// root, no extended attributes) in every layer but the top one, which
+// recreates them with their metadata in root. Directories are often shared
+// between packages and can be changed by any of their install scripts, so
+// this way a lower layer only depends on the files of its packages: when a
+// later install step changes a directory (for example its mode), only the top
+// layer changes.
 //
 // Directory timestamps are set to dirMtime (seconds since the Unix epoch)
 // instead of being copied: they reflect when packages were installed into a
@@ -48,8 +49,8 @@ func Copy(root string, assign map[string]int, outs []string, dirMtime int64) err
 	}
 	var dirs []dirTime
 	top := len(outs) - 1
-	// restore lists the parent directories created with fixed metadata in a
-	// lower layer, which the top layer recreates with their real metadata.
+	// restore lists the directories created with fixed metadata in a lower
+	// layer, which the top layer recreates with their real metadata.
 	restore := make(map[string]bool)
 
 	ensureParents := func(idx int, p string) error {
@@ -97,7 +98,16 @@ func Copy(root string, assign map[string]int, outs []string, dirMtime int64) err
 			if created[idx][p] {
 				continue
 			}
-			dt, err := copyDir(root, outs[idx], p)
+			var (
+				dt  dirTime
+				err error
+			)
+			if idx == top {
+				dt, err = copyDir(root, outs[idx], p)
+			} else {
+				dt, err = stableDir(root, outs[idx], p)
+				restore[p] = true
+			}
 			if err != nil {
 				return err
 			}

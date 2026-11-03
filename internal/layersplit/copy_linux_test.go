@@ -1,6 +1,7 @@
 package layersplit
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,10 +141,13 @@ func TestCopyLowerLayersOnlyDependOnTheirPackages(t *testing.T) {
 
 	// A new version of the spec package with different contents, whose
 	// install also changed the mode of /usr/bin, a directory holding files of
-	// every set.
+	// several sets.
 	root := testRoot(t)
 	assert.NilError(t, os.WriteFile(filepath.Join(root, "usr/bin/myapp"), []byte("myapp v2"), 0o644))
 	assert.NilError(t, os.Chmod(filepath.Join(root, "usr/bin"), 0o775))
+	// A directory owned by a base package, changed by an install script
+	// without the package manager noticing.
+	assert.NilError(t, os.Chmod(filepath.Join(root, "usr/share/doc/glibc"), 0o700))
 	after, _ := split(t, pinTimes(t, root))
 
 	for _, kind := range []string{KindBase, KindDeps} {
@@ -155,6 +159,35 @@ func TestCopyLowerLayersOnlyDependOnTheirPackages(t *testing.T) {
 		assert.NilError(t, err)
 		assert.Check(t, cmp.Len(Compare(want, got), 0), "%s layer changed", kind)
 	}
+}
+
+func TestCopyAndVerifySkipSockets(t *testing.T) {
+	root := testRoot(t)
+	l, err := net.Listen("unix", filepath.Join(root, "etc", "app.sock"))
+	if err != nil {
+		t.Skipf("unix sockets are not supported here: %v", err)
+	}
+	defer l.Close()
+
+	plan, err := BuildPlan(root, testInputs())
+	assert.NilError(t, err)
+	base := t.TempDir()
+	outs := make([]string, len(plan.Groups))
+	for i := range plan.Groups {
+		outs[i] = filepath.Join(base, strconv.Itoa(i))
+		assert.NilError(t, os.Mkdir(outs[i], 0o755))
+	}
+	assert.NilError(t, Copy(root, plan.Assign, outs, 0))
+
+	merged := t.TempDir()
+	mergeInto(t, merged, outs)
+	want, err := Tree(root)
+	assert.NilError(t, err)
+	_, ok := want["/etc/app.sock"]
+	assert.Check(t, !ok, "sockets are not part of the tree")
+	got, err := Tree(merged)
+	assert.NilError(t, err)
+	assert.Check(t, cmp.Len(Compare(want, got), 0))
 }
 
 func TestCompareReportsDifferences(t *testing.T) {
@@ -230,7 +263,8 @@ func TestCopyDoesNotAddInheritedACLs(t *testing.T) {
 	idx := plan.Assign["/data/file"]
 	_, err = unix.Lgetxattr(filepath.Join(outs[idx], "data/file"), "system.posix_acl_access", nil)
 	assert.Check(t, err != nil, "copied file must not inherit the directory's default ACL")
-	_, err = unix.Lgetxattr(filepath.Join(outs[idx], "data"), "system.posix_acl_default", nil)
+	// Directories get their real metadata in the top layer.
+	_, err = unix.Lgetxattr(filepath.Join(outs[len(outs)-1], "data"), "system.posix_acl_default", nil)
 	assert.NilError(t, err, "the directory keeps its own default ACL")
 
 	// The copy verifies against the original.

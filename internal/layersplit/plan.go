@@ -111,6 +111,13 @@ type Inputs struct {
 	// Base is the set of the distro's mandatory base package names. Their
 	// dependencies are part of the base set as well.
 	Base map[string]bool
+	// InstalledAt maps a package to when its files were unpacked, in seconds
+	// since the Unix epoch. Files of packages from the distro repositories
+	// with a timestamp from then or later (for example created by a
+	// maintainer script) are treated as modified. It is used for package
+	// managers whose verify command does not check timestamps; packages
+	// without an entry are not checked.
+	InstalledAt map[string]int64
 }
 
 // OwnedFile is a file owned by a package.
@@ -145,6 +152,7 @@ func BuildPlan(root string, in Inputs) (*Plan, error) {
 
 	owners := make(map[string][]string)
 	ghost := make(map[string]bool)
+	var late []string
 	for _, f := range in.Files {
 		p, err := resolve(f.Path)
 		if err != nil {
@@ -155,6 +163,9 @@ func BuildPlan(root string, in Inputs) (*Plan, error) {
 			continue
 		}
 		owners[p] = append(owners[p], f.Package)
+		if !in.App[f.Package] && changedAfterInstall(root, p, in.InstalledAt[f.Package]) {
+			late = append(late, p)
+		}
 	}
 
 	modified := make(map[string]bool, len(in.Modified))
@@ -163,6 +174,9 @@ func BuildPlan(root string, in Inputs) (*Plan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolving %s: %w", m, err)
 		}
+		modified[p] = true
+	}
+	for _, p := range late {
 		modified[p] = true
 	}
 
@@ -328,6 +342,23 @@ func Classify(in Inputs, fileOwners func(string) []string) map[string]string {
 		}
 	}
 	return out
+}
+
+// changedAfterInstall reports whether the entry p in root, a non-directory
+// owned by a package installed at installedAt, was modified when or after the
+// package was installed. Files unpacked from a package from the distro
+// repositories keep the much older timestamps recorded in the package, so a
+// timestamp from the install means the file was created or changed by the
+// install (for example by a maintainer script).
+func changedAfterInstall(root, p string, installedAt int64) bool {
+	if installedAt == 0 {
+		return false
+	}
+	fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p)))
+	if err != nil || fi.IsDir() {
+		return false
+	}
+	return fi.ModTime().Unix() >= installedAt
 }
 
 func inStateDir(p string) bool {

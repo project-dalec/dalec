@@ -42,6 +42,9 @@ const (
 	RPMProvidesFile = "rpm-provides.tsv"
 	// DpkgDepsFile holds dpkg dependency data, read by [ParseDpkgDeps].
 	DpkgDepsFile = "dpkg-deps.tsv"
+	// InstalledAtFile lists when each package was installed, as
+	// "seconds\tname" lines, read by [ParseInstalledAt]. It is optional.
+	InstalledAtFile = "installed-at.tsv"
 
 	maxReportedDiffs = 20
 )
@@ -164,6 +167,18 @@ func readInputs(dump, base string) (Inputs, error) {
 		}),
 	)
 	if err != nil {
+		return in, err
+	}
+
+	if _, err := os.Stat(dumpFile(InstalledAtFile)); err == nil {
+		err := read(dumpFile(InstalledAtFile), func(r io.Reader) (err error) {
+			in.InstalledAt, err = ParseInstalledAt(r)
+			return err
+		})
+		if err != nil {
+			return in, err
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return in, err
 	}
 

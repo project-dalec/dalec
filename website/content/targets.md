@@ -278,7 +278,8 @@ most frequently changing:
 3. The spec's packages, built by Dalec or passed in as prebuilt packages.
 4. The package database, files that are not owned by a package or were
    changed after install (for example `/etc/passwd` after users are created),
-   and the ownership and permissions of directories shared between the sets.
+   and the ownership and permissions of directories (lower layers create them
+   with fixed ones).
 
 A set without any files gets no layer. Directory timestamps in the layers are
 set to `SOURCE_DATE_EPOCH` when it is provided, or to 0 otherwise, so a set of
