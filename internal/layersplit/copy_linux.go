@@ -116,8 +116,14 @@ func Copy(root string, assign map[string]int, outs []string, dirMtime int64) err
 			continue
 		}
 
+		if st.Mode&unix.S_IFMT == unix.S_IFSOCK {
+			// Sockets are runtime objects and cannot be stored in an image
+			// layer.
+			continue
+		}
+
 		dst := filepath.Join(outs[idx], filepath.FromSlash(p))
-		if st.Mode&unix.S_IFMT == unix.S_IFREG && st.Nlink > 1 {
+		if st.Nlink > 1 {
 			key := inode{uint64(st.Dev), st.Ino}
 			if first, ok := links[idx][key]; ok {
 				if err := os.Link(first, dst); err != nil {

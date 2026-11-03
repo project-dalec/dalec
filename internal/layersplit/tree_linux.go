@@ -65,7 +65,7 @@ func Tree(root string) (map[string]Entry, error) {
 		}
 		p := "/" + filepath.ToSlash(rel)
 		out[p] = e
-		if d.Type().IsRegular() {
+		if !d.IsDir() {
 			fi, err := d.Info()
 			if err != nil {
 				return err

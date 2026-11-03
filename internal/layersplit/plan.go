@@ -242,15 +242,21 @@ func BuildPlan(root string, in Inputs) (*Plan, error) {
 
 		g := groups[kind]
 		g.Paths++
-		if d.Type().IsRegular() {
+		if !d.IsDir() {
 			fi, err := d.Info()
 			if err != nil {
 				return err
 			}
-			g.Size += fi.Size()
+			var size int64
+			if d.Type().IsRegular() {
+				size = fi.Size()
+			}
+			g.Size += size
+			// Any non-directory can be hardlinked, including symlinks and
+			// device nodes.
 			if dev, ino, nlink, ok := inodeOf(fi); ok && nlink > 1 {
 				k := inode{dev, ino}
-				hardlinks[k] = append(hardlinks[k], linked{p, fi.Size()})
+				hardlinks[k] = append(hardlinks[k], linked{p, size})
 			}
 		}
 		assignKind[p] = kind

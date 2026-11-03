@@ -190,6 +190,64 @@ func TestCopyAndVerifySkipSockets(t *testing.T) {
 	assert.Check(t, cmp.Len(Compare(want, got), 0))
 }
 
+// TestCopyKeepsSpecialHardlinksTogether checks hardlinks of non-regular
+// files, which have to stay linked like regular files.
+func TestCopyKeepsSpecialHardlinksTogether(t *testing.T) {
+	root := testRoot(t)
+	fifo := filepath.Join(root, "usr/bin/openssl.fifo")
+	if err := unix.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("FIFOs are not supported here: %v", err)
+	}
+	assert.NilError(t, os.Link(fifo, filepath.Join(root, "usr/bin/myapp.fifo")))
+	assert.NilError(t, os.Symlink("openssl", filepath.Join(root, "usr/bin/openssl.link")))
+	// os.Link does not follow symlinks, so this links the symlink itself.
+	assert.NilError(t, os.Link(filepath.Join(root, "usr/bin/openssl.link"), filepath.Join(root, "usr/bin/myapp.link")))
+
+	in := testInputs()
+	in.Files = append(in.Files,
+		OwnedFile{Package: "openssl", Path: "/usr/bin/openssl.fifo"},
+		OwnedFile{Package: "myapp", Path: "/usr/bin/myapp.fifo"},
+		OwnedFile{Package: "openssl", Path: "/usr/bin/openssl.link"},
+		OwnedFile{Package: "myapp", Path: "/usr/bin/myapp.link"},
+	)
+	plan, err := BuildPlan(root, in)
+	assert.NilError(t, err)
+	for _, p := range []string{"/usr/bin/openssl.fifo", "/usr/bin/myapp.fifo", "/usr/bin/openssl.link", "/usr/bin/myapp.link"} {
+		assert.Check(t, cmp.Equal(groupOf(t, plan, p), KindState), p)
+	}
+
+	base := t.TempDir()
+	outs := make([]string, len(plan.Groups))
+	for i := range plan.Groups {
+		outs[i] = filepath.Join(base, strconv.Itoa(i))
+		assert.NilError(t, os.Mkdir(outs[i], 0o755))
+	}
+	assert.NilError(t, Copy(root, plan.Assign, outs, 0))
+
+	merged := t.TempDir()
+	mergeInto(t, merged, outs)
+	want, err := Tree(root)
+	assert.NilError(t, err)
+	assert.Check(t, want["/usr/bin/myapp.fifo"].Hardlink != "")
+	assert.Check(t, want["/usr/bin/myapp.link"].Hardlink != "")
+	got, err := Tree(merged)
+	assert.NilError(t, err)
+	assert.Check(t, cmp.Len(Compare(want, got), 0))
+
+	// A broken FIFO hardlink is reported.
+	broken := t.TempDir()
+	assert.NilError(t, unix.Mkfifo(filepath.Join(broken, "a"), 0o644))
+	assert.NilError(t, unix.Mkfifo(filepath.Join(broken, "b"), 0o644))
+	linked := t.TempDir()
+	assert.NilError(t, unix.Mkfifo(filepath.Join(linked, "a"), 0o644))
+	assert.NilError(t, os.Link(filepath.Join(linked, "a"), filepath.Join(linked, "b")))
+	want, err = Tree(linked)
+	assert.NilError(t, err)
+	got, err = Tree(broken)
+	assert.NilError(t, err)
+	assert.Check(t, len(Compare(want, got)) > 0)
+}
+
 func TestCompareReportsDifferences(t *testing.T) {
 	expected := t.TempDir()
 	actual := t.TempDir()
