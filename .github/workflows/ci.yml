@@ -59,6 +59,10 @@ permissions:
   contents: read
   packages: read
 
+env:
+  # Temporary experiment for moby/buildkit#7348.
+  BUILDKIT_TEST_COMMIT: 85697ddb8e1ba10b7bfea835ec968c34269db38f
+
 jobs:
   lint:
     runs-on: ubuntu-22.04
@@ -226,8 +230,13 @@ jobs:
         uses: ./.github/actions/dns-spoof-ubuntu-archive
       - name: Setup builder
         run: |
+          # Keep full history and tags for BuildKit's semver-like git-describe version.
+          buildkit_source="$(mktemp -d "${RUNNER_TEMP}/buildkit.XXXXXX")"
+          git clone https://github.com/moby/buildkit.git "${buildkit_source}"
+          git -C "${buildkit_source}" fetch origin "${BUILDKIT_TEST_COMMIT}"
+          git -C "${buildkit_source}" checkout --detach "${BUILDKIT_TEST_COMMIT}"
           buildkit_image_id_file="$(mktemp)"
-          docker buildx build --target=buildkit --iidfile="${buildkit_image_id_file}" .
+          docker buildx build --load --target=buildkit --iidfile="${buildkit_image_id_file}" "${buildkit_source}"
           BUILDKIT_TEST_IMAGE="$(<"${buildkit_image_id_file}")"
 
           # Use a buildx container builder pinned to the buildkit version under
@@ -448,8 +457,13 @@ jobs:
 
           docker run -d --net=host ghcr.io/${{ steps.format-repo.outputs.result }}/mirror/dockerhub/library/registry:latest
 
+          # Keep full history and tags for BuildKit's semver-like git-describe version.
+          buildkit_source="$(mktemp -d "${RUNNER_TEMP}/buildkit.XXXXXX")"
+          git clone https://github.com/moby/buildkit.git "${buildkit_source}"
+          git -C "${buildkit_source}" fetch origin "${BUILDKIT_TEST_COMMIT}"
+          git -C "${buildkit_source}" checkout --detach "${BUILDKIT_TEST_COMMIT}"
           buildkit_image_id_file="$(mktemp)"
-          docker buildx build --target=buildkit --iidfile="${buildkit_image_id_file}" .
+          docker buildx build --load --target=buildkit --iidfile="${buildkit_image_id_file}" "${buildkit_source}"
           BUILDKIT_TEST_IMAGE="$(<"${buildkit_image_id_file}")"
 
           # Use a buildx container builder pinned to the buildkit version under
