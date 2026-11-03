@@ -846,6 +846,11 @@ EOF
 		skip.If(t, testConfig.Target.MinimalContainer == "", "skipping test as it is not supported for this config")
 		t.Parallel()
 
+		t.Run("image_layers", func(t *testing.T) {
+			t.Parallel()
+			testImageLayers(ctx, t, testConfig.Target.MinimalContainer)
+		})
+
 		if strings.HasSuffix(testConfig.Target.Package, "/rpm") {
 			testRPMMinimalContainer(ctx, t, testConfig)
 			return
@@ -6543,7 +6548,7 @@ func testRPMMinimalContainer(ctx context.Context, t *testing.T, testConfig testL
 			res := solveT(ctx, t, gwc, sr)
 
 			for _, op := range test.LLBOpsFromState(ctx, t, resultToState(t, res)) {
-				assert.Assert(t, op.OpMetadata.ProgressGroup.Name != "Minimize RPM container",
+				assert.Assert(t, op.OpMetadata.ProgressGroup.GetName() != "Minimize RPM container",
 					"RPM minimization must be disabled unless explicitly selected")
 			}
 		})
@@ -6587,10 +6592,10 @@ func testRPMMinimalContainer(ctx context.Context, t *testing.T, testConfig testL
 			found := false
 			squashed := false
 			for _, op := range test.LLBOpsFromState(ctx, t, resultToState(t, res)) {
-				if op.OpMetadata.ProgressGroup.Name == "Squash RPM container" {
+				if op.OpMetadata.ProgressGroup.GetName() == "Squash RPM container" {
 					squashed = true
 				}
-				if op.OpMetadata.ProgressGroup.Name == "Minimize RPM container" {
+				if op.OpMetadata.ProgressGroup.GetName() == "Minimize RPM container" {
 					found = true
 				}
 			}
@@ -6861,12 +6866,24 @@ func testContainerTarget(ctx context.Context, t *testing.T, testConfig testLinux
 			}
 
 			for _, op := range ops {
+				e := op.Op.GetExec()
+				// Ops built outside of dalec (such as the frontend's own build
+				// steps) have no progress group.
+				pg := op.OpMetadata.ProgressGroup.GetName()
+
+				// The image layer split steps always run, so their result
+				// matches the installed root filesystem of this build.
+				if pg == "Split image layers" {
+					if e != nil && !op.OpMetadata.IgnoreCache {
+						t.Errorf("Expected image layer split step to have cache ignore enabled: %q", op.OpMetadata.Description["llb.customname"])
+					}
+					continue
+				}
+
 				if op.OpMetadata.IgnoreCache {
 					cacheIgnored++
 				}
 
-				e := op.Op.GetExec()
-				pg := op.OpMetadata.ProgressGroup.Name
 				if e == nil {
 					continue
 				}

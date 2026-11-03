@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -131,7 +132,24 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
 			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
 
-			def, err := ctr.With(runTests).Marshal(ctx, opts...)
+			final := ctr.With(runTests)
+			split, err := maybeSplitLayers(ctx, client, c, spec, targetKey, ctr, pkgSt, opts...)
+			if err != nil {
+				return nil, nil, err
+			}
+			if split != nil {
+				// The final state requires the verification, which runs on
+				// the split helpers' platform; any step running on it must
+				// use that platform too.
+				requireOpts := append(slices.Clone(opts), frontend.IgnoreCache(client), dalec.Platform(&split.HelperPlatform))
+				final = split.Verify.With(testrunner.WithFinalState(split.State.With(runTests), frontend.TestWithClientFrontend(client), testrunner.WithConstraints(requireOpts...)))
+				addLayerHistory(img, split.Groups)
+				// The final state requires the split through an op which
+				// takes its constraints when marshalled.
+				opts = append(opts, frontend.IgnoreCache(client))
+			}
+
+			def, err := final.Marshal(ctx, opts...)
 			if err != nil {
 				return nil, nil, err
 			}
