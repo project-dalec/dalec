@@ -53,6 +53,9 @@ type splitLayersResult struct {
 	Verify llb.State
 	// Groups describes each layer of State, in order.
 	Groups []layersplit.Group
+	// HelperPlatform is the platform of Verify, which must be used for any
+	// step running on it.
+	HelperPlatform ocispecs.Platform
 }
 
 // maybeSplitLayers splits the container root filesystem into one layer per
@@ -218,7 +221,7 @@ func splitLayers(ctx context.Context, client gwclient.Client, worker llb.State, 
 		dalec.WithConstraints(splitOpts...),
 	).Root()
 
-	return &splitLayersResult{State: merged, Verify: verify, Groups: plan.Groups}, nil
+	return &splitLayersResult{State: merged, Verify: verify, Groups: plan.Groups, HelperPlatform: helperPlatform}, nil
 }
 
 // layerSplitFrontend returns the frontend state used to run the layer split
