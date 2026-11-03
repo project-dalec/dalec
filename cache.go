@@ -115,9 +115,9 @@ func WithCacheDirConstraints(opts ...llb.ConstraintsOpt) CacheConfigOption {
 	})
 }
 
-func (c *CacheConfig) ToRunOption(worker llb.State, distroKey string, opts ...CacheConfigOption) llb.RunOption {
+func (c *CacheConfig) ToRunOption(worker llb.State, cacheIdentity string, opts ...CacheConfigOption) llb.RunOption {
 	if c.Dir != nil {
-		return c.Dir.ToRunOption(distroKey, CacheDirOptionFunc(func(info *CacheDirInfo) {
+		return c.Dir.ToRunOption(cacheIdentity, CacheDirOptionFunc(func(info *CacheDirInfo) {
 			var cacheInfo CacheInfo
 			for _, opt := range opts {
 				opt.SetCacheConfigOption(&cacheInfo)
@@ -127,7 +127,7 @@ func (c *CacheConfig) ToRunOption(worker llb.State, distroKey string, opts ...Ca
 	}
 
 	if c.GoBuild != nil {
-		return c.GoBuild.ToRunOption(distroKey, GoBuildCacheOptionFunc(func(info *GoBuildCacheInfo) {
+		return c.GoBuild.ToRunOption(cacheIdentity, GoBuildCacheOptionFunc(func(info *GoBuildCacheInfo) {
 			var cacheInfo CacheInfo
 			for _, opt := range opts {
 				opt.SetCacheConfigOption(&cacheInfo)
@@ -137,7 +137,7 @@ func (c *CacheConfig) ToRunOption(worker llb.State, distroKey string, opts ...Ca
 	}
 
 	if c.RustSCCache != nil {
-		return c.RustSCCache.ToRunOption(distroKey, SCCacheOptionFunc(func(info *SCCacheInfo) {
+		return c.RustSCCache.ToRunOption(cacheIdentity, SCCacheOptionFunc(func(info *SCCacheInfo) {
 			var cacheInfo CacheInfo
 			for _, opt := range opts {
 				opt.SetCacheConfigOption(&cacheInfo)
@@ -147,7 +147,7 @@ func (c *CacheConfig) ToRunOption(worker llb.State, distroKey string, opts ...Ca
 	}
 
 	if c.Bazel != nil {
-		return c.Bazel.ToRunOption(worker, distroKey, BazelCacheOptionFunc(func(info *BazelCacheInfo) {
+		return c.Bazel.ToRunOption(worker, cacheIdentity, BazelCacheOptionFunc(func(info *BazelCacheInfo) {
 			var cacheInfo CacheInfo
 			for _, opt := range opts {
 				opt.SetCacheConfigOption(&cacheInfo)
@@ -227,12 +227,12 @@ type CacheDir struct {
 	Sharing string `json:"sharing" yaml:"sharing" jsonschema:"enum=shared,enum=locked,enum=private"`
 
 	// NoAutoNamespace disables the automatic prefixing of the cache key with the
-	// target specific information such as distro and CPU architecture, which may
-	// be auto-injected to prevent common issues that would cause an invalid cache.
+	// build environment identity and CPU architecture, which may be auto-injected
+	// to prevent common issues that would cause an invalid cache.
 	NoAutoNamespace bool `json:"no_auto_namespace" yaml:"no_auto_namespace"`
 }
 
-func (c *CacheDir) ToRunOption(distroKey string, opts ...CacheDirOption) llb.RunOption {
+func (c *CacheDir) ToRunOption(cacheIdentity string, opts ...CacheDirOption) llb.RunOption {
 	return RunOptFunc(func(ei *llb.ExecInfo) {
 		var sharing llb.CacheMountSharingMode
 		switch c.Sharing {
@@ -270,7 +270,7 @@ func (c *CacheDir) ToRunOption(distroKey string, opts ...CacheDirOption) llb.Run
 				p := platforms.DefaultSpec()
 				platform = &p
 			}
-			key = fmt.Sprintf("%s-%s-%s", distroKey, platforms.Format(*platform), key)
+			key = fmt.Sprintf("%s-%s-%s", cacheIdentity, platforms.Format(*platform), key)
 		}
 
 		llb.AddMount(c.Dest, llb.Scratch(), llb.AsPersistentCacheDir(key, sharing)).SetRunOption(ei)
@@ -345,7 +345,7 @@ func WithGoCacheConstraints(opts ...llb.ConstraintsOpt) CacheConfigOption {
 
 const goBuildCacheDir = "/tmp/dalec/gobuild-cache"
 
-func (c *GoBuildCache) ToRunOption(distroKey string, opts ...GoBuildCacheOption) llb.RunOption {
+func (c *GoBuildCache) ToRunOption(cacheIdentity string, opts ...GoBuildCacheOption) llb.RunOption {
 	return RunOptFunc(func(ei *llb.ExecInfo) {
 		if c.Disabled {
 			return
@@ -366,7 +366,7 @@ func (c *GoBuildCache) ToRunOption(distroKey string, opts ...GoBuildCacheOption)
 			platform = &p
 		}
 
-		key := fmt.Sprintf("%s-%s-dalec-gobuildcache", distroKey, platforms.Format(*platform))
+		key := fmt.Sprintf("%s-%s-dalec-gobuildcache", cacheIdentity, platforms.Format(*platform))
 		if c.Scope != "" {
 			key = fmt.Sprintf("%s-%s", key, c.Scope)
 		}
@@ -416,7 +416,7 @@ const (
 	sccacheBinary   = "/tmp/internal/dalec/sccache/sccache"
 )
 
-func (c *SCCache) ToRunOption(distroKey string, opts ...SCCacheOption) llb.RunOption {
+func (c *SCCache) ToRunOption(cacheIdentity string, opts ...SCCacheOption) llb.RunOption {
 	// TODO: Future improvement - allow pulling sccache from build context instead of GitHub
 	// This would provide better security and flexibility by allowing users to:
 	// 1. Bring their own verified sccache binary
@@ -443,7 +443,7 @@ func (c *SCCache) ToRunOption(distroKey string, opts ...SCCacheOption) llb.RunOp
 			platform = &p
 		}
 
-		key := fmt.Sprintf("%s-%s-dalec-rustsccache", distroKey, platforms.Format(*platform))
+		key := fmt.Sprintf("%s-%s-dalec-rustsccache", cacheIdentity, platforms.Format(*platform))
 		if c.Scope != "" {
 			key = fmt.Sprintf("%s-%s", key, c.Scope)
 		}
@@ -531,7 +531,7 @@ type BazelCacheOption interface {
 	SetBazelCacheOption(*BazelCacheInfo)
 }
 
-func (c *BazelCache) ToRunOption(worker llb.State, distroKey string, opts ...BazelCacheOption) llb.RunOption {
+func (c *BazelCache) ToRunOption(worker llb.State, cacheIdentity string, opts ...BazelCacheOption) llb.RunOption {
 	return RunOptFunc(func(ei *llb.ExecInfo) {
 		var info BazelCacheInfo
 
@@ -549,7 +549,7 @@ func (c *BazelCache) ToRunOption(worker llb.State, distroKey string, opts ...Baz
 			platform = &p
 		}
 
-		key := fmt.Sprintf("%s-%s-dalec-bazelcache", distroKey, platforms.Format(*platform))
+		key := fmt.Sprintf("%s-%s-dalec-bazelcache", cacheIdentity, platforms.Format(*platform))
 		if c.Scope != "" {
 			key = fmt.Sprintf("%s-%s", key, c.Scope)
 		}

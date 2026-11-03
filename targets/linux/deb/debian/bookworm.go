@@ -18,6 +18,7 @@ var (
 		ImageRef:           bookwormRef,
 		AptCachePrefix:     BookwormAptCachePrefix,
 		VersionID:          bookwormVersionID,
+		CacheIdentity:      bookwormVersionID,
 		ContextRef:         BookwormWorkerContextName,
 		DefaultOutputImage: bookwormRef,
 		BuilderPackages:    builderPackages,

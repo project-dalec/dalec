@@ -9,8 +9,8 @@ import (
 )
 
 type CacheInfo struct {
-	TargetKey string
-	Caches    []dalec.CacheConfig
+	CacheIdentity string
+	Caches        []dalec.CacheConfig
 }
 
 // Builds an RPM and source RPM from a spec
@@ -65,7 +65,7 @@ func rpmbuild(topDir, workerImg llb.State, args string, caches CacheInfo, opts .
 				dalec.WithCacheDirConstraints(opts...),
 			}
 			for _, cache := range caches.Caches {
-				cache.ToRunOption(workerImg, caches.TargetKey, opts...).SetRunOption(ei)
+				cache.ToRunOption(workerImg, caches.CacheIdentity, opts...).SetRunOption(ei)
 			}
 		}),
 	).
