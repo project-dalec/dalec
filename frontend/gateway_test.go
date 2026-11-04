@@ -18,3 +18,19 @@ func TestSourceOptFromUIClientReadsGomodProxyBuildArgIntoExtraEnvs(t *testing.T)
 		t.Fatalf("expected GOPROXY extra env %q, got %q", proxy, sOpt.ExtraEnvs["GOPROXY"])
 	}
 }
+
+func TestSourceOptFromUIClientCopiesCargoBuildArgs(t *testing.T) {
+	t.Parallel()
+
+	client := newStubClient()
+	client.opts["build-arg:"+dalec.BuildArgDalecCargoRegistry] = "https://pkgs.example.test/feed"
+	client.opts["build-arg:"+dalec.BuildArgDalecCargoRegistryName] = "test-feed"
+
+	sOpt := SourceOptFromUIClient(t.Context(), client, nil, nil)
+	if got := sOpt.BuildArgs[dalec.BuildArgDalecCargoRegistry]; got != "https://pkgs.example.test/feed" {
+		t.Fatalf("expected Cargo registry URL build arg, got %q", got)
+	}
+	if got := sOpt.BuildArgs[dalec.BuildArgDalecCargoRegistryName]; got != "test-feed" {
+		t.Fatalf("expected Cargo registry name build arg, got %q", got)
+	}
+}

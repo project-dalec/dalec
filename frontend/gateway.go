@@ -132,6 +132,14 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 	if dc != nil {
 		sOpt.BuildArgs = dalec.DuplicateMap(dc.BuildArgs)
 	}
+	for _, key := range []string{dalec.BuildArgDalecCargoRegistry, dalec.BuildArgDalecCargoRegistryName} {
+		if value, ok := GetBuildArg(c, key); ok {
+			if sOpt.BuildArgs == nil {
+				sOpt.BuildArgs = map[string]string{}
+			}
+			sOpt.BuildArgs[key] = value
+		}
+	}
 
 	sOpt.SourceFilter = sync.OnceValues(func() (dalec.SourceFilterConfig, error) {
 		return loadSourceFilterConfig(ctx, c, sOpt.GetContext)

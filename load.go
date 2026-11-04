@@ -63,6 +63,10 @@ func knownArg(key string) bool {
 		return true
 	case BuildArgDalecGomodProxy:
 		return true
+	case BuildArgDalecCargoRegistry:
+		return true
+	case BuildArgDalecCargoRegistryName:
+		return true
 	case KeyDalecTarget:
 		return true
 	}
