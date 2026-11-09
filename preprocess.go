@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/mod/module"
@@ -31,8 +32,62 @@ const (
 // Preprocessing generates LLB states for patches and registers them as context sources
 // that can be retrieved later when sources are fetched.
 func (s *Spec) Preprocess(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) error {
+	if err := s.preprocessGomodPaths(sOpt, worker, opts...); err != nil {
+		return errors.Wrap(err, "failed to preprocess gomod paths")
+	}
+
 	if err := s.preprocessGomodEdits(sOpt, worker, opts...); err != nil {
 		return errors.Wrap(err, "failed to preprocess gomod edits")
+	}
+
+	return nil
+}
+
+// preprocessGomodPaths expands glob patterns in GeneratorGomod.Paths against
+// the source content.
+func (s *Spec) preprocessGomodPaths(sOpt SourceOpts, worker llb.State, opts ...llb.ConstraintsOpt) error {
+	gomodSources := s.gomodSources()
+	if len(gomodSources) == 0 {
+		return nil
+	}
+
+	// Get sources with base patches applied
+	patchedSources := s.getPatchedSources(sOpt, worker, func(name string) bool {
+		_, ok := gomodSources[name]
+		return ok
+	}, opts...)
+
+	// Expand paths for each source with gomod generators
+	for sourceName, src := range gomodSources {
+		patchedState, ok := patchedSources[sourceName]
+		if !ok {
+			continue
+		}
+
+		for _, gen := range src.Generate {
+			if gen == nil || gen.Gomod == nil || gen.Gomod.Paths == nil {
+				continue
+			}
+
+			basePath := filepath.Join(sourceName, gen.Subpath)
+			oldPaths := gen.Gomod.Paths
+
+			newPaths := make([]string, 0, len(oldPaths))
+			for _, pattern := range oldPaths {
+				matches, err := sOpt.Glob(patchedState, filepath.Join(basePath, pattern))
+				if err != nil {
+					return err
+				}
+
+				for _, match := range matches {
+					newPath := "." + strings.TrimPrefix(match, basePath)
+					newPaths = append(newPaths, newPath)
+				}
+			}
+			slices.Sort(newPaths)
+
+			gen.Gomod.Paths = newPaths
+		}
 	}
 
 	return nil
