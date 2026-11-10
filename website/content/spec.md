@@ -332,6 +332,8 @@ updating source versions, triggering rebuilds to update dependencies, or basical
 
 The channgelog is stored in the package metadata, where supported, and as such can be viewed by the package manager tooling.
 
+List entries newest first and add new entries to the top of the list. Package formats that only record a single entry, such as the Debian changelog, use the first entry in the list.
+
 ```yaml
 changelog:
   - author: John Doe <john.doe@example.com>

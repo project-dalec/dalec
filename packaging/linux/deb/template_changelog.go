@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -78,11 +77,9 @@ func (w *changelogWrapper) Change() string {
 	// Really the changelog model in debian does not line up well with the dalec model because it also wants distribution information as well.
 	entry := dummyChangelogEntry
 	if len(w.Spec.Changelog) > 0 {
-		// Use the newest entry (by change date). If several entries share the
-		// newest date, the first one listed in the spec wins.
-		entry = slices.MaxFunc(w.Spec.Changelog, func(i, j dalec.ChangelogEntry) int {
-			return i.Date.Compare(j.Date)
-		})
+		// Entries are expected to be listed newest first in the spec, so the
+		// first one is the most recent.
+		entry = w.Spec.Changelog[0]
 	}
 
 	buf := &strings.Builder{}

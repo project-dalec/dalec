@@ -44,25 +44,16 @@ func TestWriteChangelog(t *testing.T) {
 		return buf.String()
 	}
 
-	t.Run("The newest entry is used when entries are listed newest first", func(t *testing.T) {
+	t.Run("The first listed entry is used", func(t *testing.T) {
 		got := write(t, []dalec.ChangelogEntry{newer, older})
 		assert.Equal(t, got, header+newerChange)
 	})
 
-	t.Run("The newest entry is used when entries are listed oldest first", func(t *testing.T) {
+	t.Run("Entries are not reordered by date", func(t *testing.T) {
 		got := write(t, []dalec.ChangelogEntry{older, newer})
-		assert.Equal(t, got, header+newerChange)
-	})
-
-	t.Run("The first listed entry is used when the newest date is shared", func(t *testing.T) {
-		sameDay := dalec.ChangelogEntry{
-			Author:  "Other Author <other@example.com>",
-			Date:    newer.Date,
-			Changes: []string{"Other change"},
-		}
-
-		got := write(t, []dalec.ChangelogEntry{older, newer, sameDay})
-		assert.Equal(t, got, header+newerChange)
+		assert.Equal(t, got, header+
+			"  * Initial release\n"+
+			" -- Old Author <old@example.com>  Mon, 01 Jan 2024 00:00:00 +0000\n\n")
 	})
 
 	t.Run("A dummy entry is used when the spec has no changelog", func(t *testing.T) {
