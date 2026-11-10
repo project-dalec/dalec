@@ -50,6 +50,7 @@ func TestRockylinux9(t *testing.T) {
 			VersionID: "9",
 		},
 		SupportsGomodVersionUpdate: true,
+		SupportsGomodGodebug:       true,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testRockylinuxExtra(ctx, t, cfg, rockylinux.ConfigV9.ImageRef)
@@ -98,6 +99,7 @@ func TestRockylinux8(t *testing.T) {
 			VersionID: "8",
 		},
 		SupportsGomodVersionUpdate: true,
+		SupportsGomodGodebug:       true,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testRockylinuxExtra(ctx, t, cfg, rockylinux.ConfigV8.ImageRef)

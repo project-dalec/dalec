@@ -61,6 +61,7 @@ func TestSLES15(t *testing.T) {
 			VersionID: "15.7",
 		},
 		SupportsGomodVersionUpdate: true,
+		SupportsGomodGodebug:       true,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testSuseExtra(ctx, t, cfg, suse.ConfigSLES15.ImageRef)

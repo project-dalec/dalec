@@ -74,6 +74,7 @@ func TestAzlinux3(t *testing.T) {
 			VersionID: "3.0",
 		},
 		SupportsGomodVersionUpdate: true,
+		SupportsGomodGodebug:       true,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAzlinuxExtra(ctx, t, cfg, azlinux.Azlinux3Config.ImageRef)
@@ -129,6 +130,7 @@ func TestAzlinux4(t *testing.T) {
 			VersionID: "4.0",
 		},
 		SupportsGomodVersionUpdate: true,
+		SupportsGomodGodebug:       true,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAzlinuxExtra(ctx, t, cfg, azlinux.Azlinux4Config.ImageRef)
