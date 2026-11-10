@@ -50,6 +50,7 @@ func TestAlmalinux9(t *testing.T) {
 			VersionID: "9",
 		},
 		SupportsGomodVersionUpdate: true,
+		SupportsGomodGodebug:       true,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAlmalinuxExtra(ctx, t, cfg, almalinux.ConfigV9.ImageRef)
@@ -98,6 +99,7 @@ func TestAlmalinux8(t *testing.T) {
 			VersionID: "8",
 		},
 		SupportsGomodVersionUpdate: true,
+		SupportsGomodGodebug:       true,
 	}
 	testLinuxDistro(ctx, t, cfg)
 	testAlmalinuxExtra(ctx, t, cfg, almalinux.ConfigV8.ImageRef)

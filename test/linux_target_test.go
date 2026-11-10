@@ -119,6 +119,9 @@ type testLinuxConfig struct {
 	Release    OSRelease
 
 	SupportsGomodVersionUpdate bool
+	// SupportsGomodGodebug is set when the distro's golang package is Go 1.23
+	// or newer, which is required for `go mod edit -godebug`.
+	SupportsGomodGodebug bool
 }
 
 type OSRelease struct {
@@ -2352,6 +2355,71 @@ func main() {
 					{Command: "grep -F 'github.com/stretchr/testify v1.8.0' ./src/go.mod"},
 					// Build the code - will fail if replace didn't work
 					{Command: "cd ./src && go build"},
+				},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			req := newSolveRequest(withBuildTarget(testConfig.Target.Package), withSpec(ctx, t, spec))
+			solveT(ctx, t, client, req)
+		})
+	})
+
+	t.Run("gomod godebug directive", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+
+		skip.If(t, !testConfig.SupportsGomodGodebug,
+			"Test requires Go 1.23+ for 'go mod edit -godebug' support")
+
+		spec := &dalec.Spec{
+			Name:        "test-gomod-godebug",
+			Version:     "0.0.1",
+			Revision:    "1",
+			License:     "MIT",
+			Website:     "https://github.com/project-dalec/dalec",
+			Vendor:      "Dalec",
+			Packager:    "Dalec",
+			Description: "Testing gomod godebug directive",
+			Sources: map[string]dalec.Source{
+				"src": {
+					Inline: &dalec.SourceInline{
+						Dir: &dalec.SourceInlineDir{
+							Files: map[string]*dalec.SourceInlineFile{
+								"go.mod":  {Contents: "module example.com/test\n\ngo 1.23\n"},
+								"main.go": {Contents: "package main\n\nfunc main() {}\n"},
+							},
+						},
+					},
+					Generate: []*dalec.SourceGenerator{
+						{
+							Gomod: &dalec.GeneratorGomod{
+								Edits: &dalec.GomodEdits{
+									// Neither setting is part of the default GODEBUG
+									// for a go 1.23 module, so both only show up in
+									// the binary if the godebug block was applied.
+									Godebug: []string{"panicnil=1", "httpmuxgo121=1"},
+								},
+							},
+						},
+					},
+				},
+			},
+			Dependencies: &dalec.PackageDependencies{
+				Build: map[string]dalec.PackageConstraints{
+					testConfig.GetPackage("golang"): {},
+				},
+			},
+			Build: dalec.ArtifactBuild{
+				Steps: []dalec.BuildStep{
+					// Verify go.mod was patched with the godebug directives
+					{Command: "grep -E '^godebug' ./src/go.mod"},
+					{Command: "grep -E '^[[:space:]]+panicnil=1$' ./src/go.mod"},
+					{Command: "grep -E '^[[:space:]]+httpmuxgo121=1$' ./src/go.mod"},
+					// Verify the settings end up in the binary's default GODEBUG
+					{Command: "cd ./src && go build -o test-gomod-godebug ."},
+					{Command: "go version -m ./src/test-gomod-godebug | grep -E 'DefaultGODEBUG=(.*,)?panicnil=1(,|$)'"},
+					{Command: "go version -m ./src/test-gomod-godebug | grep -E 'DefaultGODEBUG=(.*,)?httpmuxgo121=1(,|$)'"},
 				},
 			},
 		}

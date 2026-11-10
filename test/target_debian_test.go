@@ -17,6 +17,7 @@ func TestTrixie(t *testing.T) {
 		debian.TrixieDefaultTargetKey,
 		debian.TrixieConfig,
 		withSupportGomodVersionUpdate(),
+		withSupportGomodGodebug(),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", "bazel-bootstrap"),
 	)

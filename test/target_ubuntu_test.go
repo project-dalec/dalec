@@ -29,6 +29,12 @@ func withSupportGomodVersionUpdate() func(cfg *testLinuxConfig) {
 	}
 }
 
+func withSupportGomodGodebug() func(cfg *testLinuxConfig) {
+	return func(cfg *testLinuxConfig) {
+		cfg.SupportsGomodGodebug = true
+	}
+}
+
 func debLinuxTestConfigFor(targetKey string, cfg *distro.Config, opts ...func(*testLinuxConfig)) testLinuxConfig {
 	var sysextTarget string
 	if cfg.SysextSupported {
@@ -184,6 +190,7 @@ func TestResolute(t *testing.T) {
 	ctx := startTestSpan(baseCtx, t)
 	testConf := debLinuxTestConfigFor(ubuntu.ResoluteDefaultTargetKey, ubuntu.ResoluteConfig,
 		withSupportGomodVersionUpdate(),
+		withSupportGomodGodebug(),
 		withPackageOverride("rust", "rust-all"),
 		withPackageOverride("bazel", "bazel-bootstrap"),
 	)
