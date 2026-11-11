@@ -316,6 +316,14 @@ sources:
                         some more content
 ```
 
+Each entry in `cmd.steps` is a build step with these fields:
+
+- `command` (required): The command to run. It is wrapped as `/bin/sh -c "<command>"`, or the equivalent for the target distro.
+- `env` (optional): Environment variables for this step.
+- `mounts` (optional): Other sources to mount into this step. Each mount requires `dest` (the mount point; must not be `/`) and `spec` (a source).
+
+`cmd` may also set `dir` (the working directory for the steps, default `/`) and `mounts` (mounts applied to every step).
+
 You can use the docker image source to produce any kind of content for your build.
 
 Docker image sources are considered to be "directory" sources.
