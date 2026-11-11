@@ -40,6 +40,28 @@ the build phase input is a directory with the [sources](spec.md#sources-section)
 added based on their source name.
 {{< /callout >}}
 
+Artifact paths can reference build args from the [args section](spec.md#args-section).
+This is useful when the location of the build output depends on a build arg,
+such as the target architecture:
+
+```yaml
+args:
+  TARGETARCH:
+
+artifacts:
+  binaries:
+    src/out/${TARGETARCH}/my_bin:
+```
+
+This applies to the paths of all artifact types, including systemd units and
+dropins, in the top-level `artifacts` section as well as in target and
+supplemental package `artifacts` sections.
+Only the artifact paths are substituted; the
+[artifact configuration](#artifact-configuration), such as `subpath`, is used
+as-is.
+Build args must be declared in the args section to be used, and two paths
+which resolve to the same path after substitution are an error.
+
 
 ### Binaries
 
