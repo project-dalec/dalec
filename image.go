@@ -210,6 +210,10 @@ func (s *BaseImage) validate() error {
 		// that is currently unnecessary.
 		return errors.New("rootfs currently only supports image source types")
 	}
+	if s.Rootfs.DockerImage.Platform != "" {
+		// The platform of the base image is always the platform being built for.
+		return errors.New("rootfs image source does not support setting a platform")
+	}
 	if err := s.Rootfs.validate(); err != nil {
 		return errors.Wrap(err, "rootfs")
 	}

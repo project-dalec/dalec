@@ -5,7 +5,9 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
+	"slices"
 
+	"github.com/containerd/platforms"
 	"github.com/goccy/go-yaml/ast"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
@@ -16,6 +18,16 @@ import (
 type SourceDockerImage struct {
 	Ref string   `yaml:"ref" json:"ref"`
 	Cmd *Command `yaml:"cmd,omitempty" json:"cmd,omitempty"`
+
+	// Platform is the platform of the image to fetch, e.g. "linux/arm64".
+	// It also applies to any commands run in the image and to any sources
+	// mounted into them that do not set their own platform.
+	// When not set, the platform is determined by the build target.
+	// This is useful for including content for a platform other than the one
+	// being built for, such as when a source package must carry content for
+	// multiple architectures.
+	// Setting a platform is not supported for image sources used as a base image rootfs.
+	Platform string `yaml:"platform,omitempty" json:"platform,omitempty"`
 
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
 }
@@ -213,6 +225,20 @@ func (src *SourceDockerImage) IsDir() bool {
 }
 
 func (src *SourceDockerImage) baseState(opts fetchOptions) llb.State {
+	if src.Platform != "" {
+		p, err := platforms.Parse(src.Platform)
+		if err != nil {
+			err = errors.Wrap(err, "invalid docker image source platform")
+			err = errdefs.WithSource(err, src._sourceMap.GetErrdefsSource())
+			return ErrorState(llb.Scratch(), err)
+		}
+
+		// Append the platform last so that it takes precedence over any platform
+		// passed in by the caller.
+		// This applies to the image itself as well as to any commands run in it.
+		opts.Constraints = append(slices.Clone(opts.Constraints), llb.Platform(platforms.Normalize(p)))
+	}
+
 	base := llb.Image(
 		src.Ref,
 		llb.WithMetaResolver(opts.SourceOpt.Resolver),
@@ -351,6 +377,12 @@ func (src *SourceDockerImage) processBuildArgs(lex *shell.Lex, args map[string]s
 	}
 	src.Ref = updated
 
+	updated, err = expandArgs(lex, src.Platform, args, allowArg)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("image platform: %w", err))
+	}
+	src.Platform = updated
+
 	if src.Cmd != nil {
 		if err := src.Cmd.processBuildArgs(lex, args, allowArg); err != nil {
 			errs = append(errs, errors.Wrap(err, "docker image cmd source"))
@@ -399,6 +431,9 @@ func (cmd *Command) doc(w io.Writer, name string) {
 func (src *SourceDockerImage) doc(w io.Writer, name string) {
 	printDocLn(w, "Generated from a docker image:")
 	printDocLn(w, "	Image:", src.Ref)
+	if src.Platform != "" {
+		printDocLn(w, "	Platform:", src.Platform)
+	}
 
 	if src.Cmd != nil {
 		src.Cmd.doc(&indentWriter{w}, name)
