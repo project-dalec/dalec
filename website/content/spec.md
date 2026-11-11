@@ -265,8 +265,13 @@ build:
         go build -ldflags "-s -w -X github.com/foo/bar/version.Version=${TAG}" -o /out/my-binary ./cmd/my-binary
 ```
 
-- `env`: The environment variables for the build.
-- `steps`: The build steps for the package.
+- `env`: The environment variables for the build. These are set for every step unless a step overrides them with its own `env`.
+- `steps`: The build steps for the package. Each step is a `BuildStep` with the following fields:
+  - `command` (required): The command to run. Dalec wraps this as `/bin/sh -c "<command>"`, or the equivalent for the target distro.
+  - `env` (optional): Environment variables to set for this step only. These are merged with (and override) the build-level `env`.
+  - `mounts` (optional): Additional sources to mount into this step. Each mount has:
+    - `dest` (required): The destination directory in the step's filesystem. Must not be `/`.
+    - `spec` (required): A [source](#sources-section) describing what to mount.
 - `network_mode`: Set the network mode to use for build steps (accepts: empty, `none`, `sandbox`)
 - `cache`: Configure caches which persist between builds. See [caches](caches.md) for more details.
 
