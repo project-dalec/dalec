@@ -244,6 +244,10 @@ func (s *Spec) SubstituteArgs(env map[string]string, opts ...SubstituteOpt) erro
 		s.Build.Steps[i] = *bs
 	}
 
+	if err := s.Artifacts.processBuildArgs(lex, args, cfg.AllowArg); err != nil {
+		appendErr(errors.Wrap(err, "artifacts"))
+	}
+
 	for _, t := range s.Tests {
 		if err := t.processBuildArgs(lex, args, cfg.AllowArg); err != nil {
 			appendErr(err)
