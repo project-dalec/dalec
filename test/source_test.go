@@ -1,7 +1,9 @@
 package test
 
 import (
+	"bytes"
 	"context"
+	"debug/elf"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	gitservices "github.com/project-dalec/dalec/test/git_services"
 	"github.com/project-dalec/dalec/test/testenv"
 	"gotest.tools/v3/assert"
+	"gotest.tools/v3/assert/cmp"
 )
 
 func TestSourceCmd(t *testing.T) {
@@ -324,6 +327,54 @@ func TestSourceCmd(t *testing.T) {
 			res := solveT(ctx, t, gwc, req)
 			checkFile(ctx, t, "checkcmd/hello2", res, []byte("hello\n"))
 		})
+	})
+}
+
+func TestSourceImagePlatform(t *testing.T) {
+	t.Parallel()
+
+	ctx := startTestSpan(baseCtx, t)
+
+	// Fetch the same multi-platform image for two different platforms and
+	// check that each source has the binary for the requested platform,
+	// regardless of the platform being built for.
+	spec := &dalec.Spec{
+		Name: "test-image-source-platform",
+		Sources: map[string]dalec.Source{
+			"amd64": {
+				Path:     "/bin",
+				Includes: []string{"busybox"},
+				DockerImage: &dalec.SourceDockerImage{
+					Ref:      "busybox:latest",
+					Platform: "linux/amd64",
+				},
+			},
+			"arm64": {
+				Path:     "/bin",
+				Includes: []string{"busybox"},
+				DockerImage: &dalec.SourceDockerImage{
+					Ref:      "busybox:latest",
+					Platform: "linux/arm64",
+				},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+		req := newSolveRequest(withBuildTarget("debug/sources"), withSpec(ctx, t, spec))
+		res := solveT(ctx, t, gwc, req)
+
+		checkMachine := func(name string, expect elf.Machine) {
+			t.Helper()
+
+			dt := readFile(ctx, t, filepath.Join(name, "busybox"), res)
+			f, err := elf.NewFile(bytes.NewReader(dt))
+			assert.NilError(t, err)
+			assert.Check(t, cmp.Equal(f.Machine, expect), "unexpected machine for %s source", name)
+		}
+
+		checkMachine("amd64", elf.EM_X86_64)
+		checkMachine("arm64", elf.EM_AARCH64)
 	})
 }
 

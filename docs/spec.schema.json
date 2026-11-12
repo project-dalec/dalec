@@ -1784,6 +1784,13 @@
 				"cmd": {
 					"$ref": "#/$defs/Command"
 				},
+				"platform": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Platform is the platform of the image to fetch, e.g. \"linux/arm64\".\nIt also applies to any commands run in the image and to any sources\nmounted into them that do not set their own platform.\nWhen not set, the platform is determined by the build target.\nThis is useful for including content for a platform other than the one\nbeing built for, such as when a source package must carry content for\nmultiple architectures.\nSetting a platform is not supported for image sources used as a base image rootfs."
+				},
 				"ref": {
 					"type": [
 						"string"
