@@ -16,6 +16,13 @@ const (
 	// If not a target specific package, but we want to indicate the use of a
 	// prebuilt package, we use GenericPkg to indicate that it's not target specific.
 	GenericPkg = "pkg"
+
+	// PreviousImageContext is the name of the build context holding a
+	// previously built container image to update. When it is provided to a
+	// container target, the packages installed in that image are upgraded in
+	// place instead of installing every package again, so only updated
+	// packages are downloaded.
+	PreviousImageContext = "dalec-previous-image"
 )
 
 // Target defines a distro-specific build target.

@@ -139,6 +139,41 @@ In the `azlinux3` target, Dalec looks for a named context called either
 
 If 1 is provided, then 2 is ignored.
 
+### Prebuilt packages
+
+Container and system extension targets normally build the package from the spec
+first and then install it. To install packages you have already built instead,
+pass them as a named build context. Dalec looks for:
+
+1. A context named `<target>-pkg`, for example `azlinux3-pkg`.
+2. A context named `pkg`, used for any target.
+
+If 1 is provided, then 2 is ignored. The context must have the same layout as
+the output of the package target, for example `RPMS/<arch>/*.rpm` for RPM
+targets or `*.deb` files for Debian and Ubuntu targets.
+
+```shell
+# Build the package once
+docker buildx build -f spec.yml --target azlinux3/rpm --output type=local,dest=./out .
+
+# Later: build the container from it without building the package again
+docker buildx build -f spec.yml --target azlinux3/container \
+  --build-context azlinux3-pkg=./out -t myimage .
+```
+
+This is useful for picking up updated runtime dependencies, such as a security
+fix in `openssl`, without rebuilding your package. Add
+`--no-cache-filter dalec.container` to install the latest dependencies even when
+the container step is cached.
+
+Set `--build-arg DALEC_REQUIRE_PREBUILT_PKG=1` to make the build fail when no
+prebuilt package is provided, instead of silently building the package from
+source. The Windows container target does not use prebuilt packages, so it
+rejects this option.
+
+To update the packages of an image you already built instead of installing
+them all again, see [Updating an existing image](image.md#updating-an-existing-image).
+
 ### Target Defined Artifacts
 
 There are some situations where you may want to have multiple builds and for those different

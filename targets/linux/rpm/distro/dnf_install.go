@@ -43,6 +43,17 @@ type dnfInstallConfig struct {
 
 	postInstallPath   string
 	postInstallScript llb.State
+
+	// excludes lists packages the package manager must not touch.
+	excludes []string
+}
+
+// DnfExclude excludes the given packages from an upgrade (see [DnfUpgrade]).
+// They are passed as quoted arguments, never interpolated into the script.
+func DnfExclude(pkgs ...string) DnfInstallOpt {
+	return func(cfg *dnfInstallConfig) {
+		cfg.excludes = append(cfg.excludes, pkgs...)
+	}
 }
 
 type DnfInstallOpt func(*dnfInstallConfig)
@@ -391,6 +402,31 @@ func (cfg *Config) InstallIntoRoot(rootfsPath string, pkgs []string, targetArch 
 
 func DnfInstall(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
 	return dnfCommand(cfg, releaseVer, "dnf", append([]string{"install"}, pkgs...), nil)
+}
+
+// DnfUpgrade uses dnf to upgrade installed packages. With no packages, every
+// installed package with an available update is upgraded.
+func DnfUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
+	// Packages are passed as quoted arguments rather than in the subcommand,
+	// which is interpolated into the install script.
+	return dnfCommand(cfg, releaseVer, "dnf", []string{"upgrade"}, upgradeArgs(cfg, pkgs))
+}
+
+// upgradeArgs returns the quoted arguments for an upgrade: one --exclude
+// option per excluded package, then the packages to upgrade.
+func upgradeArgs(cfg *dnfInstallConfig, pkgs []string) []string {
+	args := make([]string, 0, len(cfg.excludes)+len(pkgs))
+	for _, e := range cfg.excludes {
+		args = append(args, "--exclude="+e)
+	}
+	return append(args, pkgs...)
+}
+
+// TdnfUpgrade uses tdnf (or dnf, when available) to upgrade installed packages.
+// With no packages, every installed package with an available update is
+// upgraded.
+func TdnfUpgrade(cfg *dnfInstallConfig, releaseVer string, pkgs []string) llb.RunOption {
+	return dnfCommand(cfg, releaseVer, "tdnf", []string{"upgrade"}, upgradeArgs(cfg, pkgs))
 }
 
 // TdnfInstall uses tdnf to install packages

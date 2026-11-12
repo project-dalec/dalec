@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/containerd/platforms"
@@ -118,9 +119,29 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 
 			pkgSt, foundPrebuiltPkg := getPrebuiltPackage(ctx, targetKey, client, opts, sOpt)
 
-			// Pre-built package wasn't found so we need to build it.
+			layersMode, err := imageLayersMode(client, spec, targetKey)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			prev, err := getPreviousImage(ctx, client, platform)
+			if err != nil {
+				return nil, nil, err
+			}
+			if prev != nil && layersMode != dalec.ImageLayersPerPackage {
+				return nil, nil, errors.Errorf("the %s build context requires per-package image layers: set image.layers to %s or pass --build-arg %s=%s",
+					dalec.PreviousImageContext, dalec.ImageLayersPerPackage, dalec.BuildArgDalecImageLayers, dalec.ImageLayersPerPackage)
+			}
+
+			// Pre-built package wasn't found so we need to build it, unless an
+			// existing image is being updated: then its spec packages are kept.
 			if !foundPrebuiltPkg {
-				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
+				if err := checkPrebuiltPkgRequired(client, targetKey); err != nil {
+					return nil, nil, err
+				}
+				if prev == nil {
+					pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
+				}
 			}
 
 			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey, imageOpts...)
@@ -128,10 +149,35 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+			var ctr llb.State
+			splitPkgs := pkgSt
+			if prev != nil {
+				var prebuilt *llb.State
+				if foundPrebuiltPkg {
+					prebuilt = &pkgSt
+				}
+				ctr, splitPkgs, err = updateContainer(ctx, client, sOpt, c, spec, targetKey, prev, prebuilt, opts...)
+				if err != nil {
+					return nil, nil, err
+				}
+			} else {
+				ctr = c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)
+			}
 			runTests := c.RunTests(ctx, client, sOpt, spec, targetKey, opts...)
 
-			def, err := ctr.With(runTests).Marshal(ctx, opts...)
+			final := ctr.With(runTests)
+			if layersMode == dalec.ImageLayersPerPackage {
+				split, err := maybeSplitLayers(ctx, client, sOpt, c, spec, targetKey, ctr, splitPkgs, opts...)
+				if err != nil {
+					return nil, nil, err
+				}
+				if split != nil {
+					final = split.Verify.With(testrunner.WithFinalState(split.State.With(runTests), frontend.TestWithClientFrontend(client)))
+					addLayerHistory(img, split.Groups, split.SpecPackages)
+				}
+			}
+
+			def, err := final.Marshal(ctx, opts...)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -173,6 +219,9 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 
 			// Pre-built package wasn't found so we need to build it.
 			if !foundPrebuiltPkg {
+				if err := checkPrebuiltPkgRequired(client, targetKey); err != nil {
+					return nil, nil, err
+				}
 				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
 			}
 
@@ -257,6 +306,53 @@ func HandleSysext(c DistroConfig) gwclient.BuildFunc {
 			return ref, &dalec.DockerImageSpec{Image: ocispecs.Image{Platform: *platform}}, nil
 		})
 	}
+}
+
+// checkPrebuiltPkgRequired returns an error when the DALEC_REQUIRE_PREBUILT_PKG
+// build arg is set, so a missing prebuilt package does not silently trigger a
+// full package build.
+func checkPrebuiltPkgRequired(client gwclient.Client, targetKey string) error {
+	v, ok := frontend.GetBuildArg(client, dalec.BuildArgDalecRequirePrebuiltPkg)
+	if !ok || v == "" {
+		return nil
+	}
+	required, err := strconv.ParseBool(v)
+	if err != nil {
+		return errors.Wrapf(err, "invalid value for %s", dalec.BuildArgDalecRequirePrebuiltPkg)
+	}
+	if !required {
+		return nil
+	}
+	return errors.Errorf("%s is set but no prebuilt package was provided: pass one with --build-context %s=<path or image> or --build-context %s=<path or image>",
+		dalec.BuildArgDalecRequirePrebuiltPkg, targetKey+dalec.PreBuiltPkgSuffix, dalec.GenericPkg)
+}
+
+// maybeSplitLayers splits the container root filesystem into per-package
+// layers when the distro and builder support it. It returns nil, with a
+// warning, when per-package layers are unsupported for this build.
+func maybeSplitLayers(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts, c DistroConfig, spec *dalec.Spec, targetKey string, ctr, pkgSt llb.State, opts ...llb.ConstraintsOpt) (*splitLayersResult, error) {
+	warn := func(reason string) (*splitLayersResult, error) {
+		frontend.Warn(ctx, client, ctr, "per-package image layers are not supported "+reason+"; producing a single layer instead")
+		return nil, nil
+	}
+
+	ls, ok := c.(layerSplitter)
+	if !ok {
+		return warn("for target " + targetKey)
+	}
+	bi, err := spec.GetSingleBase(targetKey)
+	if err != nil {
+		return nil, err
+	}
+	if bi != nil {
+		return warn("with a custom base image")
+	}
+	if !frontend.SupportsDiffMerge(client) {
+		return warn("by this BuildKit version (diff/merge is unavailable)")
+	}
+
+	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
+	return splitLayers(ctx, client, worker, ls, ctr, pkgSt, opts...)
 }
 
 // getPrebuiltPackage retrieves a package based on the target environment.

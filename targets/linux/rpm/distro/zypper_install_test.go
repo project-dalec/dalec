@@ -1,6 +1,7 @@
 package distro
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,4 +110,67 @@ if [ -e "${DALEC_ZYPPER_PROXY_ANCHOR}" ]; then exit 1; fi
 
 	out, err := cmd.CombinedOutput()
 	assert.NilError(t, err, string(out))
+}
+
+// TestZypperUpgradeScript runs the upgrade script with stub zypper and rpm
+// commands.
+func TestZypperUpgradeScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell")
+	}
+
+	script, err := zypperScript(&dnfInstallConfig{root: "/tmp/rootfs"}, []string{"update"})
+	assert.NilError(t, err)
+
+	run := func(t *testing.T, listUpdates string, args ...string) (string, error) {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "bin")
+		assert.NilError(t, os.MkdirAll(bin, 0o755))
+		log := filepath.Join(dir, "zypper.log")
+		zypper := `#!/bin/sh
+for a in "$@"; do
+	case "$a" in
+	list-updates) ` + listUpdates + ` ;;
+	update) echo "update: $*" >> "` + log + `" ;;
+	esac
+done
+`
+		assert.NilError(t, os.WriteFile(filepath.Join(bin, "zypper"), []byte(zypper), 0o755))
+		assert.NilError(t, os.WriteFile(filepath.Join(bin, "rpm"), []byte("#!/bin/sh\necho spec-1.0\n"), 0o755))
+		scriptPath := filepath.Join(dir, "install.sh")
+		assert.NilError(t, os.WriteFile(scriptPath, script, 0o755))
+
+		cmd := exec.Command("bash", append([]string{scriptPath}, args...)...)
+		cmd.Dir = dir
+		cmd.Env = []string{
+			"PATH=" + bin + ":" + os.Getenv("PATH"),
+			"DALEC_DISABLE_PROXY_CONFIG=1",
+			"DALEC_ZYPP_CONF=" + filepath.Join(dir, "zypp.conf"),
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			err = errors.New(string(out))
+		}
+		dt, _ := os.ReadFile(log)
+		return string(dt), err
+	}
+
+	t.Run("excludes are left out of the listed updates", func(t *testing.T) {
+		log, err := run(t, `echo '<update-list><update kind="package" name="openssl" edition="2"/><update kind="package" name="spec" edition="2"/></update-list>'`, "--exclude=spec")
+		assert.NilError(t, err)
+		assert.Assert(t, strings.Contains(log, "openssl"), log)
+		assert.Assert(t, !strings.Contains(log, "spec"), log)
+	})
+
+	t.Run("wildcard selectors are passed as is", func(t *testing.T) {
+		log, err := run(t, "exit 1", "--exclude=spec", "glibc*")
+		assert.NilError(t, err)
+		assert.Assert(t, strings.Contains(log, "glibc*"), log)
+	})
+
+	t.Run("failing to list updates fails", func(t *testing.T) {
+		log, err := run(t, "exit 1", "--exclude=spec")
+		assert.Assert(t, err != nil)
+		assert.Equal(t, log, "")
+	})
 }
