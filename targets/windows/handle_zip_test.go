@@ -62,6 +62,29 @@ func TestWindowsPackages(t *testing.T) {
 	})
 }
 
+func TestNamedImageRoutes(t *testing.T) {
+	spec := subpackageSpec()
+	target := spec.Targets[testTargetKey]
+	target.Images = map[string]dalec.NamedImage{
+		"minimal": {Packages: []string{"foo-utilities"}},
+	}
+	spec.Targets[testTargetKey] = target
+	routes, err := Routes(testTargetKey, spec)
+	assert.NilError(t, err)
+	found := false
+	for _, route := range routes {
+		if route.FullPath == testTargetKey+"/container/minimal" {
+			found = true
+		}
+	}
+	assert.Assert(t, found)
+	img := target.Images["minimal"]
+	img.Tests = []*dalec.TestSpec{{Name: "unsupported"}}
+	target.Images["minimal"] = img
+	_, err = Routes(testTargetKey, spec)
+	assert.ErrorContains(t, err, "image tests are unsupported on Windows")
+}
+
 func TestGenerateInvocationScript(t *testing.T) {
 	t.Run("each package is staged into an independent flat output", func(t *testing.T) {
 		spec := subpackageSpec()

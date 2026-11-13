@@ -25,6 +25,12 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 		Opts:         opts,
 	}
 
+	if selected := spec.GetImagePackages(); selected != nil {
+		repo := imagePackageRepo(input, selected)
+		input.ImagePackageRepo = &repo
+		input.SpecPackages = llb.Scratch().File(llb.Copy(repo, "/selected", "/", &llb.CopyInfo{CopyDirContentsOnly: true}), opts...)
+	}
+
 	if c.DefaultOutputImage == "" {
 		return bootstrapContainer(input)
 	}
@@ -45,9 +51,13 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 		).Root()
 	}
 
+	install := InstallLocalPkg(debSt, true, opts...)
+	if input.ImagePackageRepo != nil {
+		install = installSelectedImagePackages(input)
+	}
 	return baseImg.With(installPackagesInContainer(input, []llb.RunOption{
 		dalec.WithMountedAptCache(input.Config.AptCachePrefix, opts...),
-		InstallLocalPkg(debSt, true, opts...),
+		install,
 		aptProxyConfig(input.SOpt),
 	}))
 }
@@ -92,14 +102,15 @@ func basePackages(ctx context.Context, input buildContainerInput) llb.State {
 }
 
 type buildContainerInput struct {
-	Config       *Config
-	Client       gwclient.Client
-	Worker       llb.State
-	SOpt         dalec.SourceOpts
-	Spec         *dalec.Spec
-	Target       string
-	SpecPackages llb.State
-	Opts         []llb.ConstraintsOpt
+	Config           *Config
+	Client           gwclient.Client
+	Worker           llb.State
+	SOpt             dalec.SourceOpts
+	Spec             *dalec.Spec
+	Target           string
+	SpecPackages     llb.State
+	ImagePackageRepo *llb.State
+	Opts             []llb.ConstraintsOpt
 }
 
 func extraRepos(input buildContainerInput, opts ...llb.ConstraintsOpt) llb.RunOption {
@@ -122,6 +133,7 @@ func installPackagesInContainer(input buildContainerInput, ro []llb.RunOption) l
 			append(ro,
 				dalec.WithConstraints(opts...),
 				extraRepos(input, opts...),
+				imageRepoMounts(input),
 				// This file makes dpkg give more verbose output which can be useful when things go awry.
 				llb.AddMount("/etc/dpkg/dpkg.cfg.d/99-dalec-debug", debug, llb.SourcePath("debug"), llb.Readonly),
 				dalec.RunOptFunc(func(cfg *llb.ExecInfo) {
@@ -223,13 +235,26 @@ local_package_files=$(ls /spec-packages/*.deb)
 #
 # Local .deb paths are recognized as already-available and don't appear in
 # --print-uris output, so the filenames here are only remote deps.
-needed_filenames=$(apt-get -o Dir::State::status="${rootfs}/var/lib/dpkg/status" \
+needed_packages=$(apt-get -o Dir::State::status="${rootfs}/var/lib/dpkg/status" \
     -o Dir::Cache::Archives=/tmp \
     --yes --print-uris install ${essential_packages} ${bootstrap_extra_packages} ${local_package_files} \
-    | grep '\.deb ' | awk '{print $2}')
+    | grep '\.deb ')
+needed_filenames=$(printf '%s\n' "${needed_packages}" | awk '{print $2}')
 
 mkdir -p "${rootfs}${apt_archives}"/partial
 cp ${local_package_files} "${rootfs}${apt_archives}"/
+
+# Apt's file transport can use local dependencies directly without copying them
+# into its download cache. Stage only those selected by the solver for extraction.
+printf '%s\n' "${needed_packages}" | while read -r uri filename rest; do
+    case "${uri}" in
+        "'file:/spec-package-repo/"*)
+            local_path=${uri#\'file:}
+            local_path=${local_path%\'}
+            cp "${local_path}" "${rootfs}${apt_archives}/${filename}"
+            ;;
+    esac
+done
 
 # Copy already-cached needed .deb files from the persistent apt cache into the
 # rootfs cache. This avoids picking up stale .deb files from previous unrelated
@@ -304,6 +329,7 @@ done
 		llb.AddMount("/tmp/install.sh", script, llb.SourcePath("install.sh")),
 		llb.AddMount("/spec-packages", input.SpecPackages, llb.Readonly),
 		extraRepos(input, opts...),
+		imageRepoMounts(input),
 		dalec.WithMountedAptCache(input.Config.AptCachePrefix, opts...),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		aptProxyConfig(input.SOpt),

@@ -101,6 +101,10 @@ func resolveBaseConfig(ctx context.Context, sOpt dalec.SourceOpts, platform *oci
 }
 
 func HandleContainer(c DistroConfig) gwclient.BuildFunc {
+	return HandleNamedContainer(c, "")
+}
+
+func HandleNamedContainer(c DistroConfig, name string) gwclient.BuildFunc {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 		imageOpts, err := frontend.ImageConfigOpts(client)
 		if err != nil {
@@ -121,6 +125,11 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 			// Pre-built package wasn't found so we need to build it.
 			if !foundPrebuiltPkg {
 				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
+			}
+
+			spec, err = spec.WithNamedImage(targetKey, name)
+			if err != nil {
+				return nil, nil, err
 			}
 
 			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey, imageOpts...)
