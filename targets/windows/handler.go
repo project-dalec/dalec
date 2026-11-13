@@ -3,6 +3,7 @@ package windows
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -67,6 +68,11 @@ func RoutesWithCacheIdentity(cacheIdentity string) func(prefix string, spec *dal
 }
 
 func RoutesWithConfig(prefix string, spec *dalec.Spec, cfg *distro.Config) ([]frontend.Route, error) {
+	for name, img := range spec.Targets[prefix].Images {
+		if len(img.Tests) > 0 {
+			return nil, fmt.Errorf("target %s: image %q: image tests are unsupported on Windows", prefix, name)
+		}
+	}
 	_, specDefined := spec.Targets[prefix]
 	specDefined = specDefined && len(spec.Targets) > 0
 
@@ -74,7 +80,7 @@ func RoutesWithConfig(prefix string, spec *dalec.Spec, cfg *distro.Config) ([]fr
 	defaultPlatform.OS = "windows"
 	handlers := routeHandlers{distro: cfg}
 
-	return []frontend.Route{
+	routes := []frontend.Route{
 		{
 			FullPath: prefix,
 			Handler:  frontend.WithDefaultPlatform(defaultPlatform, handlers.handleContainer),
@@ -120,7 +126,12 @@ func RoutesWithConfig(prefix string, spec *dalec.Spec, cfg *distro.Config) ([]fr
 				SpecDefined: specDefined,
 			},
 		},
-	}, nil
+	}
+	return frontend.AppendNamedImageRoutes(routes, prefix, spec, func(name string) gwclient.BuildFunc {
+		return frontend.WithDefaultPlatform(defaultPlatform, func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+			return handlers.handleNamedContainer(ctx, client, name)
+		})
+	})
 }
 
 func (h routeHandlers) handleWorker(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {

@@ -27,6 +27,9 @@ type Target struct {
 	// Image is the image configuration when the target output is a container image.
 	Image *ImageConfig `yaml:"image,omitempty" json:"image,omitempty"`
 
+	// Images defines independent named container configurations for this target.
+	Images map[string]NamedImage `yaml:"images,omitempty" json:"images,omitempty"`
+
 	// Frontend is the frontend configuration to use for the target.
 	// This is used to forward the build to a different, dalec-compatible frontend.
 	// This can be useful when testing out new distros or using a different version of the frontend for a given distro.
@@ -61,6 +64,11 @@ type Target struct {
 
 func (t *Target) validate() error {
 	var errs []error
+	for name, img := range SortedMapIter(t.Images) {
+		if err := img.validate(); err != nil {
+			errs = append(errs, errors.Wrapf(err, "image %q", name))
+		}
+	}
 	if err := t.Dependencies.validate(); err != nil {
 		errs = append(errs, errors.Wrap(err, "dependencies"))
 	}
@@ -92,6 +100,12 @@ func (t *Target) validate() error {
 
 func (t *Target) processBuildArgs(lex *shell.Lex, args map[string]string, allowArg func(string) bool) error {
 	var errs []error
+	for name, img := range t.Images {
+		if err := img.processBuildArgs(lex, args, allowArg); err != nil {
+			errs = append(errs, errors.Wrapf(err, "image %q", name))
+		}
+		t.Images[name] = img
+	}
 	for _, tt := range t.Tests {
 		if err := tt.processBuildArgs(lex, args, allowArg); err != nil {
 			errs = append(errs, err)
@@ -156,6 +170,10 @@ func (t *Target) processBuildArgs(lex *shell.Lex, args map[string]string, allowA
 }
 
 func (t *Target) fillDefaults() {
+	for name, img := range t.Images {
+		img.ImageConfig.fillDefaults()
+		t.Images[name] = img
+	}
 	t.Dependencies.fillDefaults()
 	t.Image.fillDefaults()
 }

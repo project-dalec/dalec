@@ -37,6 +37,51 @@ are keyed on the image platform metadata.
 With the exception of `base`, `bases`, and `post`, these fields are all used to
 merge with the configured (or default) base image(s).
 
+### Named images
+
+Define `targets.<distro>.images.<name>` to build different containers from the
+same package output. Select one with `--target=<distro>/container/<name>`.
+Each definition supports the image fields above, plus `packages` and `tests`.
+Named images do not inherit root or target `image` settings; use YAML anchors
+to share configuration.
+
+```yaml
+name: foo
+image: &runtime
+  entrypoint: /usr/bin/foo
+targets:
+  azlinux3:
+    images:
+      minimal:
+        <<: *runtime
+        packages: [foo]
+      full:
+        <<: *runtime
+```
+
+Omitting `packages` installs all built packages, including automatically generated
+binary packages. An explicit nonempty list requests only those resolved package
+names: the primary spec `name`, or a supplemental package's custom `name` or
+default `<spec-name>-<package-key>`. An empty list is invalid. All locally built
+packages remain available for Linux dependency resolution, so dependencies can
+pull in unlisted packages. Existing base-image and distro bootstrap packages are
+not removed by the selector. Conflicts or unsatisfied dependencies fail the build.
+
+The default `<distro>/container` remains unchanged and installs all package output.
+Package and image names are independent; package targets still output all packages.
+Multiple image builds require separate invocations and can reuse BuildKit's cache.
+An image name cannot overwrite a built-in route (for example, RPM `depsonly`).
+
+On Linux, root tests, target tests, and named-image tests are appended and run
+against the selected container. Package-target testing and `DALEC_SKIP_TESTS`
+are unchanged. Move tests that do not apply to every image into the appropriate
+image's `tests` section.
+
+Windows supports `windowscross/container/<name>` with the same package selection,
+but copies selected built/signed binaries rather than installing packages.
+Image-specific tests are unsupported on Windows; runtime dependency and
+base/platform restrictions are unchanged.
+
 ### Minimization profile
 
 Image minimization is opt-in. Set `minimization_profile` to `default` to enable

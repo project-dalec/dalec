@@ -18,6 +18,8 @@ import (
 
 // Spec is the specification for a package build.
 type Spec struct {
+	imagePackages []string
+
 	// Name is the name of the package.
 	Name string `yaml:"name" json:"name,omitempty" jsonschema:"required"`
 	// Description is a short description of the package.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"runtime"
+	"slices"
 	"sort"
 	"sync"
 
@@ -36,6 +37,10 @@ var defaultPlatform = ocispecs.Platform{
 }
 
 func (h routeHandlers) handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+	return h.handleNamedContainer(ctx, client, "")
+}
+
+func (h routeHandlers) handleNamedContainer(ctx context.Context, client gwclient.Client, name string) (*gwclient.Result, error) {
 	imageOpts, err := frontend.ImageConfigOpts(client)
 	if err != nil {
 		return nil, err
@@ -57,6 +62,10 @@ func (h routeHandlers) handleContainer(ctx context.Context, client gwclient.Clie
 	}
 
 	targetKey := frontend.GetTargetKey(client)
+	spec, err = spec.WithNamedImage(targetKey, name)
+	if err != nil {
+		return nil, err
+	}
 	bases := spec.GetImageBases(targetKey)
 
 	if len(bases) == 0 {
@@ -138,6 +147,11 @@ func (h routeHandlers) handleContainer(ctx context.Context, client gwclient.Clie
 
 		bin := h.buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
 
+		spec, err = spec.WithNamedImage(targetKey, name)
+		if err != nil {
+			return nil, err
+		}
+
 		bi := bases[idx]
 
 		if platform == nil {
@@ -145,13 +159,13 @@ func (h routeHandlers) handleContainer(ctx context.Context, client gwclient.Clie
 		}
 		baseImage := bi.ToState(sOpt, pg, llb.Platform(*platform))
 
-		// Install every package's binaries (primary + supplemental) into the
-		// image, matching the linux container target which installs all packages
-		// produced for the target. Always copy the primary package so the build
-		// step is realized even when it has no binaries.
 		pkgs := windowsPackages(spec, targetKey)
+		selected := spec.GetImagePackages()
 		out := baseImage
 		for _, pkg := range pkgs {
+			if selected != nil && !slices.Contains(selected, pkg.Name) {
+				continue
+			}
 			if !pkg.Primary && len(pkg.Binaries) == 0 {
 				continue
 			}
