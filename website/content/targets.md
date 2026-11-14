@@ -365,6 +365,10 @@ build:
         echo "	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info" >> debian/rules
 ```
 
+Dalec uses debhelper compatibility level 12, so besides `override_dh_<command>` targets you can also add
+`execute_before_dh_<command>` and `execute_after_dh_<command>` hook targets, which run extra commands before or
+after a debhelper command instead of replacing it.
+
 Note that at the point your build steps are run some of the rules have already been applied.
 This is considered a "break glass" way to work around issues when building on Debian-based distributions.
 Overriding some rules, such as `dh_install`, will also interfere with dalec functionality.
