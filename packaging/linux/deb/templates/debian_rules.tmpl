@@ -24,7 +24,7 @@ override_dh_auto_configure: fix_generators
 override_dh_dwz:
 	@# https://salsa.debian.org/go-team/packages/dh-golang/-/commit/831f3a9dccc14f63f21d3dfac0c0d0e0c25b4084
 
-{{ .OverridePerms }}
+{{ .ExecuteAfterFixPerms }}
 
 {{ .OverrideSystemd }}
 

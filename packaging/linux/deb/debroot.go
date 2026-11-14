@@ -21,7 +21,10 @@ import (
 )
 
 const (
-	DebHelperCompat           = "11"
+	// DebHelperCompat is the debhelper compatibility level used for all deb
+	// targets. It is bounded by the debhelper version of the oldest supported
+	// target, Ubuntu 20.04 (focal), which ships debhelper 12.10.
+	DebHelperCompat           = "12"
 	StandardsVersion          = "4.7.4"
 	customSystemdPostinstFile = "custom_systemd_postinst.sh.partial"
 	BinariesPath              = "/usr/bin"

@@ -169,11 +169,11 @@ func TestDebrootSubPackageOptArtifact(t *testing.T) {
 		))
 	})
 
-	t.Run("opt permissions enable the fixperms override", func(t *testing.T) {
+	t.Run("opt permissions enable the fixperms hook", func(t *testing.T) {
 		mkfile, err := findMkfile(t, def.ToPB(), filepath.Join("/debian", "rules"))
 		assert.NilError(t, err)
 		assert.Assert(t, mkfile != nil, "expected rules to be generated")
-		assert.Assert(t, cmp.Contains(string(mkfile.Data), "override_dh_fixperms"))
+		assert.Assert(t, cmp.Contains(string(mkfile.Data), "execute_after_dh_fixperms"))
 	})
 
 	t.Run("ownership and capabilities are applied by the supplemental package postinst", func(t *testing.T) {
@@ -710,11 +710,11 @@ func TestDebrootSubPackageRulesOverridePerms(t *testing.T) {
 		assert.Assert(t, mkfile != nil)
 
 		content := string(mkfile.Data)
-		assert.Assert(t, cmp.Contains(content, "override_dh_fixperms"))
+		assert.Assert(t, cmp.Contains(content, "execute_after_dh_fixperms"))
 		assert.Assert(t, cmp.Contains(content, "fix_perms.sh"))
 	})
 
-	t.Run("no perms no override", func(t *testing.T) {
+	t.Run("no perms no hook", func(t *testing.T) {
 		ctx := t.Context()
 		spec := &dalec.Spec{
 			Name:        "example",
@@ -747,7 +747,7 @@ func TestDebrootSubPackageRulesOverridePerms(t *testing.T) {
 		assert.Assert(t, mkfile != nil)
 
 		content := string(mkfile.Data)
-		assert.Assert(t, !bytes.Contains(mkfile.Data, []byte("override_dh_fixperms")), "should not contain fixperms override when no custom perms: %s", content)
+		assert.Assert(t, !bytes.Contains(mkfile.Data, []byte("execute_after_dh_fixperms")), "should not contain fixperms hook when no custom perms: %s", content)
 	})
 }
 

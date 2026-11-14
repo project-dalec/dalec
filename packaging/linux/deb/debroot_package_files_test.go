@@ -250,7 +250,7 @@ func TestDebrootPackageFiles(t *testing.T) {
 		assert.Assert(t, mkfile != nil, "expected Debian rules to be generated")
 
 		content := string(mkfile.Data)
-		assert.Equal(t, strings.Count(content, "override_dh_fixperms:"), 1)
+		assert.Equal(t, strings.Count(content, "execute_after_dh_fixperms:"), 1)
 		assert.Equal(t, strings.Count(content, "override_dh_installsystemd:"), 1)
 	})
 }
