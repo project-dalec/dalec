@@ -76,7 +76,7 @@ func buildScript(spec *dalec.Spec) string {
 	}
 
 	for _, step := range t.Steps {
-		writeStep(b, step)
+		writeStep(b, step, spec.HasCargohomes())
 	}
 
 	b.WriteString("\n")

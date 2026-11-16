@@ -3166,6 +3166,58 @@ func Value() string {
 		})
 	})
 
+	t.Run("authenticated cargo home", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		if testConfig.Target.Key == "bookworm" {
+			t.Skip("Bookworm ships Cargo 0.66, which predates stable sparse registry support")
+		}
+
+		spec := authenticatedCargoSpec()
+		spec.Name = "test-build-with-authenticated-cargohome"
+		spec.Version = "0.0.1"
+		spec.Revision = "1"
+		spec.License = "MIT"
+		spec.Website = "https://github.com/project-dalec/dalec"
+		spec.Vendor = "Dalec"
+		spec.Packager = "Dalec"
+		spec.Description = "Testing authenticated Cargo through the distro package target"
+		spec.Dependencies = &dalec.PackageDependencies{
+			Build: map[string]dalec.PackageConstraints{
+				testConfig.GetPackage("rust"): {},
+			},
+		}
+		spec.Build = dalec.ArtifactBuild{
+			Steps: []dalec.BuildStep{
+				{Command: "test -f \"${CARGO_HOME}/config.toml\""},
+				{Command: "grep -F 'test-feed' \"${CARGO_HOME}/config.toml\""},
+				{Command: "cd ./src && cargo build --offline"},
+				{Command: "test -f ./src/target/debug/libcargo_auth_test.rlib"},
+			},
+		}
+
+		testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+			registry, certPEM := startCargoRegistryFixture(ctx, t, client)
+			worker := reqToState(ctx, client, newSolveRequest(
+				withBuildTarget(testConfig.Target.Worker),
+				withSpec(ctx, t, nil),
+			), t)
+			worker = withCargoRegistryCA(worker, certPEM)
+
+			req := newSolveRequest(
+				withBuildTarget(testConfig.Target.Package),
+				withSpec(ctx, t, spec),
+				withBuildArg(dalec.BuildArgDalecCargoRegistry, cargoRegistryURL(registry)),
+				withBuildArg(dalec.BuildArgDalecCargoRegistryName, cargoAuthRegistryName),
+				withBuildContext(ctx, t, testConfig.Worker.ContextName, worker),
+				withExtraHost(cargoAuthRegistryHost, registry.IP),
+				withIgnoreCache(),
+			)
+			res := solveT(ctx, t, client, req)
+			assertReferenceDoesNotContain(ctx, t, res, cargoAuthRegistryToken)
+		}, testenv.WithSecrets(cargoAuthSecretID, cargoAuthRegistryToken))
+	})
+
 	t.Run("pip", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)

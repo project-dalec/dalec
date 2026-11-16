@@ -70,6 +70,26 @@ func TestCargoRegistryConfigRejectsURLCredentials(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "https") {
 		t.Fatalf("expected URL validation error, got %v", err)
 	}
+	if strings.Contains(err.Error(), "user") || strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "pkgs.example.test") {
+		t.Fatalf("URL validation error leaked supplied URL: %v", err)
+	}
+}
+
+func TestCargoRegistryConfigRejectsWhitespaceWithoutEchoingURL(t *testing.T) {
+	t.Parallel()
+
+	const secretURL = " https://user:password@pkgs.example.test/feed "
+	_, err := cargoRegistryConfigFor(SourceOpts{BuildArgs: map[string]string{
+		BuildArgDalecCargoRegistry: secretURL,
+	}})
+	if err == nil {
+		t.Fatal("expected whitespace validation error")
+	}
+	for _, secret := range []string{"user", "password", "pkgs.example.test"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("URL validation error leaked %q: %v", secret, err)
+		}
+	}
 }
 
 func TestCargohomeDepsUsesConfiguredRegistryForFetch(t *testing.T) {

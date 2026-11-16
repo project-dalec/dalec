@@ -402,6 +402,9 @@ func createBuildScript(spec *dalec.Spec, cfg *SourcePkgConfig) []byte {
 			v := step.Env[k]
 			fmt.Fprintf(buf, "	export %q=%q\n", k, v)
 		}
+		if spec.HasCargohomes() {
+			fmt.Fprintln(buf, "\texport CARGO_NET_OFFLINE=true")
+		}
 
 		fmt.Fprintln(buf, step.Command)
 		fmt.Fprintln(buf, ")")

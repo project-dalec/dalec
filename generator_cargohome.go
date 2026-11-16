@@ -66,13 +66,13 @@ func cargoRegistryConfigFor(sOpt SourceOpts) (cargoRegistryConfig, error) {
 		return cargoRegistryConfig{}, fmt.Errorf("invalid cargo registry name %q", name)
 	}
 	if strings.TrimSpace(registryURL) != registryURL || strings.ContainsAny(registryURL, "\r\n") {
-		return cargoRegistryConfig{}, fmt.Errorf("invalid Cargo registry URL %q", registryURL)
+		return cargoRegistryConfig{}, fmt.Errorf("invalid Cargo registry URL: surrounding whitespace or line breaks are not allowed")
 	}
 
 	indexURL := strings.TrimPrefix(registryURL, "sparse+")
 	u, err := url.Parse(indexURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return cargoRegistryConfig{}, fmt.Errorf("cargo registry URL must be an https URL, got %q", registryURL)
+		return cargoRegistryConfig{}, fmt.Errorf("cargo registry URL must be an https URL without credentials, query, or fragment")
 	}
 	if !strings.HasSuffix(u.Path, "/") {
 		u.Path += "/"
