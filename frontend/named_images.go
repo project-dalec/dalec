@@ -2,14 +2,22 @@ package frontend
 
 import (
 	"fmt"
+	"strings"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/project-dalec/dalec"
 )
 
-// AppendNamedImageRoutes registers explicit container routes, preserving built-in routes.
+// AppendNamedImageRoutes registers exact container routes, preserving forwarding prefixes.
 func AppendNamedImageRoutes(routes []Route, prefix string, spec *dalec.Spec, handler func(string) gwclient.BuildFunc) ([]Route, error) {
+	containerPath := prefix + "/container"
+	for i := range routes {
+		route := &routes[i]
+		if route.Forward == nil && (route.FullPath == containerPath || strings.HasPrefix(route.FullPath, containerPath+"/")) {
+			route.Exact = true
+		}
+	}
 	for name := range dalec.SortedMapIter(spec.Targets[prefix].Images) {
 		fullPath := prefix + "/container/" + name
 		for _, route := range routes {
@@ -19,6 +27,7 @@ func AppendNamedImageRoutes(routes []Route, prefix string, spec *dalec.Spec, han
 		}
 		routes = append(routes, Route{
 			FullPath: fullPath,
+			Exact:    true,
 			Handler:  handler(name),
 			Info: Target{
 				Target: bktargets.Target{

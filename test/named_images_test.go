@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
@@ -33,6 +34,32 @@ func TestNamedImages(t *testing.T) {
 							_, inherited := img.Config.Labels["default-only"]
 							assert.Assert(t, !inherited)
 						}
+					})
+				})
+			}
+		})
+	}
+}
+
+func TestNamedImageUnknownTargets(t *testing.T) {
+	for _, distro := range []string{"azlinux3", "jammy", "windowscross"} {
+		t.Run(distro, func(t *testing.T) {
+			ctx := startTestSpan(baseCtx, t)
+			spec := namedImagesSpec(t, distro)
+			if distro == "windowscross" {
+				spec.Tests = nil
+				spec.Dependencies = nil
+				target := spec.Targets[distro]
+				target.Tests = nil
+				target.Images = map[string]dalec.NamedImage{"primary": {}}
+				spec.Targets[distro] = target
+			}
+			for _, suffix := range []string{"missing", "primary/typo"} {
+				t.Run(suffix, func(t *testing.T) {
+					target := distro + "/container/" + suffix
+					testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+						_, err := gwc.Solve(ctx, newSolveRequest(withSpec(ctx, t, &spec), withBuildTarget(target)))
+						assert.ErrorContains(t, err, "no such handler")
 					})
 				})
 			}
@@ -130,6 +157,46 @@ func namedImagesSpec(t *testing.T, distro string) dalec.Spec {
 		},
 	}}
 	return spec
+}
+
+func TestNamedWindowsEmptyPackageBuild(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("build-fails=%t", fail), func(t *testing.T) {
+			ctx := startTestSpan(baseCtx, t)
+			spec := namedImagesSpec(t, "windowscross")
+			spec.Dependencies = nil
+			spec.Tests = nil
+			spec.Targets = map[string]dalec.Target{"windowscross": {
+				Packages: map[string]dalec.SubPackage{
+					"empty": {Description: "No binary artifacts"},
+				},
+				Images: map[string]dalec.NamedImage{
+					"empty": {Packages: []string{spec.Name + "-empty"}},
+				},
+			}}
+			if fail {
+				spec.Build.Steps = []dalec.BuildStep{{Command: "exit 42"}}
+			}
+			testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+				sr := newSolveRequest(
+					withSpec(ctx, t, &spec),
+					withBuildTarget("windowscross/container/empty"),
+					withWindowsAmd64,
+				)
+				sr.Evaluate = true
+				res, err := gwc.Solve(ctx, sr)
+				if fail {
+					assert.ErrorContains(t, err, "exit code: 42")
+					return
+				}
+				assert.NilError(t, err)
+				ref, err := res.SingleRef()
+				assert.NilError(t, err)
+				_, err = ref.StatFile(ctx, gwclient.StatRequest{Path: "/Windows/System32/primary"})
+				assert.Assert(t, err != nil, "the unselected primary binary must not be copied")
+			})
+		})
+	}
 }
 
 func TestNamedWindowsImages(t *testing.T) {

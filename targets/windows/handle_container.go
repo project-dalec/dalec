@@ -166,7 +166,7 @@ func (h routeHandlers) handleNamedContainer(ctx context.Context, client gwclient
 			if selected != nil && !slices.Contains(selected, pkg.Name) {
 				continue
 			}
-			if !pkg.Primary && len(pkg.Binaries) == 0 {
+			if selected == nil && !pkg.Primary && len(pkg.Binaries) == 0 {
 				continue
 			}
 			out = out.File(llb.Copy(bin, pkg.internalDir(), windowsSystemDir, dalec.WithDirContentsOnly()), pg)

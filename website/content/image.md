@@ -71,6 +71,8 @@ The default `<distro>/container` remains unchanged and installs all package outp
 Package and image names are independent; package targets still output all packages.
 Multiple image builds require separate invocations and can reuse BuildKit's cache.
 An image name cannot overwrite a built-in route (for example, RPM `depsonly`).
+Container targets must match exactly: unknown image names or extra path suffixes
+fail rather than falling back to another container.
 
 On Linux, root tests, target tests, and named-image tests are appended and run
 against the selected container. Package-target testing and `DALEC_SKIP_TESTS`
@@ -79,6 +81,7 @@ image's `tests` section.
 
 Windows supports `windowscross/container/<name>` with the same package selection,
 but copies selected built/signed binaries rather than installing packages.
+Explicitly selecting a package with no binaries still runs the shared build.
 Image-specific tests are unsupported on Windows; runtime dependency and
 base/platform restrictions are unchanged.
 
