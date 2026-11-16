@@ -1,12 +1,18 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	githttp "github.com/AaronO/go-git-http"
 	"github.com/AaronO/go-git-http/auth"
@@ -22,7 +28,7 @@ var (
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: git_http_server <command> [args...]")
-		fmt.Fprintln(os.Stderr, "commands: serve, getip")
+		fmt.Fprintln(os.Stderr, "commands: serve, cargo-serve, getip")
 		os.Exit(1)
 	}
 
@@ -30,6 +36,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = runServe()
+	case "cargo-serve":
+		err = runCargoServe()
 	case "getip":
 		err = runGetIP()
 	default:
@@ -40,6 +48,108 @@ func main() {
 		emitError(err)
 		os.Exit(1)
 	}
+}
+
+const cargoFixtureName = "dalec-auth-fixture"
+const cargoFixtureVersion = "0.1.0"
+
+// runCargoServe is a small authenticated sparse Cargo registry used by the
+// integration tests. It deliberately requires the exact Authorization header
+// that Cargo receives from the credential provider, so a missing or malformed
+// secret cannot be hidden by a public registry fallback.
+func runCargoServe() error {
+	args := os.Args[2:]
+	if len(args) != 4 {
+		return errors.New("usage: git_http_server cargo-serve <cert> <key> <port> <authorization>")
+	}
+
+	cert, err := tls.LoadX509KeyPair(args[0], args[1])
+	if err != nil {
+		return fmt.Errorf("load Cargo registry certificate: %w", err)
+	}
+
+	crate, checksum, err := cargoFixtureCrate()
+	if err != nil {
+		return err
+	}
+
+	authorization := args[3]
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != authorization {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		switch {
+		case r.URL.Path == "/index/config.json":
+			if _, err := fmt.Fprintf(w, `{"dl":"https://%s/crates/{crate}/{version}/download","auth-required":true}`, r.Host); err != nil {
+				return
+			}
+		case strings.HasPrefix(r.URL.Path, "/index/"):
+			if _, err := fmt.Fprintf(w, `{"name":%q,"vers":%q,"deps":[],"cksum":%q,"features":{},"yanked":false}`, cargoFixtureName, cargoFixtureVersion, checksum); err != nil {
+				return
+			}
+		case strings.HasPrefix(r.URL.Path, "/crates/") && strings.HasSuffix(r.URL.Path, "/download"):
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(crate)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	addr := fmt.Sprintf("0.0.0.0:%s", args[2])
+	listener, err := tls.Listen("tcp", addr, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = listener.Close()
+		return fmt.Errorf("unexpected listener address type %T", listener.Addr())
+	}
+	ip, err := getContainerIP()
+	if err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("failed to get container IP: %w", err)
+	}
+	emitReady(ip, tcpAddr.Port)
+
+	if err := (&http.Server{Handler: mux}).Serve(listener); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("cargo registry server error: %w", err)
+	}
+	return nil
+}
+
+func cargoFixtureCrate() ([]byte, string, error) {
+	var tarball bytes.Buffer
+	gz := gzip.NewWriter(&tarball)
+	tarWriter := tar.NewWriter(gz)
+	files := map[string]string{
+		cargoFixtureName + "-" + cargoFixtureVersion + "/Cargo.toml": fmt.Sprintf("[package]\nname = %q\nversion = %q\nedition = \"2021\"\n", cargoFixtureName, cargoFixtureVersion),
+		cargoFixtureName + "-" + cargoFixtureVersion + "/src/lib.rs": "pub fn marker() -> &'static str { \"authenticated cargo registry\" }\n",
+	}
+	for name, contents := range files {
+		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(contents))}); err != nil {
+			return nil, "", err
+		}
+		if _, err := tarWriter.Write([]byte(contents)); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		return nil, "", err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, "", err
+	}
+	data := tarball.Bytes()
+	sum := sha256.Sum256(data)
+	return data, fmt.Sprintf("%x", sum[:]), nil
 }
 
 func runServe() error {
