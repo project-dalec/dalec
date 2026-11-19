@@ -296,6 +296,20 @@ func (s *Spec) GetImageMinimizationProfile(target string) string {
 	return ""
 }
 
+// GetImageLayers returns the configured image layers mode for the given target.
+// The target-level setting takes precedence over the spec-level setting.
+func (s *Spec) GetImageLayers(target string) string {
+	if img := s.Targets[target].Image; img != nil && img.Layers != "" {
+		return img.Layers
+	}
+
+	if s.Image != nil {
+		return s.Image.Layers
+	}
+
+	return ""
+}
+
 func (s *Spec) GetArtifacts(targetKey string) Artifacts {
 	if t, ok := s.Targets[targetKey]; ok {
 		// If unset then we should use the global artifacts but if set or deliberately empty then we should use that.

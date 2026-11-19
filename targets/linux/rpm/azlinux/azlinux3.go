@@ -72,6 +72,7 @@ var Azlinux3Config = &distro.Config{
 	BasePackages:       azlinux3BasePackages(),
 	RepoPlatformConfig: &defaultAzlinuxRepoPlatform,
 	InstallFunc:        distro.TdnfInstall,
+	UpgradeFunc:        distro.TdnfUpgrade,
 
 	SysextSupported: true,
 	FullName:        AzLinux3FullName,

@@ -344,6 +344,24 @@ done
 	}), squashOpts...)
 }
 
+// debCleanupDirs lists the directories removed from minimal images, in
+// addition to /etc/systemd and /var/lib/systemd when systemd is not installed,
+// and /usr/share/doc, /usr/share/man and /usr/share/info when the spec has no
+// docs or licenses.
+const debCleanupDirs = `
+/etc/apt
+/usr/lib/apt
+/usr/share/bash-completion
+/usr/share/bug
+/usr/share/debconf
+/usr/share/lintian
+/usr/share/locale
+/var/cache/apt
+/var/cache/debconf
+/var/lib/apt
+/var/lib/pam
+`
+
 // cleanupBootstrapContainer removes package manager infrastructure, unnecessary
 // packages, and caches from the container image.
 func cleanupBootstrapContainer(st llb.State, input buildContainerInput, opts ...llb.ConstraintsOpt) llb.State {
@@ -614,19 +632,7 @@ if [ -n "${purge_first}" ]; then
 fi
 
 # Remove leftover directories (after dpkg purge so maintainer scripts still work).
-cleanup_dirs="
-/etc/apt
-/usr/lib/apt
-/usr/share/bash-completion
-/usr/share/bug
-/usr/share/debconf
-/usr/share/lintian
-/usr/share/locale
-/var/cache/apt
-/var/cache/debconf
-/var/lib/apt
-/var/lib/pam
-"
+cleanup_dirs="` + debCleanupDirs + `"
 
 # Preserve /etc/systemd and /var/lib/systemd if the final image actually
 # uses systemd. Otherwise, these are dead config / state directories that

@@ -69,6 +69,13 @@ func TestSLES15(t *testing.T) {
 
 func testSuseExtra(ctx context.Context, t *testing.T, cfg testLinuxConfig, distroImageRef string) {
 	testSignedRPMCustomBaseImage(ctx, t, cfg.Target, distroImageRef, true, cfg.Worker)
+
+	// The SUSE container target is built without a base image, like the
+	// minimal container targets of other distros.
+	t.Run("per_package_layers", func(t *testing.T) {
+		t.Parallel()
+		testPerPackageLayers(ctx, t, cfg, cfg.Target.Container)
+	})
 }
 
 // suseListSignFiles lists the rpm artifacts expected to be signed for SUSE.

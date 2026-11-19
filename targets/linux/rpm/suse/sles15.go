@@ -39,6 +39,7 @@ var ConfigSLES15 = &distro.Config{
 	BasePackages:                basePackages(SLES15TargetKey),
 	RepoPlatformConfig:          &defaultPlatformConfig,
 	InstallFunc:                 distro.ZypperInstall,
+	UpgradeFunc:                 distro.ZypperUpgrade,
 	CrossArchInstallUnsupported: true,
 	FullName:                    sles15FullName,
 	RPMMacros:                   sles15RPMMacros,

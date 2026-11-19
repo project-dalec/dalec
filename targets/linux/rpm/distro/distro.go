@@ -36,6 +36,11 @@ type Config struct {
 
 	InstallFunc PackageInstaller
 
+	// UpgradeFunc upgrades installed packages. It is used to update an
+	// existing image instead of installing every package again. When nil,
+	// updating an existing image is not supported for the distro.
+	UpgradeFunc PackageInstaller
+
 	// Unique identifier for the package cache for this particular distro,
 	// e.g., azlinux3-tdnf-cache
 	CacheName string
@@ -118,6 +123,15 @@ func (c *Config) Install(pkgs []string, opts ...DnfInstallOpt) llb.RunOption {
 	dnfInstallOptions(&cfg, opts)
 
 	return dalec.WithRunOptions(c.InstallFunc(&cfg, c.ReleaseVer, pkgs), c.PackageCacheMount(cfg.root))
+}
+
+// Upgrade upgrades installed packages, or every package with an available
+// update when pkgs is empty.
+func (c *Config) Upgrade(pkgs []string, opts ...DnfInstallOpt) llb.RunOption {
+	var cfg dnfInstallConfig
+	dnfInstallOptions(&cfg, opts)
+
+	return dalec.WithRunOptions(c.UpgradeFunc(&cfg, c.ReleaseVer, pkgs), c.PackageCacheMount(cfg.root))
 }
 
 // Routes returns the flat routes for this RPM distro config, prefixed with the given prefix.

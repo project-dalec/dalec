@@ -52,6 +52,99 @@ image:
   minimization_profile: default
 ```
 
+### Layers
+
+`layers` controls how the container root filesystem is stored as image layers.
+An empty value or `single` writes one layer, which is the default.
+
+Set `layers` to `per-package` to write one layer per installed package (or group
+of related packages) plus a final layer with the package database and files that
+are generated or modified during install:
+
+```yaml
+image:
+  layers: per-package
+```
+
+You can also set it for a single build with
+`--build-arg DALEC_IMAGE_LAYERS=per-package`, which overrides the spec.
+
+With per-package layers, updating one package only changes that package's layer
+and the final layer. Every other layer stays byte-for-byte identical, so
+registries and machines that already have it don't upload or download it again.
+For example, rebuilding the image to pick up an `openssl` fix (see
+[Prebuilt packages](targets.md#prebuilt-packages)) only replaces the `openssl`
+layer and the final layer.
+
+How files are split:
+
+- Files owned by a package go into that package's layer. Packages from the same
+  source package (for example `openssl` and `openssl-libs`) share a layer.
+  Each package built from the spec gets its own layer. Hardlinked files whose
+  paths belong to different packages go into the final layer, so they stay linked.
+- The package database, files not owned by any package, `%ghost` files, files
+  changed after install (as reported by `rpm -V` or `dpkg --verify`) and
+  diverted files go into the final layer.
+- Directory timestamps in the layers are set to `SOURCE_DATE_EPOCH` when it is
+  provided, or to 0 otherwise, so identical packages produce identical layers.
+- Images are limited to 64 layers. When there are more packages, the smallest
+  ones are grouped into a single `misc` layer.
+
+Each layer has an image history entry whose comment records its contents, for
+example `dalec.layer.v1 kind=os name=openssl packages=openssl,openssl-libs`.
+The final layer is recorded as `dalec.layer.v1 kind=state name=state`, and the
+image gets the label `dev.dalec.image.layers=per-package`. The label
+`dev.dalec.image.spec-packages` lists every installed package built from the
+spec, including packages without files of their own. Tools such as image
+patchers can use these to find which layer holds a package.
+
+Every build checks that the layers together contain exactly the same files,
+with the same contents, permissions, ownership and extended attributes, as the
+installed root filesystem, and fails if they don't.
+
+#### Updating an existing image
+
+To pick up package updates (for example a security fix in `openssl`) without
+installing every package again, pass the image you already built as the
+`dalec-previous-image` build context:
+
+```shell
+docker buildx build -f spec.yml --target azlinux3/container \
+  --build-context dalec-previous-image=docker-image://registry/myimage:1.0 \
+  --no-cache-filter dalec.container \
+  -t registry/myimage:1.0-1 --push .
+```
+
+Dalec then upgrades the packages installed in that image instead of starting
+from scratch:
+
+- Only packages with an available update (and any new dependencies they need)
+  are downloaded and installed. Set `--build-arg DALEC_UPDATE_PACKAGES=openssl,openssl-libs`
+  to limit the upgrade to specific packages.
+- Your spec's packages are not built or reinstalled; they are kept as they are in
+  the previous image, even when a newer version is published in the package
+  repositories. To ship a new version of them at the same time, pass them as a
+  [prebuilt package](targets.md#prebuilt-packages) build context.
+- The image's `minimization_profile` (RPM targets), the minimal image cleanup
+  (Debian and Ubuntu targets) and `post` symlinks are applied again after the
+  update, like in a fresh build.
+- On Debian and Ubuntu, minimal images have no shell or package manager, so
+  the packages are installed with the build worker's tools, whose files are
+  removed again afterwards.
+- The result is split into layers as usual, so every package that did not
+  change produces the same layer as before and is not uploaded or downloaded
+  again. Only the updated packages' layers and the final layer change.
+
+This requires `layers: per-package`, and the previous image should have been
+built with per-package layers too. It is supported for the Azure Linux,
+AlmaLinux, Rocky Linux, SUSE Linux Enterprise, Debian and Ubuntu targets.
+
+{{< callout type="info" >}}
+Per-package layers are experimental. They are currently supported for RPM,
+Debian and Ubuntu targets without a custom base image (`image.bases`). Other
+targets produce a single layer and print a warning.
+{{< /callout >}}
+
 ### Base
 
 The `base` field is used to specify the base image for the output container.
