@@ -619,6 +619,9 @@ func (s Spec) Validate() error {
 		if err := validateSubPackageNames(s.Name, k, t.Packages); err != nil {
 			errs = append(errs, err)
 		}
+		if err := s.validateNamedImages(k); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	if err := s.Build.validate(); err != nil {

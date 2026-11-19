@@ -6,6 +6,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
@@ -205,5 +206,7 @@ func (cfg *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, er
 		})
 	}
 
-	return routes, nil
+	return frontend.AppendNamedImageRoutes(routes, prefix, spec, func(name string) gwclient.BuildFunc {
+		return linux.HandleNamedContainer(&containerCfg, name)
+	})
 }

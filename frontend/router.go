@@ -50,6 +50,9 @@ type Route struct {
 	// FullPath is the fully qualified route path, e.g. "azlinux3/container".
 	FullPath string
 
+	// Exact prevents unmatched descendants from falling back to this route or its ancestors.
+	Exact bool
+
 	// Handler is the build function that handles this route.
 	Handler gwclient.BuildFunc
 
@@ -362,6 +365,9 @@ func (r *Router) lookupTarget(ctx context.Context, target string) (matchedPath s
 		slices.Sort(candidates)
 		k := candidates[len(candidates)-1]
 		route := r.routes[k]
+		if route.Exact {
+			return "", nil, handlerNotFound(target, maps.Keys(r.routes))
+		}
 		bklog.G(ctx).WithField("prefix", k).WithField("target", target).Info("Using prefix match for target")
 		return k, &route, nil
 	}

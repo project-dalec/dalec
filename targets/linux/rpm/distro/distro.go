@@ -5,6 +5,7 @@ import (
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
@@ -215,5 +216,7 @@ func (cfg *Config) Routes(prefix string, spec *dalec.Spec) ([]frontend.Route, er
 		})
 	}
 
-	return routes, nil
+	return frontend.AppendNamedImageRoutes(routes, prefix, spec, func(name string) gwclient.BuildFunc {
+		return linux.HandleNamedContainer(cfg, name)
+	})
 }

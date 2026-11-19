@@ -1369,6 +1369,140 @@
 			],
 			"description": "ImageConfig is the configuration for the output image."
 		},
+		"NamedImage": {
+			"properties": {
+				"base": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Deprecated: Use [Bases] instead."
+				},
+				"bases": {
+					"items": {
+						"$ref": "#/$defs/BaseImage"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Bases is used to specify a list of base images to build images for.  The\nintent of allowing multiple bases is for cases, such as Windows, where you\nmay want to publish multiple versions of a base image in one image.\n\nWindows is the example here because of the way Windows works, the image\nthat the base is based off of must match the OS version of the host machine.\nTherefore it is common to have multiple Windows images in one with a\ndifferent value for the os version field of the platform.\n\nFor the most part implementations are not expected to support multiple base\nimages and may error out if multiple are specified.\n\nThis should not be set if [Base] is also set."
+				},
+				"cmd": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Cmd sets the image's \"cmd\" field.\nWhen entrypoint is set, this is used as the default arguments to the entrypoint.\nWhen entrypoint is not set, this is used as the default command to run."
+				},
+				"entrypoint": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Entrypoint sets the image's \"entrypoint\" field.\nThis is used to control the default command to run when the image is run."
+				},
+				"env": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Env is the list of environment variables to set in the image."
+				},
+				"labels": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Labels is the list of labels to set in the image metadata."
+				},
+				"minimization_profile": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "MinimizationProfile selects an optional post-install image minimization\npolicy. An empty value leaves the image unchanged; \"default\" enables the\ntarget-specific default policy."
+				},
+				"packages": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Packages selects resolved package names. Omit to install all built packages."
+				},
+				"post": {
+					"$ref": "#/$defs/PostInstall",
+					"description": "Post is the post install configuration for the image.\nThis allows making additional modifications to the container rootfs after the package(s) are installed.\n\nUse this to perform actions that would otherwise require additional tooling inside the container that is not relevant to\nthe resulting container and makes a post-install script as part of the package unnecessary."
+				},
+				"stop_signal": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "StopSignal is the signal to send to the container to stop it.\nThis is used to stop the container gracefully."
+				},
+				"tests": {
+					"items": {
+						"$ref": "#/$defs/TestSpec"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Tests are appended to root and target tests for this image."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the that the image should run as."
+				},
+				"volumes": {
+					"additionalProperties": {
+						"additionalProperties": {
+							"not": {}
+						},
+						"type": [
+							"object",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Volumes is the list of volumes for the image.\nVolumes instruct the runtime to bypass the any copy-on-write filesystems and mount the volume directly to the container."
+				},
+				"working_dir": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "WorkingDir is the working directory to set in the image.\nThis sets the directory the container will start in."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "NamedImage configures a target-local container independently of the default image."
+		},
 		"PackageConfig": {
 			"properties": {
 				"signer": {
@@ -2484,6 +2618,16 @@
 				"image": {
 					"$ref": "#/$defs/ImageConfig",
 					"description": "Image is the image configuration when the target output is a container image."
+				},
+				"images": {
+					"additionalProperties": {
+						"$ref": "#/$defs/NamedImage"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Images defines independent named container configurations for this target."
 				},
 				"package_config": {
 					"$ref": "#/$defs/PackageConfig",

@@ -71,11 +71,34 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 
 	worker := cfg.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
 
+	var selectionMounts []llb.RunOption
+	if selected := spec.GetImagePackages(); selected != nil {
+		repo := cfg.imagePackageRepo(worker, rpmDir, selected, sOpt, opts...)
+		rpmDir = llb.Scratch().File(llb.Copy(repo, "/repo", "/RPMS", &llb.CopyInfo{CopyDirContentsOnly: true}), opts...)
+		pkgs[0] = "/tmp/rpms-selected/*.rpm"
+		repoConfig := llb.Scratch().File(llb.Mkfile("dalec-images.repo", 0o644, []byte(`[dalec-images]
+name=Dalec image packages
+baseurl=file:///tmp/rpms
+enabled=1
+gpgcheck=0
+repo_gpgcheck=0
+`)), opts...)
+		repoPlatform := cfg.RepoPlatformConfig
+		if repoPlatform == nil {
+			repoPlatform = &dnfRepoPlatform
+		}
+		selectionMounts = []llb.RunOption{
+			llb.AddMount("/tmp/rpms-selected", repo, llb.SourcePath("/selected"), llb.Readonly),
+			llb.AddMount(filepath.Join(repoPlatform.ConfigRoot, "dalec-images.repo"), repoConfig, llb.SourcePath("dalec-images.repo"), llb.Readonly),
+		}
+	}
+
 	rootfs = worker.Run(
 		dalec.WithConstraints(opts...), // Make sure constraints (and platform specifically) are applied before install is set
 		cfg.Install(pkgs, installOpts...),
 		llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS")),
 		llb.AddMount(baseMountPath, basePkgs, llb.SourcePath("/RPMS")),
+		dalec.WithRunOptions(selectionMounts...),
 		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 	).AddMount(workPath, rootfs)
 
