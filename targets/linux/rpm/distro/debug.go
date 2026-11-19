@@ -23,6 +23,7 @@ import (
 // which depend on `build` dependencies in the spec in order to run.
 func (c *Config) DebugWorker(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) llb.State {
 	worker := c.Worker(sOpt, opts...)
+	worker = worker.With(frontend.AddedHosts(client))
 
 	deps := spec.GetPackageDeps(targetKey).GetBuild()
 	pkgNames := dalec.SortMapKeys(deps)
@@ -65,6 +66,7 @@ func (c *Config) HandleBuildroot(ctx context.Context, client gwclient.Client) (*
 
 		pc := dalec.Platform(platform)
 		worker := c.Worker(sOpt, pg, pc)
+		worker = worker.With(frontend.AddedHosts(client))
 
 		worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, pg, pc))
 

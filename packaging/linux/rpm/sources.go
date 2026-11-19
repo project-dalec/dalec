@@ -44,6 +44,9 @@ func buildScript(spec *dalec.Spec) string {
 	if spec.HasCargohomes() {
 		// Set CARGO_HOME to point to our prepared cargo cache
 		fmt.Fprintln(b, "export CARGO_HOME=\"$(pwd)/"+cargohomeName+"\"")
+		// Dependency fetching happens in the dedicated cargohome generator. The
+		// package build must not reach the network or bypass the prepared cache.
+		fmt.Fprintln(b, "export CARGO_NET_OFFLINE=true")
 	}
 
 	if spec.HasPips() {

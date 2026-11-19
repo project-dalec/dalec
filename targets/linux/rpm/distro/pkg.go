@@ -51,6 +51,7 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dale
 	opts = append(opts, frontend.IgnoreCache(client))
 
 	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
+	worker = worker.With(frontend.AddedHosts(client))
 	worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, opts...))
 
 	// Preprocess after build deps are installed so generators can use build tools.
@@ -94,6 +95,7 @@ func (c *Config) BuildSRPM(ctx context.Context, client gwclient.Client, sOpt dal
 	opts = append(opts, frontend.IgnoreCache(client))
 
 	worker := c.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
+	worker = worker.With(frontend.AddedHosts(client))
 	worker = worker.With(c.InstallBuildDeps(spec, sOpt, targetKey, opts...))
 
 	// Preprocess after build deps are installed so generators can use build tools.
