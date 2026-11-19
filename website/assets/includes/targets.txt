@@ -38,6 +38,8 @@ bookworm/deb (default)           Builds a deb package.
 bookworm/dsc                     Builds a Debian source package.
 bookworm/testing/container       Builds a container image for testing purposes only.
 bookworm/worker                  Builds the worker image.
+darwincross/worker               Builds the Linux worker used to cross-compile Darwin binaries
+darwincross/zip (default)        Cross-compiles Darwin binaries and packages them in zip archives
 debug/cargohome                  Outputs all the Cargo dependencies for the spec
 debug/gomods                     Outputs all the gomodule dependencies for the spec
 debug/patched-sources            Outputs all patched sources from a dalec spec file.

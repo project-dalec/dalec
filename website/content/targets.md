@@ -21,6 +21,7 @@ DALEC includes a number of built-in targets that you can either use in your spec
 - `jammy` - Ubuntu 22.04 (jammy) (v0.9)
 - `noble` - Ubuntu 24.04 (noble) (v0.11)
 - `windowscross` - Cross compile from Ubuntu Jammy to Windows
+- `darwincross` - Cross compile from Ubuntu Noble to Darwin binary archives
 - `almalinux9` - AlmaLinux 9 (v0.13)
 - `almalinux8` - AlmaLinux 8 (v0.13)
 - `rockylinux8` - Rocky Linux 8 (v0.13)
@@ -61,6 +62,33 @@ on `<val>`.
 
 Likewise if the spec file contains items in the `targets` section then the list
 of available targets will be filtered to just the targets in the spec.
+
+## Darwin archives
+
+`darwincross/zip` builds on a Linux worker and produces
+`<name>_<version>-<revision>_darwin_<arch>.zip` for `darwin/amd64` and
+`darwin/arm64`. Each primary or supplemental package must declare at least one
+binary and produces its own archive. Binaries are placed at the archive root;
+licenses and docs are included under `licenses/` and `docs/`, respectively.
+Artifact names, subpaths, and explicit permissions are preserved.
+
+For example:
+
+```shell
+docker buildx build -f docs/examples/darwin.yml --target darwincross/zip \
+  --platform darwin/amd64,darwin/arm64 --output type=local,dest=_output .
+```
+
+The worker sets `GOOS=darwin`; Go specs should also set `GOARCH=${TARGETARCH}`.
+The example disables cgo so that no Apple SDK is needed. The target does not
+provide an Apple SDK or cross C compiler. Builds that need cgo must supply their
+own compatible toolchain.
+
+`darwincross/worker` exports the Linux build worker, which can be replaced using
+the `dalec-darwincross-worker` named build context. Archive signing uses the
+spec's configured signer; this target does not automatically code-sign or
+notarize macOS executables. Runtime tests for the produced executables must run
+separately on macOS, not in the Linux worker.
 
 ## Dependencies
 
