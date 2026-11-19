@@ -13,6 +13,7 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/internal/cross"
+	"github.com/project-dalec/dalec/targets"
 )
 
 const (
@@ -57,6 +58,7 @@ func (h routeHandlers) buildBinaries(ctx context.Context, spec *dalec.Spec, work
 	if err != nil {
 		return dalec.ErrorState(worker, err)
 	}
+	opts = append(opts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))
 	packageStates := make([]llb.State, 0, len(pkgs))
 	for _, pkg := range pkgs {
 		original := built.GetMount(pkg.buildOutputDir())
