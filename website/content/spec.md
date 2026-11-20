@@ -56,6 +56,62 @@ No default value should be included for these build args. These args are opt-in.
 
 `DALEC_DISABLE_PROXY_CONFIG=1` can be passed as a frontend build arg to disable DALEC-managed proxy configuration for tools that need explicit proxy or CA setup. It does not need to be listed under `args`, and it does not disable BuildKit proxy networking itself.
 
+### Frontend build args
+
+The following build args configure the Dalec frontend itself rather than the spec.
+They are passed with `--build-arg` and do not need to be listed in the args section.
+
+| Build arg | Description |
+| --- | --- |
+| `DALEC_SKIP_TESTS` | Set to `1` or `true` to skip the [tests](testing.md) defined in the spec. Dalec prints a warning when tests are skipped. The value must be a boolean, otherwise the build fails. |
+| `DALEC_SKIP_SIGNING` | Set to `1` or `true` to skip [package signing](signing.md), even when a signer is configured. |
+| `DALEC_SIGNING_CONFIG_PATH`, `DALEC_SIGNING_CONFIG_CONTEXT_NAME` | Provide the signing config from a build context instead of the spec. See [signing](signing.md). |
+| `DALEC_SOURCE_FILTER_CONFIG_PATH`, `DALEC_SOURCE_FILTER_CONFIG_CONTEXT_NAME` | Provide a config which filters content out of source packages. See [build-time source filters](sources.md#build-time-source-filters). |
+| `DALEC_GOMOD_PROXY` | Sets `GOPROXY` when Dalec downloads Go module dependencies for the [gomod generator](sources.md#gomod) and applies gomod edits. It is not set for build steps. |
+| `DALEC_DISABLE_PROXY_CONFIG` | Set to `1` to disable DALEC-managed proxy configuration, as described above. |
+| `DALEC_DISABLE_DIFF_MERGE` | Set to `1` to use copies instead of BuildKit's diff and merge operations, even when BuildKit reports support for them. This is needed with storage backends that don't support these operations, such as dockerd with the graphdriver backend. |
+| `DALEC_DISABLE_SYMLINK` | Set to `1` to create the image's post-install symlinks with a command in a worker container instead of BuildKit's native symlink file operation. |
+| `DALEC_DISABLE_PASSTHROUGH` | Set to `1` to stop Dalec from using BuildKit's passthrough operation (BuildKit v0.31.0 and later) when running tests. |
+
+### `SOURCE_DATE_EPOCH`
+
+`SOURCE_DATE_EPOCH` is the [standard environment variable](https://reproducible-builds.org/docs/source-date-epoch/)
+for passing a fixed timestamp, as seconds since the Unix epoch, to tools that
+support reproducible builds.
+It is passed to Dalec as a build arg:
+
+```console
+$ docker build \
+  --build-arg SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)" \
+  -f my-spec.yml \
+  --target=azlinux3 \
+  .
+```
+
+Unlike other build args, `SOURCE_DATE_EPOCH` does not need to be listed in the
+args section when it is passed, and it can be referenced anywhere in the spec
+where build args are substituted, e.g. `${SOURCE_DATE_EPOCH}`.
+
+When `SOURCE_DATE_EPOCH` is set, Dalec adds it to the
+[build environment](#build-section) (`build.env`) so that build steps and the
+tools they run can use it.
+If the spec sets `SOURCE_DATE_EPOCH` in `build.env` itself, that value is used
+instead.
+
+A spec which references `SOURCE_DATE_EPOCH` but may be built without the build
+arg should list it in the args section with a default value. The default is
+used, including in the build environment, when the build arg is not passed:
+
+```yaml
+args:
+  SOURCE_DATE_EPOCH: "1704067200"
+```
+
+BuildKit also uses the `SOURCE_DATE_EPOCH` build arg for the timestamps of
+the exported image. See BuildKit's
+[build reproducibility](https://github.com/moby/buildkit/blob/master/docs/build-repro.md)
+documentation for details.
+
 ## Metadata section
 
 Metadata section is used to define the metadata of the spec. This metadata includes the name, packager, vendor, license, website, and description of the spec.
@@ -265,8 +321,13 @@ build:
         go build -ldflags "-s -w -X github.com/foo/bar/version.Version=${TAG}" -o /out/my-binary ./cmd/my-binary
 ```
 
-- `env`: The environment variables for the build.
-- `steps`: The build steps for the package.
+- `env`: The environment variables for the build. These are set for every step unless a step overrides them with its own `env`.
+- `steps`: The build steps for the package. Each step is a `BuildStep` with the following fields:
+  - `command` (required): The command to run. Dalec wraps this as `/bin/sh -c "<command>"`, or the equivalent for the target distro.
+  - `env` (optional): Environment variables to set for this step only. These are merged with (and override) the build-level `env`.
+  - `mounts` (optional): Additional sources to mount into this step. Each mount has:
+    - `dest` (required): The destination directory in the step's filesystem. Must not be `/`.
+    - `spec` (required): A [source](#sources-section) describing what to mount.
 - `network_mode`: Set the network mode to use for build steps (accepts: empty, `none`, `sandbox`)
 - `cache`: Configure caches which persist between builds. See [caches](caches.md) for more details.
 

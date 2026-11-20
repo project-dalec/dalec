@@ -234,98 +234,98 @@ Depends: ${misc:Depends},
 	}
 }
 
-func TestRules_OverridePerms(t *testing.T) {
+func TestRules_ExecuteAfterFixPerms(t *testing.T) {
 	tests := []struct {
 		name      string
 		artifacts dalec.Artifacts
 		expected  string
 	}{
 		{
-			name: "default permissions emit no override",
+			name: "default permissions emit no hook",
 			artifacts: dalec.Artifacts{
 				Binaries: map[string]dalec.ArtifactConfig{"example": {}},
 			},
 		},
 		{
-			name: "artifact permissions emit an override",
+			name: "artifact permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Binaries: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "config file permissions emit an override",
+			name: "config file permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				ConfigFiles: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "manpage permissions emit an override",
+			name: "manpage permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Manpages: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "header permissions emit an override",
+			name: "header permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Headers: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "license permissions emit an override",
+			name: "license permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Licenses: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "documentation permissions emit an override",
+			name: "documentation permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Docs: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "library permissions emit an override",
+			name: "library permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Libs: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "libexec permissions emit an override",
+			name: "libexec permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Libexec: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "data file permissions emit an override",
+			name: "data file permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				DataDirs: map[string]dalec.ArtifactConfig{"example": {Permissions: 0o750}},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "config directory permissions emit an override",
+			name: "config directory permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Directories: &dalec.CreateArtifactDirectories{
 					Config: map[string]dalec.ArtifactDirConfig{"example": {Mode: 0o750}},
 				},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 		{
-			name: "state directory permissions emit an override",
+			name: "state directory permissions emit a hook",
 			artifacts: dalec.Artifacts{
 				Directories: &dalec.CreateArtifactDirectories{
 					State: map[string]dalec.ArtifactDirConfig{"example": {Mode: 0o700}},
 				},
 			},
-			expected: "override_dh_fixperms:\n\tdh_fixperms\n\tdebian/dalec/fix_perms.sh\n\n",
+			expected: "execute_after_dh_fixperms:\n\tdebian/dalec/fix_perms.sh\n\n",
 		},
 	}
 
@@ -333,7 +333,7 @@ func TestRules_OverridePerms(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			w := newRulesWrapper(test.artifacts)
 
-			actual := w.OverridePerms().String()
+			actual := w.ExecuteAfterFixPerms().String()
 
 			assert.Equal(t, actual, test.expected)
 		})

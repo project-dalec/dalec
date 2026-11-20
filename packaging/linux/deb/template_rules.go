@@ -72,7 +72,7 @@ func (w *rulesWrapper) Envs() fmt.Stringer {
 	return b
 }
 
-func (w *rulesWrapper) OverridePerms() fmt.Stringer {
+func (w *rulesWrapper) ExecuteAfterFixPerms() fmt.Stringer {
 	b := &strings.Builder{}
 
 	checkPerms := func(cfgs map[string]dalec.ArtifactConfig) bool {
@@ -117,12 +117,9 @@ func (w *rulesWrapper) OverridePerms() fmt.Stringer {
 	}
 
 	if fixPerms {
-		// Normally this should be `execute_after_dh_fixperms`, however this doesn't
-		// work on Ubuntu 18.04.
-		// Instead we need to override dh_fixperms and run it ourselves and then
-		// our extra script.
-		b.WriteString("override_dh_fixperms:\n")
-		b.WriteString("\tdh_fixperms\n")
+		// Run our script after dh_fixperms so the custom permissions are not
+		// reset by it.
+		b.WriteString("execute_after_dh_fixperms:\n")
 		b.WriteString("\tdebian/dalec/fix_perms.sh\n\n")
 	}
 
