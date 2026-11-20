@@ -711,13 +711,18 @@ func TestSpecSubstituteArgsPreservesLiteralOutput(t *testing.T) {
 		name  string
 		value string
 		want  string
+		err   string
 	}{
 		{name: "apostrophe", value: "what's new", want: "what's new"},
 		{name: "backslash", value: `C:\tmp\logs`, want: `C:\tmp\logs`},
 		{name: "trailing dollar", value: `\d+$`, want: `\d+$`},
 		{name: "standalone dollar", value: "what's $ 5", want: "what's $ 5"},
 		{name: "build argument", value: "${VERSION}", want: "1.2.3"},
-		{name: "escaped build argument", value: `\${VERSION}`, want: "${VERSION}"},
+		{name: "escaped build argument", value: `\${VERSION}`, want: `\${VERSION}`},
+		{name: "single-quoted build argument", value: "'${VERSION}'", want: "'${VERSION}'"},
+		{name: "mixed escaped and expanded arguments", value: `\${VERSION} ${VERSION}`, want: "${VERSION} 1.2.3"},
+		{name: "undeclared build argument", value: "${UNKNOWN}", err: `build arg "UNKNOWN" not declared`},
+		{name: "malformed build argument", value: "${VERSION", err: "unsupported modifier"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := Spec{
@@ -730,7 +735,12 @@ func TestSpecSubstituteArgsPreservesLiteralOutput(t *testing.T) {
 					}},
 				}},
 			}
-			assert.NilError(t, spec.SubstituteArgs(nil))
+			err := spec.SubstituteArgs(nil)
+			if tc.err != "" {
+				assert.ErrorContains(t, err, tc.err)
+				return
+			}
+			assert.NilError(t, err)
 			assert.Equal(t, spec.Tests[0].Steps[0].Stdout.Equals, tc.want)
 		})
 	}

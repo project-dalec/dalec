@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
@@ -96,13 +94,26 @@ func (m envGetterMap) Keys() []string {
 }
 
 func expandArgs(lex *shell.Lex, s string, args map[string]string, allowArg func(key string) bool) (string, error) {
-	// The shell lexer also interprets quotes and escapes. Skip it when the
-	// value cannot contain a build argument.
-	if !hasBuildArgSyntax(s) {
+	if !strings.ContainsRune(s, '$') {
 		return s, nil
 	}
 
-	result, err := lex.ProcessWordWithMatches(s, envGetterMap(args))
+	env := envGetterMap(args)
+	result, err := lex.ProcessWordWithMatches(s, env)
+	if len(result.Matched) == 0 && len(result.Unmatched) == 0 {
+		if err == nil {
+			return s, nil
+		}
+
+		// A literal quote can make the lexer fail before it reaches a dollar
+		// sign. Check for references without interpreting quotes.
+		rawLex := *lex
+		rawLex.SkipProcessQuotes = true
+		raw, rawErr := rawLex.ProcessWordWithMatches(s, env)
+		if rawErr == nil && len(raw.Matched) == 0 && len(raw.Unmatched) == 0 {
+			return s, nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -120,21 +131,6 @@ func expandArgs(lex *shell.Lex, s string, args map[string]string, allowArg func(
 	}
 
 	return result.Result, errors.Wrap(goerrors.Join(errs...), "error performing variable expansion")
-}
-
-func hasBuildArgSyntax(s string) bool {
-	for {
-		_, rest, found := strings.Cut(s, "$")
-		if !found {
-			return false
-		}
-		// Keep the lexer's handling of quoted and escaped expansion syntax.
-		next, _ := utf8.DecodeRuneInString(rest)
-		if strings.ContainsRune("{_@*#?-$!", next) || unicode.IsLetter(next) || unicode.IsDigit(next) {
-			return true
-		}
-		s = rest
-	}
 }
 
 var errUnknownArg = errors.New("unknown arg")
