@@ -94,7 +94,26 @@ func (m envGetterMap) Keys() []string {
 }
 
 func expandArgs(lex *shell.Lex, s string, args map[string]string, allowArg func(key string) bool) (string, error) {
-	result, err := lex.ProcessWordWithMatches(s, envGetterMap(args))
+	if !strings.ContainsRune(s, '$') {
+		return s, nil
+	}
+
+	env := envGetterMap(args)
+	result, err := lex.ProcessWordWithMatches(s, env)
+	if len(result.Matched) == 0 && len(result.Unmatched) == 0 {
+		if err == nil {
+			return s, nil
+		}
+
+		// A literal quote can make the lexer fail before it reaches a dollar
+		// sign. Check for references without interpreting quotes.
+		rawLex := *lex
+		rawLex.SkipProcessQuotes = true
+		raw, rawErr := rawLex.ProcessWordWithMatches(s, env)
+		if rawErr == nil && len(raw.Matched) == 0 && len(raw.Unmatched) == 0 {
+			return s, nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}
