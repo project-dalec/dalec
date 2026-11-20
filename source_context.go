@@ -7,6 +7,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	"github.com/moby/buildkit/solver/errdefs"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 )
 
@@ -18,6 +19,24 @@ type SourceContext struct {
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 
 	_sourceMap *sourceMap `yaml:"-" json:"-"`
+}
+
+// ContextPlatform is an [llb.LocalOption] passed to [SourceOpts.GetContext]
+// to request the context for a specific platform.
+// This is used when the platform differs from the one being built for, such as
+// for a context mounted into a command run in an image source with its own platform.
+// The option does not change the local source itself.
+type ContextPlatform ocispecs.Platform
+
+func (ContextPlatform) SetLocalOption(*llb.LocalInfo) {}
+
+// constraintsPlatform returns the platform set by the constraint options, if any.
+func constraintsPlatform(opts []llb.ConstraintsOpt) *ocispecs.Platform {
+	var c llb.Constraints
+	for _, o := range opts {
+		o.SetConstraintsOption(&c)
+	}
+	return c.Platform
 }
 
 func (src *SourceContext) validate(opts fetchOptions) error {
@@ -33,7 +52,11 @@ func (src *SourceContext) baseState(opts fetchOptions) llb.State {
 		if opts.SourceOpt.GetContext == nil {
 			panic("SourceOpt.GetContext is not set, cannot fetch source context")
 		}
-		st, err := opts.SourceOpt.GetContext(src.Name, opts)
+		localOpts := []llb.LocalOption{opts}
+		if p := constraintsPlatform(opts.Constraints); p != nil {
+			localOpts = append(localOpts, ContextPlatform(*p))
+		}
+		st, err := opts.SourceOpt.GetContext(src.Name, localOpts...)
 		if err != nil {
 			err = errdefs.WithSource(err, src._sourceMap.GetErrdefsSource())
 			return llb.Scratch(), err
