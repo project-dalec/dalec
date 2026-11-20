@@ -764,7 +764,7 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 		Path: "/",
 		DockerImage: &SourceDockerImage{
 			Ref:      "example.com/foo/${BAR}:latest",
-			Platform: "linux/$FOO",
+			Platform: &SourceDockerImagePlatform{OS: "linux", Architecture: "$FOO", Variant: "v8"},
 		},
 	}
 
@@ -874,7 +874,7 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Commit, foo))
 	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Checksum, checksum))
 	assert.Check(t, cmp.Equal(spec.Sources["image"].DockerImage.Ref, "example.com/foo/"+bar+":latest"))
-	assert.Check(t, cmp.Equal(spec.Sources["image"].DockerImage.Platform, "linux/"+foo))
+	assert.Check(t, cmp.DeepEqual(spec.Sources["image"].DockerImage.Platform, &SourceDockerImagePlatform{OS: "linux", Architecture: foo, Variant: "v8"}))
 	assert.Check(t, cmp.Equal(spec.Patches["src"][0].Path, foo))
 
 	// Base package config
@@ -1649,7 +1649,7 @@ func TestImage_validate(t *testing.T) {
 			expectErr: "rootfs image source does not support setting a platform",
 			Image: ImageConfig{
 				Bases: []BaseImage{
-					{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "busybox:latest", Platform: "linux/arm64"}}},
+					{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "busybox:latest", Platform: &SourceDockerImagePlatform{Architecture: "arm64"}}}},
 				},
 			},
 		},

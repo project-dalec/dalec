@@ -1785,11 +1785,8 @@
 					"$ref": "#/$defs/Command"
 				},
 				"platform": {
-					"type": [
-						"string",
-						"null"
-					],
-					"description": "Platform is the platform of the image to fetch, e.g. \"linux/arm64\".\nIt also applies to any commands run in the image and to any sources\nmounted into them that do not set their own platform.\nWhen not set, the platform is determined by the build target.\nThis is useful for including content for a platform other than the one\nbeing built for, such as when a source package must carry content for\nmultiple architectures.\nSetting a platform is not supported for image sources used as a base image rootfs."
+					"$ref": "#/$defs/SourceDockerImagePlatform",
+					"description": "Platform is the platform of the image to fetch.\nIt also applies to any commands run in the image and to any sources\nmounted into them that do not set their own platform.\nWhen not set, the platform is determined by the build target.\nThis is useful for including content for a platform other than the one\nbeing built for, such as when a source package must carry content for\nmultiple architectures.\nSetting a platform is not supported for image sources used as a base image rootfs."
 				},
 				"ref": {
 					"type": [
@@ -1804,6 +1801,41 @@
 				"object",
 				"null"
 			]
+		},
+		"SourceDockerImagePlatform": {
+			"required": [
+				"architecture"
+			],
+			"properties": {
+				"architecture": {
+					"type": [
+						"string"
+					],
+					"description": "Architecture is the CPU architecture of the image, e.g. \"arm64\"."
+				},
+				"os": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "OS is the operating system of the image, e.g. \"linux\".\nWhen not set, the operating system of the build target is used."
+				},
+				"variant": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Variant is the variant of the CPU architecture, e.g. \"v8\"."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SourceDockerImagePlatform describes the platform of a docker image source."
 		},
 		"SourceGenerator": {
 			"properties": {

@@ -326,6 +326,8 @@ Each entry in `cmd.steps` is a build step with these fields:
 
 By default, the image is fetched for the platform being built for.
 You can use the `platform` field to fetch the image for a specific platform instead.
+It has the `architecture` (required), `os` and `variant` fields, which follow the OCI image platform.
+If `os` is not set, the operating system being built for is used.
 This is useful when the source needs to carry content for a platform other than
 the one being built for, or for multiple platforms at once, such as
 architecture-specific files included in a source package:
@@ -336,12 +338,16 @@ sources:
     path: /lib
     image:
       ref: docker.io/library/alpine:3.14
-      platform: linux/amd64
+      platform:
+        os: linux
+        architecture: amd64
   libs-arm64:
     path: /lib
     image:
       ref: docker.io/library/alpine:3.14
-      platform: linux/arm64
+      platform:
+        os: linux
+        architecture: arm64
 ```
 
 The platform also applies to any commands run in the image, as well as to any

@@ -751,7 +751,7 @@ func TestSourceDockerImagePlatform(t *testing.T) {
 
 	targetPlatform := v1.Platform{OS: "linux", Architecture: "amd64"}
 
-	newSrc := func(platform, mountPlatform string) Source {
+	newSrc := func(platform, mountPlatform *SourceDockerImagePlatform) Source {
 		return Source{
 			DockerImage: &SourceDockerImage{
 				Ref:      imgRef,
@@ -814,7 +814,7 @@ func TestSourceDockerImagePlatform(t *testing.T) {
 	sOpt := SourceOpts{}
 
 	t.Run("not set", func(t *testing.T) {
-		src := newSrc("", "")
+		src := newSrc(nil, nil)
 		st := src.ToState("", sOpt, llb.Platform(targetPlatform))
 		ops := sourceOpsFromState(ctx, t, st)
 		checkPlatforms(t, ops, targetPlatform, targetPlatform)
@@ -823,7 +823,7 @@ func TestSourceDockerImagePlatform(t *testing.T) {
 	t.Run("set", func(t *testing.T) {
 		expect := v1.Platform{OS: "linux", Architecture: "arm64"}
 
-		src := newSrc("linux/arm64", "")
+		src := newSrc(&SourceDockerImagePlatform{OS: "linux", Architecture: "arm64"}, nil)
 		st := src.ToState("", sOpt, llb.Platform(targetPlatform))
 		ops := sourceOpsFromState(ctx, t, st)
 		checkPlatforms(t, ops, expect, expect)
@@ -836,7 +836,7 @@ func TestSourceDockerImagePlatform(t *testing.T) {
 	t.Run("set as mount", func(t *testing.T) {
 		expect := v1.Platform{OS: "linux", Architecture: "arm64"}
 
-		src := newSrc("linux/arm64", "")
+		src := newSrc(&SourceDockerImagePlatform{OS: "linux", Architecture: "arm64"}, nil)
 		mountSt, mountOpts := src.ToMount(sOpt, llb.Platform(targetPlatform))
 		st := llb.Scratch().Run(
 			llb.Args([]string{"true"}),
@@ -857,7 +857,7 @@ func TestSourceDockerImagePlatform(t *testing.T) {
 	t.Run("normalized", func(t *testing.T) {
 		expect := v1.Platform{OS: "linux", Architecture: "arm64"}
 
-		src := newSrc("linux/aarch64/v8", "")
+		src := newSrc(&SourceDockerImagePlatform{Architecture: "aarch64", Variant: "v8"}, nil)
 		st := src.ToState("", sOpt, llb.Platform(targetPlatform))
 		ops := sourceOpsFromState(ctx, t, st)
 		checkPlatforms(t, ops, expect, expect)
@@ -866,7 +866,7 @@ func TestSourceDockerImagePlatform(t *testing.T) {
 	t.Run("set on mount", func(t *testing.T) {
 		expectMount := v1.Platform{OS: "linux", Architecture: "s390x"}
 
-		src := newSrc("", "linux/s390x")
+		src := newSrc(nil, &SourceDockerImagePlatform{Architecture: "s390x"})
 		st := src.ToState("", sOpt, llb.Platform(targetPlatform))
 		ops := sourceOpsFromState(ctx, t, st)
 		checkPlatforms(t, ops, targetPlatform, expectMount)
@@ -876,17 +876,56 @@ func TestSourceDockerImagePlatform(t *testing.T) {
 		expectImage := v1.Platform{OS: "linux", Architecture: "arm64"}
 		expectMount := v1.Platform{OS: "linux", Architecture: "s390x"}
 
-		src := newSrc("linux/arm64", "linux/s390x")
+		src := newSrc(&SourceDockerImagePlatform{Architecture: "arm64"}, &SourceDockerImagePlatform{Architecture: "s390x"})
 		st := src.ToState("", sOpt, llb.Platform(targetPlatform))
 		ops := sourceOpsFromState(ctx, t, st)
 		checkPlatforms(t, ops, expectImage, expectMount)
 	})
 
-	t.Run("invalid", func(t *testing.T) {
-		src := newSrc("not/a/valid/platform", "")
-		_, err := src.ToState("", sOpt, llb.Platform(targetPlatform)).Marshal(ctx)
-		assert.ErrorContains(t, err, "invalid docker image source platform")
-		assert.ErrorContains(t, err, "not/a/valid/platform")
+	t.Run("os defaults to target os", func(t *testing.T) {
+		target := v1.Platform{OS: "windows", Architecture: "amd64"}
+		expect := v1.Platform{OS: "windows", Architecture: "arm64"}
+
+		src := newSrc(&SourceDockerImagePlatform{Architecture: "arm64"}, nil)
+		st := src.ToState("", SourceOpts{TargetPlatform: &target}, llb.Platform(target))
+		ops := sourceOpsFromState(ctx, t, st)
+		checkPlatforms(t, ops, expect, expect)
+	})
+
+	t.Run("context mount", func(t *testing.T) {
+		src := Source{
+			DockerImage: &SourceDockerImage{
+				Ref:      imgRef,
+				Platform: &SourceDockerImagePlatform{Architecture: "arm64"},
+				Cmd: &Command{
+					Mounts: []SourceMount{{Dest: "/mnt", Spec: Source{Path: "/", Context: &SourceContext{Name: "some-context"}}}},
+					Steps:  []*BuildStep{{Command: "true"}},
+				},
+			},
+		}
+
+		var got []ContextPlatform
+		sOpt := SourceOpts{
+			GetContext: func(name string, opts ...llb.LocalOption) (*llb.State, error) {
+				for _, o := range opts {
+					if p, ok := o.(ContextPlatform); ok {
+						got = append(got, p)
+					}
+				}
+				st := llb.Local(name, opts...)
+				return &st, nil
+			},
+		}
+
+		sourceOpsFromState(ctx, t, src.ToState("", sOpt, llb.Platform(targetPlatform)))
+		assert.Assert(t, cmp.Len(got, 1))
+		assert.Check(t, cmp.Equal(got[0].Architecture, "arm64"))
+		assert.Check(t, cmp.Equal(got[0].OS, "linux"))
+	})
+
+	t.Run("missing architecture", func(t *testing.T) {
+		src := newSrc(&SourceDockerImagePlatform{OS: "linux"}, nil)
+		assert.ErrorContains(t, src.validate(), "platform must have an architecture")
 	})
 }
 

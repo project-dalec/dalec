@@ -346,7 +346,7 @@ func TestSourceImagePlatform(t *testing.T) {
 				Includes: []string{"busybox"},
 				DockerImage: &dalec.SourceDockerImage{
 					Ref:      "busybox:latest",
-					Platform: "linux/amd64",
+					Platform: &dalec.SourceDockerImagePlatform{OS: "linux", Architecture: "amd64"},
 				},
 			},
 			"arm64": {
@@ -354,7 +354,7 @@ func TestSourceImagePlatform(t *testing.T) {
 				Includes: []string{"busybox"},
 				DockerImage: &dalec.SourceDockerImage{
 					Ref:      "busybox:latest",
-					Platform: "linux/arm64",
+					Platform: &dalec.SourceDockerImagePlatform{OS: "linux", Architecture: "arm64"},
 				},
 			},
 		},
