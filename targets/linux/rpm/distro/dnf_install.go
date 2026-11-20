@@ -117,7 +117,11 @@ func dnfInstallFlags(cfg *dnfInstallConfig) string {
 		cmdOpts += " --setopt=reposdir=/etc/yum.repos.d"
 	}
 
-	if !cfg.includeDocs {
+	// Base images may set tsflags=nodocs in dnf.conf, so omitting the flag
+	// inherits it rather than installing docs.
+	if cfg.includeDocs {
+		cmdOpts += " --setopt=tsflags="
+	} else {
 		cmdOpts += " --setopt=tsflags=nodocs"
 	}
 
