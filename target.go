@@ -112,6 +112,10 @@ func (t *Target) processBuildArgs(lex *shell.Lex, args map[string]string, allowA
 		errs = append(errs, errors.Wrap(err, "dependencies"))
 	}
 
+	if err := t.Artifacts.processBuildArgs(lex, args, allowArg); err != nil {
+		errs = append(errs, errors.Wrap(err, "artifacts"))
+	}
+
 	for k, v := range t.Provides {
 		for i, ver := range v.Version {
 			updated, err := expandArgs(lex, ver, args, allowArg)

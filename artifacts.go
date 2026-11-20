@@ -7,6 +7,8 @@ import (
 	"maps"
 	"path/filepath"
 	"strings"
+
+	"github.com/moby/buildkit/frontend/dockerfile/shell"
 )
 
 // Artifacts describes all the artifacts to include in the package.
@@ -292,4 +294,84 @@ func (a *Artifacts) validate() error {
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+// processBuildArgs performs build arg substitution on the artifact paths, i.e.
+// the keys of each artifact map which point to the files or directories
+// produced by the build.
+func (a *Artifacts) processBuildArgs(lex *shell.Lex, args map[string]string, allowArg func(string) bool) error {
+	if a == nil {
+		return nil
+	}
+
+	var errs []error
+	appendErr := func(kind string, err error) {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", kind, err))
+		}
+	}
+
+	var err error
+	a.Binaries, err = expandArtifactPaths(lex, a.Binaries, args, allowArg)
+	appendErr("binaries", err)
+	a.Libexec, err = expandArtifactPaths(lex, a.Libexec, args, allowArg)
+	appendErr("libexec", err)
+	a.Opt, err = expandArtifactPaths(lex, a.Opt, args, allowArg)
+	appendErr("opt", err)
+	a.Manpages, err = expandArtifactPaths(lex, a.Manpages, args, allowArg)
+	appendErr("manpages", err)
+	a.DataDirs, err = expandArtifactPaths(lex, a.DataDirs, args, allowArg)
+	appendErr("data_dirs", err)
+	a.ConfigFiles, err = expandArtifactPaths(lex, a.ConfigFiles, args, allowArg)
+	appendErr("configFiles", err)
+	a.Docs, err = expandArtifactPaths(lex, a.Docs, args, allowArg)
+	appendErr("docs", err)
+	a.Licenses, err = expandArtifactPaths(lex, a.Licenses, args, allowArg)
+	appendErr("licenses", err)
+	a.Libs, err = expandArtifactPaths(lex, a.Libs, args, allowArg)
+	appendErr("libs", err)
+	a.Headers, err = expandArtifactPaths(lex, a.Headers, args, allowArg)
+	appendErr("headers", err)
+
+	if a.Systemd != nil {
+		a.Systemd.Units, err = expandArtifactPaths(lex, a.Systemd.Units, args, allowArg)
+		appendErr("systemd units", err)
+		a.Systemd.Dropins, err = expandArtifactPaths(lex, a.Systemd.Dropins, args, allowArg)
+		appendErr("systemd dropins", err)
+	}
+
+	return errors.Join(errs...)
+}
+
+// expandArtifactPaths performs build arg substitution on the keys of the
+// provided artifact map and returns a new map with the substituted keys.
+// An error is returned if two paths resolve to the same path after
+// substitution, as one of the artifacts would otherwise be silently dropped.
+func expandArtifactPaths[T any](lex *shell.Lex, artifacts map[string]T, args map[string]string, allowArg func(string) bool) (map[string]T, error) {
+	if len(artifacts) == 0 {
+		return artifacts, nil
+	}
+
+	var errs []error
+	updated := make(map[string]T, len(artifacts))
+	resolvedFrom := make(map[string]string, len(artifacts))
+
+	// Iterate in sorted order so errors are reported deterministically.
+	for _, p := range SortMapKeys(artifacts) {
+		expanded, err := expandArgs(lex, p, args, allowArg)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("path %q: %w", p, err))
+			expanded = p
+		}
+
+		if other, ok := resolvedFrom[expanded]; ok {
+			errs = append(errs, fmt.Errorf("paths %q and %q both resolve to %q", other, p, expanded))
+			continue
+		}
+
+		resolvedFrom[expanded] = p
+		updated[expanded] = artifacts[p]
+	}
+
+	return updated, errors.Join(errs...)
 }
