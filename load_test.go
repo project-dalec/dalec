@@ -706,6 +706,36 @@ sources:
 	})
 }
 
+func TestSpecSubstituteArgsPreservesLiteralOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "apostrophe", value: "what's new", want: "what's new"},
+		{name: "backslash", value: `C:\tmp\logs`, want: `C:\tmp\logs`},
+		{name: "trailing dollar", value: `\d+$`, want: `\d+$`},
+		{name: "standalone dollar", value: "what's $ 5", want: "what's $ 5"},
+		{name: "build argument", value: "${VERSION}", want: "1.2.3"},
+		{name: "escaped build argument", value: `\${VERSION}`, want: "${VERSION}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := Spec{
+				Args: map[string]string{"VERSION": "1.2.3"},
+				Tests: []*TestSpec{{
+					Name: "check output",
+					Steps: []TestStep{{
+						Command: "true",
+						Stdout:  CheckOutput{Equals: tc.value},
+					}},
+				}},
+			}
+			assert.NilError(t, spec.SubstituteArgs(nil))
+			assert.Equal(t, spec.Tests[0].Steps[0].Stdout.Equals, tc.want)
+		})
+	}
+}
+
 func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	spec := &Spec{}
 	assert.NilError(t, spec.SubstituteArgs(nil))
