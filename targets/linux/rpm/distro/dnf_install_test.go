@@ -128,3 +128,23 @@ if [ -n "${SSL_CERT_FILE:-}" ] || [ -n "${CURL_CA_BUNDLE:-}" ]; then exit 1; fi
 	out, err := cmd.CombinedOutput()
 	assert.NilError(t, err, string(out))
 }
+
+func TestDnfInstallFlagsDocs(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		includeDocs bool
+		want        string
+		notWant     string
+	}{
+		{name: "docs requested", includeDocs: true, want: "--setopt=tsflags=", notWant: "--setopt=tsflags=nodocs"},
+		{name: "docs excluded", includeDocs: false, want: "--setopt=tsflags=nodocs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dnfInstallFlags(&dnfInstallConfig{includeDocs: tc.includeDocs})
+			assert.Assert(t, strings.Contains(got, tc.want), got)
+			if tc.notWant != "" {
+				assert.Assert(t, !strings.Contains(got, tc.notWant), got)
+			}
+		})
+	}
+}
