@@ -111,12 +111,19 @@ func SourceOptFromUIClient(ctx context.Context, c gwclient.Client, dc *dockerui.
 			if ref == dockerui.DefaultLocalNameContext {
 				return dc.MainContext(ctx, opts...)
 			}
+			ctxPlatform := platform
+			for _, o := range opts {
+				if p, ok := o.(dalec.ContextPlatform); ok {
+					p := ocispecs.Platform(p)
+					ctxPlatform = &p
+				}
+			}
 			nc, err := dc.NamedContext(ref, dockerui.ContextOpt{
 				ResolveMode: dc.ImageResolveMode.String(),
 				AsyncLocalOpts: func() []llb.LocalOption {
 					return opts
 				},
-				Platform: platform,
+				Platform: ctxPlatform,
 			})
 			if err != nil {
 				return nil, err

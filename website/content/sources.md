@@ -324,6 +324,40 @@ Each entry in `cmd.steps` is a build step with these fields:
 
 `cmd` may also set `dir` (the working directory for the steps, default `/`) and `mounts` (mounts applied to every step).
 
+By default, the image is fetched for the platform being built for.
+You can use the `platform` field to fetch the image for a specific platform instead.
+It has the `architecture` (required), `os` and `variant` fields, which follow the OCI image platform.
+If `os` is not set, the operating system being built for is used.
+This is useful when the source needs to carry content for a platform other than
+the one being built for, or for multiple platforms at once, such as
+architecture-specific files included in a source package:
+
+```yaml
+sources:
+  libs-amd64:
+    path: /lib
+    image:
+      ref: docker.io/library/alpine:3.14
+      platform:
+        os: linux
+        architecture: amd64
+  libs-arm64:
+    path: /lib
+    image:
+      ref: docker.io/library/alpine:3.14
+      platform:
+        os: linux
+        architecture: arm64
+```
+
+The platform also applies to any commands run in the image, as well as to any
+sources mounted into those commands that do not set their own platform.
+Running commands in an image for a platform the builder cannot execute natively
+requires emulation to be set up for the builder, for example with QEMU.
+
+`platform` cannot be set for the image of a base image `rootfs`, as the base image
+always uses the platform being built for.
+
 You can use the docker image source to produce any kind of content for your build.
 
 Docker image sources are considered to be "directory" sources.

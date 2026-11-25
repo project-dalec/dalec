@@ -760,6 +760,13 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 			Checksum: "$CHECKSUM",
 		},
 	}
+	spec.Sources["image"] = Source{
+		Path: "/",
+		DockerImage: &SourceDockerImage{
+			Ref:      "example.com/foo/${BAR}:latest",
+			Platform: &SourceDockerImagePlatform{OS: "linux", Architecture: "$FOO", Variant: "v8"},
+		},
+	}
 
 	spec.Patches = map[string][]PatchSpec{
 		"src": {
@@ -866,6 +873,8 @@ func TestSpec_SubstituteBuildArgs(t *testing.T) {
 	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.URL, "https://example.com/foo/"+bar+".git"))
 	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Commit, foo))
 	assert.Check(t, cmp.Equal(spec.Sources["git"].Git.Checksum, checksum))
+	assert.Check(t, cmp.Equal(spec.Sources["image"].DockerImage.Ref, "example.com/foo/"+bar+":latest"))
+	assert.Check(t, cmp.DeepEqual(spec.Sources["image"].DockerImage.Platform, &SourceDockerImagePlatform{OS: "linux", Architecture: foo, Variant: "v8"}))
 	assert.Check(t, cmp.Equal(spec.Patches["src"][0].Path, foo))
 
 	// Base package config
@@ -1632,6 +1641,15 @@ func TestImage_validate(t *testing.T) {
 			Image: ImageConfig{
 				Bases: []BaseImage{
 					{Rootfs: Source{Context: &SourceContext{}}},
+				},
+			},
+		},
+		{
+			Name:      "image.bases set with an image source platform",
+			expectErr: "rootfs image source does not support setting a platform",
+			Image: ImageConfig{
+				Bases: []BaseImage{
+					{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "busybox:latest", Platform: &SourceDockerImagePlatform{Architecture: "arm64"}}}},
 				},
 			},
 		},
