@@ -1,0 +1,44 @@
+# syntax=ghcr.io/project-dalec/dalec/frontend:latest
+
+name: darwin-hello
+version: 1.0.0
+revision: "1"
+packager: Dalec Example
+vendor: Dalec Example
+license: MIT
+description: Cross-compiled Darwin executable
+website: https://github.com/project-dalec/dalec
+
+args:
+  TARGETARCH:
+
+sources:
+  main.go:
+    inline:
+      file:
+        contents: |
+          package main
+          import "fmt"
+          func main() { fmt.Println("Hello, Darwin!") }
+  LICENSE:
+    inline:
+      file:
+        contents: Example license
+
+dependencies:
+  build:
+    golang-go:
+
+build:
+  env:
+    CGO_ENABLED: "0"
+    GOARCH: ${TARGETARCH}
+  steps:
+    - command: go build -o hello main.go
+
+artifacts:
+  binaries:
+    hello:
+      permissions: 0o755
+  licenses:
+    LICENSE: {}

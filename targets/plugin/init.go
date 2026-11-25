@@ -6,6 +6,7 @@ import (
 	"github.com/project-dalec/dalec"
 	"github.com/project-dalec/dalec/frontend"
 	"github.com/project-dalec/dalec/targets"
+	"github.com/project-dalec/dalec/targets/darwin"
 	"github.com/project-dalec/dalec/targets/linux/deb/debian"
 	debdistro "github.com/project-dalec/dalec/targets/linux/deb/distro"
 	"github.com/project-dalec/dalec/targets/linux/deb/ubuntu"
@@ -46,6 +47,7 @@ func init() {
 	registerRoutes(flatcar.TargetKey, flatcar.DefaultConfig.Routes)
 
 	registerWindowsRoutes(windows.DefaultTargetKey)
+	registerRoutes(darwin.DefaultTargetKey, darwin.Routes)
 }
 
 func registerRoutes(name string, routes routeFunc) {
