@@ -17,12 +17,14 @@ rpm_root() {
 seed_packages() {
 	local dir rpm_file path
 
-	for dir in /tmp/rpms /tmp/rpms-base; do
+	local spec_dir=/tmp/rpms
+	[ ! -d /tmp/rpms-selected ] || spec_dir=/tmp/rpms-selected
+	for dir in "${spec_dir}" /tmp/rpms-base; do
 		[ -d "${dir}" ] || continue
 
 		# Package output is always grouped by architecture, matching the
 		# /RPMS/<arch>/*.rpm layout consumed by the installer.
-		for rpm_file in "${dir}"/*/*.rpm; do
+		for rpm_file in "${dir}"/*.rpm "${dir}"/*/*.rpm; do
 			[ -f "${rpm_file}" ] || continue
 			rpm -qp --qf '%{NAME}\n' "${rpm_file}"
 		done
