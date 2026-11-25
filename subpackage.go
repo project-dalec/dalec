@@ -151,6 +151,10 @@ func (s *SubPackage) processBuildArgs(lex *shell.Lex, args map[string]string, al
 		errs = append(errs, errors.Wrap(err, "dependencies"))
 	}
 
+	if err := s.Artifacts.processBuildArgs(lex, args, allowArg); err != nil {
+		errs = append(errs, errors.Wrap(err, "artifacts"))
+	}
+
 	for k, v := range s.Conflicts {
 		for i, ver := range v.Version {
 			updated, err := expandArgs(lex, ver, args, allowArg)
