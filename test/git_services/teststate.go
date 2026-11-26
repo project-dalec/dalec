@@ -138,6 +138,29 @@ func (ts *TestState) StartHTTPGitServer(ctx context.Context, gitHost llb.State) 
 	return ServerResult{IP: ready.IP, Port: ready.Port, ErrChan: proc.ErrChan()}
 }
 
+// StartCargoRegistryServer starts the authenticated sparse Cargo registry
+// fixture used by the Cargo integration tests. The certificate and key must be
+// present in rootfs at certPath and keyPath respectively.
+func (ts *TestState) StartCargoRegistryServer(ctx context.Context, rootfs llb.State, certPath, keyPath, authorization string) ServerResult {
+	t := ts.T
+
+	cont := ts.newContainer(ctx, rootfs)
+	proc := ts.runContainerWithEventsDirect(ctx, cont, []string{
+		ts.Attr.HTTPServerPath,
+		"cargo-serve",
+		certPath,
+		keyPath,
+		"0",
+		authorization,
+	})
+
+	t.Log("waiting for Cargo registry server to come online")
+	ready := ts.waitForReady(ctx, proc, waitOnlineTimeout)
+	t.Logf("Cargo registry server is online at %s:%d", ready.IP, ready.Port)
+
+	return ServerResult{IP: ready.IP, Port: ready.Port, ErrChan: proc.ErrChan()}
+}
+
 // `buildHTTPGitServer` builds the Git HTTP server helper program.
 func (ts *TestState) buildHTTPGitServer(ctx context.Context) llb.State {
 	goModCache := llb.AddMount("/go/pkg/mod", llb.Scratch(), llb.AsPersistentCacheDir("/go/pkg/mod", llb.CacheMountShared))

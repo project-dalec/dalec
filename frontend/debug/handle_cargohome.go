@@ -10,7 +10,7 @@ import (
 	"github.com/project-dalec/dalec/frontend"
 )
 
-const keyCargohomeWorker = "context:cargohome-worker"
+const keyCargohomeWorker = "cargohome-worker"
 
 // Cargohome outputs all the Cargo dependencies for the spec
 func Cargohome(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
@@ -34,6 +34,7 @@ func Cargohome(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 			worker = llb.Image("rust:latest", llb.WithMetaResolver(client), pg).
 				Run(llb.Shlex("cargo --version"), pg).Root()
 		}
+		worker = worker.With(frontend.AddedHosts(client))
 
 		st := depsOrScratch(spec.CargohomeDeps(sOpt, worker, dalec.Platform(platform), pg))
 

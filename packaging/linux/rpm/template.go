@@ -618,13 +618,16 @@ func (w *specWrapper) PrepareSources() (fmt.Stringer, error) {
 	return b, nil
 }
 
-func writeStep(b *strings.Builder, step dalec.BuildStep) {
+func writeStep(b *strings.Builder, step dalec.BuildStep, cargoOffline ...bool) {
 	envKeys := dalec.SortMapKeys(step.Env)
 	// Wrap commands in a subshell so any environment variables that are set
 	// will be available to every command in the BuildStep
 	fmt.Fprintln(b, "(") // begin subshell
 	for _, k := range envKeys {
 		fmt.Fprintf(b, "export %s=\"%s\"\n", k, step.Env[k])
+	}
+	if len(cargoOffline) > 0 && cargoOffline[0] {
+		fmt.Fprintln(b, "export CARGO_NET_OFFLINE=true")
 	}
 	fmt.Fprintf(b, "%s", step.Command)
 	fmt.Fprintln(b, ")") // end subshell

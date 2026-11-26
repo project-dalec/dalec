@@ -1,13 +1,26 @@
 package test
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"io"
 	"io/fs"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -977,6 +990,380 @@ fn main() {
 }
 `
 )
+
+const (
+	cargoAuthRegistryHost   = "cargo-registry.test"
+	cargoAuthRegistryName   = "test-feed"
+	cargoAuthRegistryToken  = "Bearer cargo-test-token"
+	cargoAuthSecretID       = "dalec-cargo-token"
+	cargoRegistryCertPath   = "/etc/cargo-test/registry.crt"
+	cargoRegistryKeyPath    = "/etc/cargo-test/registry.key"
+	cargoRegistryCAPath     = "/etc/cargo-test/registry-ca.crt"
+	cargoRegistryConfigPath = "/work/.cargo/config.toml"
+)
+
+func startCargoRegistryFixture(ctx context.Context, t *testing.T, gwc gwclient.Client) (gitservices.ServerResult, []byte) {
+	t.Helper()
+
+	certPEM, keyPEM := cargoRegistryCertificate(t, cargoAuthRegistryHost)
+	attr := &gitservices.Attributes{HTTPServerPath: "/usr/local/bin/git_http_server"}
+	testState := gitservices.NewTestState(t, gwc, attr)
+	registryRoot := llb.Image("alpine:latest", llb.WithMetaResolver(gwc)).
+		File(llb.Mkdir(filepath.Dir(cargoRegistryCertPath), 0o755, llb.WithParents(true))).
+		File(llb.Mkfile(cargoRegistryCertPath, 0o600, certPEM)).
+		File(llb.Mkfile(cargoRegistryKeyPath, 0o600, keyPEM))
+	registry := testState.StartCargoRegistryServer(ctx, registryRoot, cargoRegistryCertPath, cargoRegistryKeyPath, cargoAuthRegistryToken)
+
+	return registry, certPEM
+}
+
+func cargoRegistryURL(registry gitservices.ServerResult) string {
+	return fmt.Sprintf("sparse+https://%s:%d/index", cargoAuthRegistryHost, registry.Port)
+}
+
+func withCargoRegistryCA(worker llb.State, certPEM []byte) llb.State {
+	return worker.
+		File(llb.Mkdir(filepath.Dir(cargoRegistryCAPath), 0o755, llb.WithParents(true))).
+		File(llb.Mkfile(cargoRegistryCAPath, 0o644, certPEM)).
+		File(llb.Mkdir(filepath.Dir(cargoRegistryConfigPath), 0o755, llb.WithParents(true))).
+		File(llb.Mkfile(cargoRegistryConfigPath, 0o644, []byte("[http]\ncainfo = \""+cargoRegistryCAPath+"\"\n"))).
+		Run(dalec.ShArgs(`for bundle in /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem /etc/ssl/cert.pem /etc/pki/tls/certs/ca-bundle.crt /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem; do
+	if [ -f "$bundle" ]; then cat "`+cargoRegistryCAPath+`" >> "$bundle"; fi
+done`)).Root().
+		AddEnv("CARGO_HTTP_CAINFO", cargoRegistryCAPath)
+}
+
+func TestSourceWithAuthenticatedCargohomeAndOfflineBuild(t *testing.T) {
+	t.Parallel()
+	ctx := startTestSpan(baseCtx, t)
+
+	var cargoHome llb.State
+
+	// The first solve exercises the DALEC frontend and the authenticated Cargo
+	// fetch. The registry fixture rejects every request without the exact token.
+	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+		registry, certPEM := startCargoRegistryFixture(ctx, t, gwc)
+
+		worker := withCargoRegistryCA(
+			llb.Image("rust:latest", llb.WithMetaResolver(gwc)).
+				File(llb.Symlink("/usr/local/cargo/bin/cargo", "/usr/bin/cargo")).
+				File(llb.Symlink("/usr/local/cargo/bin/rustc", "/usr/bin/rustc")).
+				File(llb.Symlink("/usr/local/rustup", "/root/.rustup")),
+			certPEM,
+		)
+		registryURL := cargoRegistryURL(registry)
+		spec := authenticatedCargoSpec()
+		res := solveT(ctx, t, gwc, newSolveRequest(
+			withBuildTarget("debug/cargohome"),
+			withSpec(ctx, t, spec),
+			withBuildArg(dalec.BuildArgDalecCargoRegistry, registryURL),
+			withBuildArg(dalec.BuildArgDalecCargoRegistryName, cargoAuthRegistryName),
+			withBuildContext(ctx, t, "cargohome-worker", worker),
+			withExtraHost(cargoAuthRegistryHost, registry.IP),
+			withIgnoreCache(),
+		))
+
+		assertReferenceDoesNotContain(ctx, t, res, cargoAuthRegistryToken)
+		cargoHome = resultToState(t, res)
+	}, testenv.WithSecrets(cargoAuthSecretID, cargoAuthRegistryToken))
+
+	// The second solve has no secret session and no network entitlement. It can
+	// succeed only if the first solve exported a usable, token-free Cargo home.
+	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+		source := authenticatedCargoSource()
+		worker := llb.Image("rust:latest", llb.WithMetaResolver(gwc)).
+			AddEnv("CARGO_HOME", "/cargo/registry").
+			AddEnv("CARGO_NET_OFFLINE", "true").
+			Run(
+				dalec.ShArgs("cd /work/src && cargo build --offline && test -f target/debug/libcargo_auth_test.rlib"),
+				llb.AddMount("/cargo/registry", cargoHome),
+				llb.AddMount("/work/src", source),
+				llb.Network(llb.NetModeNone),
+			).Root()
+
+		def, err := worker.Marshal(ctx)
+		assert.NilError(t, err)
+		_, err = gwc.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB(), Evaluate: true})
+		assert.NilError(t, err)
+	})
+}
+
+func authenticatedCargoSpec() *dalec.Spec {
+	return &dalec.Spec{
+		Sources: map[string]dalec.Source{
+			"src": {
+				Generate: []*dalec.SourceGenerator{{Cargohome: &dalec.GeneratorCargohome{}}},
+				Inline: &dalec.SourceInline{Dir: &dalec.SourceInlineDir{Files: map[string]*dalec.SourceInlineFile{
+					"Cargo.toml": {Contents: `[package]
+name = "cargo-auth-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dalec-auth-fixture = "0.1.0"
+
+[lib]
+path = "main.rs"
+`},
+					"main.rs": {Contents: `pub fn marker() -> &'static str {
+    dalec_auth_fixture::marker()
+}
+`},
+				}}},
+			},
+		},
+	}
+}
+
+func authenticatedCargoSource() llb.State {
+	return llb.Scratch().
+		File(llb.Mkdir("/src", 0o755, llb.WithParents(true))).
+		File(llb.Mkfile("/Cargo.toml", 0o644, []byte(`[package]
+name = "cargo-auth-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dalec-auth-fixture = "0.1.0"
+
+[lib]
+path = "main.rs"
+`))).
+		File(llb.Mkfile("/main.rs", 0o644, []byte(`pub fn marker() -> &'static str {
+    dalec_auth_fixture::marker()
+}
+`)))
+}
+
+func cargoRegistryCertificate(t *testing.T, hostname string) ([]byte, []byte) {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	assert.NilError(t, err)
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: hostname},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:              []string{hostname},
+	}
+	template.KeyUsage |= x509.KeyUsageCertSign
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, public, private)
+	assert.NilError(t, err)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(private)
+	assert.NilError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+}
+
+func assertReferenceDoesNotContain(ctx context.Context, t *testing.T, res *gwclient.Result, forbidden string) {
+	t.Helper()
+	ref, err := res.SingleRef()
+	assert.NilError(t, err)
+
+	var walk func(string)
+	walk = func(dir string) {
+		entries, err := ref.ReadDir(ctx, gwclient.ReadDirRequest{Path: dir})
+		assert.NilError(t, err)
+		for _, entry := range entries {
+			entryPath := filepath.Join(dir, entry.Path)
+			if fs.FileMode(entry.Mode).IsDir() {
+				walk(entryPath)
+				continue
+			}
+			contents, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: entryPath})
+			assert.NilError(t, err)
+			if err := scanForForbiddenContent(entryPath, contents, []byte(forbidden)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	walk("")
+}
+
+const maxArchiveScanDepth = 32
+
+func scanForForbiddenContent(path string, contents, forbidden []byte) error {
+	return scanForForbiddenContentAtDepth(path, contents, forbidden, 0)
+}
+
+func scanForForbiddenContentAtDepth(path string, contents, forbidden []byte, depth int) error {
+	if bytes.Contains(contents, forbidden) {
+		return fmt.Errorf("exported output contains the registry token in %q", path)
+	}
+	if depth >= maxArchiveScanDepth {
+		return nil
+	}
+
+	switch {
+	case bytes.HasPrefix(contents, []byte("!<arch>\n")):
+		return scanArArchive(path, contents, forbidden, depth+1)
+	case bytes.HasPrefix(contents, []byte{0x1f, 0x8b}):
+		return scanGzipArchive(path, contents, forbidden, depth+1)
+	case bytes.HasPrefix(contents, []byte("PK\x03\x04")),
+		bytes.HasPrefix(contents, []byte("PK\x05\x06")),
+		bytes.HasPrefix(contents, []byte("PK\x07\x08")):
+		return scanZipArchive(path, contents, forbidden, depth+1)
+	case strings.HasSuffix(strings.ToLower(path), ".tar"):
+		return scanTarArchive(path, contents, forbidden, depth+1)
+	default:
+		return nil
+	}
+}
+
+func scanGzipArchive(path string, contents, forbidden []byte, depth int) error {
+	reader, err := gzip.NewReader(bytes.NewReader(contents))
+	if err != nil {
+		return fmt.Errorf("read gzip archive %q: %w", path, err)
+	}
+	decompressed, err := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if err != nil {
+		return fmt.Errorf("read gzip archive %q: %w", path, err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close gzip archive %q: %w", path, closeErr)
+	}
+
+	archivePath := path + "!/gzip"
+	if tarData(decompressed) {
+		return scanTarArchive(archivePath, decompressed, forbidden, depth)
+	}
+	return scanForForbiddenContentAtDepth(archivePath, decompressed, forbidden, depth)
+}
+
+func scanTarArchive(path string, contents, forbidden []byte, depth int) error {
+	reader := tar.NewReader(bytes.NewReader(contents))
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read tar archive %q: %w", path, err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		fileContents, err := io.ReadAll(reader)
+		if err != nil {
+			return fmt.Errorf("read %q from tar archive %q: %w", header.Name, path, err)
+		}
+		if err := scanForForbiddenContentAtDepth(path+"!/"+header.Name, fileContents, forbidden, depth); err != nil {
+			return err
+		}
+	}
+}
+
+func scanZipArchive(path string, contents, forbidden []byte, depth int) error {
+	archive, err := zip.NewReader(bytes.NewReader(contents), int64(len(contents)))
+	if err != nil {
+		return fmt.Errorf("read zip archive %q: %w", path, err)
+	}
+	for _, file := range archive.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		reader, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("open %q from zip archive %q: %w", file.Name, path, err)
+		}
+		fileContents, readErr := io.ReadAll(reader)
+		closeErr := reader.Close()
+		if readErr != nil {
+			return fmt.Errorf("read %q from zip archive %q: %w", file.Name, path, readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close %q from zip archive %q: %w", file.Name, path, closeErr)
+		}
+		if err := scanForForbiddenContentAtDepth(path+"!/"+file.Name, fileContents, forbidden, depth); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scanArArchive(path string, contents, forbidden []byte, depth int) error {
+	const arHeaderSize = 60
+
+	for offset := len("!<arch>\n"); offset < len(contents); {
+		if len(contents)-offset < arHeaderSize {
+			return fmt.Errorf("read ar archive %q: truncated entry header", path)
+		}
+		header := contents[offset : offset+arHeaderSize]
+		if string(header[58:60]) != "`\n" {
+			return fmt.Errorf("read ar archive %q: invalid entry header", path)
+		}
+		size, err := strconv.ParseInt(strings.TrimSpace(string(header[48:58])), 10, 64)
+		if err != nil || size < 0 || size > int64(len(contents)-offset-arHeaderSize) {
+			return fmt.Errorf("read ar archive %q: invalid entry size", path)
+		}
+
+		name := strings.TrimSpace(string(header[:16]))
+		start := offset + arHeaderSize
+		end := start + int(size)
+		if err := scanForForbiddenContentAtDepth(path+"!/"+name, contents[start:end], forbidden, depth); err != nil {
+			return err
+		}
+
+		offset = end
+		if offset%2 != 0 {
+			offset++
+		}
+	}
+	return nil
+}
+
+func tarData(contents []byte) bool {
+	_, err := tar.NewReader(bytes.NewReader(contents)).Next()
+	return err == nil || err == io.EOF
+}
+
+func TestScanForForbiddenContentInNestedCargoArchive(t *testing.T) {
+	t.Parallel()
+
+	const token = "Bearer cargo-test-token"
+	cargoHome := tarGzipFixture(t, map[string][]byte{
+		"credentials.toml": []byte("[registry]\ntoken = \"" + token + "\"\n"),
+	})
+	sourceArchive := tarGzipFixture(t, map[string][]byte{
+		"xxxdalecCargoHomeInternal.tar.gz": cargoHome,
+	})
+	if bytes.Contains(sourceArchive, []byte(token)) {
+		t.Fatal("compressed fixture unexpectedly contains the token in the outer bytes")
+	}
+
+	err := scanForForbiddenContent("package.orig.tar.gz", sourceArchive, []byte(token))
+	if err == nil || !strings.Contains(err.Error(), "credentials.toml") {
+		t.Fatalf("expected nested Cargo credentials to be detected, got %v", err)
+	}
+}
+
+func tarGzipFixture(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+
+	var output bytes.Buffer
+	gzipWriter := gzip.NewWriter(&output)
+	tarWriter := tar.NewWriter(gzipWriter)
+	for name, contents := range files {
+		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(contents))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tarWriter.Write(contents); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
+}
 
 func TestSourceWithCargohome(t *testing.T) {
 	t.Parallel()

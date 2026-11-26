@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/project-dalec/dalec"
 	"gotest.tools/v3/assert"
 )
@@ -75,6 +76,74 @@ func TestGenerateInvocationScript(t *testing.T) {
 		assert.Assert(t, strings.Contains(script, "cp -r 'bin/util.exe' '"+outputDir+"/2/foo-util.exe'"))
 		assert.Assert(t, strings.Contains(script, buildScriptName))
 	})
+}
+
+func TestCreateBuildScriptSetsCargoOfflineMode(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Sources: map[string]dalec.Source{
+			"src": {Generate: []*dalec.SourceGenerator{{Cargohome: &dalec.GeneratorCargohome{}}}},
+		},
+		Build: dalec.ArtifactBuild{Steps: dalec.BuildStepList{{Command: "cargo build"}}},
+	}
+
+	st := createBuildScript(spec)
+	def, err := st.Marshal(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &pb.Op{}
+	if err := op.Unmarshal(def.Def[0]); err != nil {
+		t.Fatal(err)
+	}
+	fileOp := op.GetFile()
+	var scriptData []byte
+	if fileOp != nil && len(fileOp.Actions) > 0 {
+		if mkfile := fileOp.Actions[0].GetMkfile(); mkfile != nil {
+			scriptData = mkfile.Data
+		}
+	}
+	if !strings.Contains(string(scriptData), "CARGO_NET_OFFLINE") {
+		t.Fatal("expected Cargo offline mode in the generated build script")
+	}
+}
+
+func TestCreateBuildScriptReassertsCargoOfflineAfterStepEnv(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Sources: map[string]dalec.Source{
+			"src": {Generate: []*dalec.SourceGenerator{{Cargohome: &dalec.GeneratorCargohome{}}}},
+		},
+		Build: dalec.ArtifactBuild{Steps: dalec.BuildStepList{{
+			Env:     map[string]string{"CARGO_NET_OFFLINE": "false"},
+			Command: "test \"$CARGO_NET_OFFLINE\" = true && cargo build",
+		}}},
+	}
+
+	st := createBuildScript(spec)
+	def, err := st.Marshal(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &pb.Op{}
+	if err := op.Unmarshal(def.Def[0]); err != nil {
+		t.Fatal(err)
+	}
+	fileOp := op.GetFile()
+	var script string
+	if fileOp != nil && len(fileOp.Actions) > 0 {
+		if mkfile := fileOp.Actions[0].GetMkfile(); mkfile != nil {
+			script = string(mkfile.Data)
+		}
+	}
+	stepEnv := strings.Index(script, "export CARGO_NET_OFFLINE=\"false\"")
+	offline := strings.Index(script[stepEnv:], "export CARGO_NET_OFFLINE=true")
+	command := strings.Index(script, "test \"$CARGO_NET_OFFLINE\" = true && cargo build")
+	if stepEnv < 0 || offline < 0 || command < 0 || stepEnv >= command || stepEnv+offline >= command {
+		t.Fatalf("step command does not reassert Cargo offline mode after its environment:\n%s", script)
+	}
 }
 
 func TestGenerateInvocationScriptPermissions(t *testing.T) {

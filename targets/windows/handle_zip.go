@@ -343,6 +343,7 @@ func createBuildScript(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
 
 	if spec.HasCargohomes() {
 		fmt.Fprintln(buf, "export CARGO_HOME=\"$(pwd)/"+cargohomeName+"\"")
+		fmt.Fprintln(buf, "export CARGO_NET_OFFLINE=true")
 	}
 
 	if spec.HasPips() {
@@ -369,7 +370,11 @@ func createBuildScript(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
 		fmt.Fprintln(buf, "(")
 
 		for k, v := range dalec.SortedMapIter(step.Env) {
-			fmt.Fprintf(buf, "export %s=\"%s\"", k, v)
+			fmt.Fprintf(buf, "export %s=\"%s\"\n", k, v)
+		}
+
+		if spec.HasCargohomes() {
+			fmt.Fprintln(buf, "export CARGO_NET_OFFLINE=true")
 		}
 
 		fmt.Fprintln(buf, step.Command)

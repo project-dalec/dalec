@@ -25,6 +25,7 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, sOpt dale
 	opts = append(opts, dalec.ProgressGroup("Build deb package"))
 
 	worker := d.Worker(sOpt, dalec.Platform(sOpt.TargetPlatform), dalec.WithConstraints(opts...))
+	worker = worker.With(frontend.AddedHosts(client))
 
 	versionID := d.VersionID
 	if versionID == "" {
@@ -201,6 +202,7 @@ func (cfg *Config) HandleSourcePkg(ctx context.Context, client gwclient.Client) 
 		pc := dalec.Platform(platform)
 
 		worker := cfg.Worker(sOpt, pg, pc, frontend.IgnoreCache(client, cfg.ImageRef, cfg.ContextRef))
+		worker = worker.With(frontend.AddedHosts(client))
 
 		versionID, err := deb.ReadDistroVersionID(ctx, client, worker)
 		if err != nil {

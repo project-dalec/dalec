@@ -2,9 +2,7 @@ package debug
 
 import (
 	"context"
-	"net"
 	"runtime"
-	"strings"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -37,7 +35,7 @@ func Gomods(ctx context.Context, client gwclient.Client) (*gwclient.Result, erro
 			worker = llb.Image("alpine:latest", llb.Platform(ocispecs.Platform{Architecture: runtime.GOARCH, OS: "linux"}), llb.WithMetaResolver(client), pg).
 				Run(llb.Shlex("apk add --no-cache go git ca-certificates patch openssh"), pg).Root()
 		}
-		worker = worker.With(addedHosts(client))
+		worker = worker.With(frontend.AddedHosts(client))
 
 		st := depsOrScratch(spec.GomodDeps(sOpt, worker, dalec.Platform(platform), pg))
 
@@ -59,20 +57,4 @@ func Gomods(ctx context.Context, client gwclient.Client) (*gwclient.Result, erro
 		}
 		return ref, &dalec.DockerImageSpec{}, nil
 	})
-}
-
-func addedHosts(client gwclient.Client) llb.StateOption {
-	return func(s llb.State) llb.State {
-		ret := s
-		bopts := client.BuildOpts().Opts
-		if v, ok := bopts["add-hosts"]; ok {
-			pairs := strings.Split(v, ",")
-			for _, pair := range pairs {
-				key, val, _ := strings.Cut(pair, "=")
-				ret = ret.AddExtraHost(key, net.ParseIP(val))
-			}
-		}
-
-		return ret
-	}
 }
