@@ -43,10 +43,16 @@ args:
   TARGETARCH:
   TARGETPLATFORM:
   TARGETVARIANT:
+  BUILDOS:
+  BUILDARCH:
+  BUILDPLATFORM:
+  BUILDVARIANT:
   DALEC_TARGET:
 ```
 
 These arguments are set based on the default docker platform for the machine, *unless* the platform is overridden explicitly in the docker build with `--platform`. For example, upon invoking `docker build` on a Linux amd64 machine, we would have `TARGETOS=linux`, `TARGETARCH=amd64`, `TARGETPLATFORM=linux/amd64`.
+
+The `BUILD*` arguments are the platform of the machine running the build, and `--platform` does not change them. For example, `docker build --platform linux/amd64` on a Linux arm64 machine gives `BUILDARCH=arm64` and `TARGETARCH=amd64`. See [cross-compiling in a build source](sources.md#cross-compiling-in-a-build-source) for an example.
 
 `DALEC_TARGET` is set to the target name, such as `azlinux3` or `windowscross`.
 

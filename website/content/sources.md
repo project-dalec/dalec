@@ -374,6 +374,43 @@ Build args can be specified as well as `args` which is a map of key value pairs.
 
 Build sources are considered to be "directory" sources.
 
+#### Cross-compiling in a build source
+
+When the target platform differs from the platform of the build machine, the [build steps](spec.md#build-section) run under emulation, which is slow for compilers.
+A build source can do the compiling instead.
+Dalec builds the Dockerfile for the target platform, so the [platform build args](https://docs.docker.com/reference/dockerfile/#automatic-platform-args-in-the-global-scope) are set in it.
+A stage that starts with `FROM --platform=$BUILDPLATFORM` runs natively and can cross-compile for `TARGETOS` and `TARGETARCH`:
+
+```dockerfile
+# build.Dockerfile, in the build context next to the Go code
+FROM --platform=$BUILDPLATFORM golang:1.27 AS build
+ARG TARGETOS TARGETARCH
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/hello .
+
+FROM scratch
+COPY --from=build /out/ /out/
+```
+
+```yaml
+sources:
+  bin:
+    path: /out
+    build:
+      dockerfile_path: build.Dockerfile
+      source:
+        context: {}
+
+artifacts:
+  binaries:
+    bin/hello: {}
+```
+
+With this spec, `docker build --platform linux/arm64` on an amd64 machine compiles `hello` for arm64 without emulation.
+The spec's build steps still run on the target platform, so keep them light.
+This works for toolchains that can cross-compile on their own, such as Go with `CGO_ENABLED=0`.
+
 ## Generators
 
 Generators are used to generate a source from another source.
