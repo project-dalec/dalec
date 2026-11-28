@@ -346,31 +346,44 @@ Dalec generates this file for the rules it needs to inject to make the build beh
 
 Some of the rules followed by dpkg-buildpackage, most in fact, are implicit and not actually in `debian/rules`
 explicitly.
-You can override some of these rules from within the build, though not all.
 See the [debian rules file docs](https://www.debian.org/doc/manuals/maint-guide/dreq.en.html#rules)
 for details on these rules and how to override them.
+
+To add your own rules, add a source named `dh_overrides.mk` to the spec.
+Dalec includes it at the end of the generated `debian/rules`, so its rules apply to the whole build, including the
+steps that run before your build steps.
+The source must be a file, such as an inline file or an HTTP source.
+Only Debian-based targets use it.
 
 Example override from a dalec spec:
 
 ```yaml
-build:
-  steps:
-    - command: |
-        # If the debian directory doesn't exist, then there is nothing to do
-        [ -d debian ] || exit 0
-
-        # Add a makefile rule to override how dpkg-shlibdeps is executed
-        echo "override_dh_shlibdeps:" >> debian/rules
-        # Ignore errors from dh_shlibdeps
-        echo "	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info" >> debian/rules
+sources:
+  dh_overrides.mk:
+    inline:
+      file:
+        contents: |
+          # Ignore errors from dh_shlibdeps
+          override_dh_shlibdeps:
+          	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
 ```
+
+As in any makefile, the commands of a rule must be indented with a tab, not spaces.
 
 Dalec uses debhelper compatibility level 12, so besides `override_dh_<command>` targets you can also add
 `execute_before_dh_<command>` and `execute_after_dh_<command>` hook targets, which run extra commands before or
 after a debhelper command instead of replacing it.
 
-Note that at the point your build steps are run some of the rules have already been applied.
+A rule in `dh_overrides.mk` replaces a rule with the same name that Dalec generates, and make prints a warning
+when this happens.
+Dalec relies on some of its rules, such as `override_dh_auto_build`, which runs the build steps, so replacing
+them breaks the build.
+Overriding some other rules, such as `dh_install`, will also interfere with dalec functionality.
 This is considered a "break glass" way to work around issues when building on Debian-based distributions.
-Overriding some rules, such as `dh_install`, will also interfere with dalec functionality.
+
+Appending rules to `debian/rules` from a build step is not a reliable alternative.
+debhelper reads the rules when it starts, so such rules never apply to the steps before your build steps.
+Newer dpkg versions, such as the one in Debian 13, run the whole build in a single debhelper invocation and
+ignore them completely.
 
 In the future dalec may stop using dpkg-buildpackage and these rules would not be applicable anymore.

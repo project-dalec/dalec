@@ -22,6 +22,11 @@ var (
 	rulesTmpl = template.Must(template.New("rules").Parse(string(rulesTmplContent)))
 )
 
+// dhOverridesName is the name of the spec source that, when present, is
+// included into the generated debian/rules so that a spec can add or replace
+// debhelper targets.
+const dhOverridesName = "dh_overrides.mk"
+
 func Rules(spec *dalec.Spec, in llb.State, dir, target string, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	buf := bytes.NewBuffer(nil)
 
@@ -249,4 +254,27 @@ func (w *rulesWrapper) OverrideAutoRequires() fmt.Stringer {
 	buf.WriteString("\n")
 
 	return buf
+}
+
+// IncludeOverrides includes the spec's dh_overrides.mk source, if it has one.
+// It is included after everything Dalec generates, so the targets it defines
+// take precedence over Dalec's own.
+func (w *rulesWrapper) IncludeOverrides() (fmt.Stringer, error) {
+	buf := &strings.Builder{}
+
+	src, ok := w.Spec.Sources[dhOverridesName]
+	if !ok {
+		return buf, nil
+	}
+
+	if src.IsDir() {
+		return nil, fmt.Errorf("source %q must be a file, not a directory", dhOverridesName)
+	}
+
+	// The sources are not available when debian/rules runs while building the
+	// source package, so only include the file if it exists.
+	// "-include" alone is not enough: make would try to create the missing
+	// file with the "%" target, which runs dh with the file name as the sequence name.
+	buf.WriteString("include $(wildcard " + dhOverridesName + ")\n")
+	return buf, nil
 }

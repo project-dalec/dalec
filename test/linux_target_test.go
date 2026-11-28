@@ -4074,6 +4074,14 @@ func Value() string {
 		testDisableAutoRequire(ctx, t, testConfig.Target)
 	})
 
+	if strings.HasSuffix(testConfig.Target.Package, "deb") {
+		t.Run("debian rules overrides", func(t *testing.T) {
+			t.Parallel()
+			ctx := startTestSpan(baseCtx, t)
+			testDebianRulesOverrides(ctx, t, testConfig.Target)
+		})
+	}
+
 	t.Run("artifact capabilities", func(t *testing.T) {
 		t.Parallel()
 		ctx := startTestSpan(baseCtx, t)
@@ -6234,6 +6242,38 @@ int main() {
 		spec := newSpec()
 		spec.Artifacts.DisableAutoRequires = true
 		check(ctx, t, spec)
+	})
+}
+
+// testDebianRulesOverrides checks that the targets in a dh_overrides.mk source
+// are part of debian/rules from the start of the build, including the steps
+// that run before the build steps.
+func testDebianRulesOverrides(ctx context.Context, t *testing.T, cfg targetConfig) {
+	spec := newSimpleSpec()
+	spec.Sources["dh_overrides.mk"] = dalec.Source{
+		Inline: &dalec.SourceInline{
+			File: &dalec.SourceInlineFile{
+				Contents: "execute_before_dh_auto_build:\n\tprintf 'hello from dh_overrides.mk' > from-overrides\n",
+			},
+		},
+	}
+	spec.Build.Steps = []dalec.BuildStep{
+		{Command: "cp from-overrides greeting"},
+	}
+	spec.Artifacts.Binaries = map[string]dalec.ArtifactConfig{
+		"greeting": {},
+	}
+	spec.Tests = []*dalec.TestSpec{
+		{
+			Name: "Check that the dh_overrides.mk hook ran before the build steps",
+			Files: map[string]dalec.FileCheckOutput{
+				"/usr/bin/greeting": {CheckOutput: dalec.CheckOutput{Equals: "hello from dh_overrides.mk"}},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		solveT(ctx, t, client, newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package)))
 	})
 }
 
