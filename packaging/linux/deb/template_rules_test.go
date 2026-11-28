@@ -1,6 +1,7 @@
 package deb
 
 import (
+	"io"
 	"maps"
 	"reflect"
 	"strings"
@@ -361,6 +362,87 @@ func TestRules_OverrideAutoRequires(t *testing.T) {
 	t.Run("disable_auto_requires disables dh_shlibdeps", func(t *testing.T) {
 		w := newRulesWrapper(dalec.Artifacts{DisableAutoRequires: true})
 		assert.Equal(t, w.OverrideAutoRequires().String(), "override_dh_shlibdeps:\n")
+	})
+}
+
+func TestRules_IncludeOverrides(t *testing.T) {
+	newWrapper := func(sources map[string]dalec.Source) *rulesWrapper {
+		return &rulesWrapper{Spec: &dalec.Spec{Sources: sources}}
+	}
+
+	t.Run("no overrides source emits nothing", func(t *testing.T) {
+		w := newWrapper(map[string]dalec.Source{
+			"src": {Inline: &dalec.SourceInline{Dir: &dalec.SourceInlineDir{}}},
+		})
+		out, err := w.IncludeOverrides()
+		assert.NilError(t, err)
+		assert.Equal(t, out.String(), "")
+	})
+
+	t.Run("inline file source is included", func(t *testing.T) {
+		w := newWrapper(map[string]dalec.Source{
+			"dh_overrides.mk": {Inline: &dalec.SourceInline{File: &dalec.SourceInlineFile{Contents: "override_dh_dwz:\n"}}},
+		})
+		out, err := w.IncludeOverrides()
+		assert.NilError(t, err)
+		assert.Equal(t, out.String(), "include $(wildcard dh_overrides.mk)\n")
+	})
+
+	t.Run("http source is included", func(t *testing.T) {
+		w := newWrapper(map[string]dalec.Source{
+			"dh_overrides.mk": {HTTP: &dalec.SourceHTTP{URL: "https://example.com/dh_overrides.mk"}},
+		})
+		out, err := w.IncludeOverrides()
+		assert.NilError(t, err)
+		assert.Equal(t, out.String(), "include $(wildcard dh_overrides.mk)\n")
+	})
+
+	t.Run("directory source is rejected", func(t *testing.T) {
+		w := newWrapper(map[string]dalec.Source{
+			"dh_overrides.mk": {Context: &dalec.SourceContext{}},
+		})
+		_, err := w.IncludeOverrides()
+		assert.ErrorContains(t, err, `source "dh_overrides.mk" must be a file`)
+	})
+}
+
+func TestWriteRules_IncludeOverrides(t *testing.T) {
+	t.Run("overrides are included after the generated targets", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"dh_overrides.mk": {Inline: &dalec.SourceInline{File: &dalec.SourceInlineFile{Contents: "override_dh_dwz:\n"}}},
+			},
+			Artifacts: dalec.Artifacts{DisableStrip: true, DisableAutoRequires: true},
+		}
+
+		buf := &strings.Builder{}
+		assert.NilError(t, WriteRules(spec, buf, ""))
+		rules := buf.String()
+
+		include := strings.Index(rules, "include $(wildcard dh_overrides.mk)\n")
+		assert.Assert(t, include >= 0, rules)
+		for _, target := range []string{"override_dh_auto_build:", "override_dh_dwz:", "override_dh_strip:", "override_dh_shlibdeps:"} {
+			idx := strings.Index(rules, target)
+			assert.Assert(t, idx >= 0, "missing %s in rules:\n%s", target, rules)
+			assert.Assert(t, idx < include, "%s must come before the include:\n%s", target, rules)
+		}
+		assert.Assert(t, include < strings.Index(rules, "%:"), rules)
+	})
+
+	t.Run("specs without overrides do not include anything", func(t *testing.T) {
+		buf := &strings.Builder{}
+		assert.NilError(t, WriteRules(&dalec.Spec{}, buf, ""))
+		assert.Assert(t, !strings.Contains(buf.String(), dhOverridesName), buf.String())
+	})
+
+	t.Run("directory source is an error", func(t *testing.T) {
+		spec := &dalec.Spec{
+			Sources: map[string]dalec.Source{
+				"dh_overrides.mk": {Inline: &dalec.SourceInline{Dir: &dalec.SourceInlineDir{}}},
+			},
+		}
+		err := WriteRules(spec, io.Discard, "")
+		assert.ErrorContains(t, err, `source "dh_overrides.mk" must be a file`)
 	})
 }
 
