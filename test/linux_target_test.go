@@ -6253,7 +6253,7 @@ func testDebianRulesOverrides(ctx context.Context, t *testing.T, cfg targetConfi
 	spec.Sources["dh_overrides.mk"] = dalec.Source{
 		Inline: &dalec.SourceInline{
 			File: &dalec.SourceInlineFile{
-				Contents: "execute_before_dh_auto_build:\n\techo 'hello from dh_overrides.mk' > from-overrides\n",
+				Contents: "execute_before_dh_auto_build:\n\tprintf 'hello from dh_overrides.mk' > from-overrides\n",
 			},
 		},
 	}
@@ -6267,7 +6267,7 @@ func testDebianRulesOverrides(ctx context.Context, t *testing.T, cfg targetConfi
 		{
 			Name: "Check that the dh_overrides.mk hook ran before the build steps",
 			Files: map[string]dalec.FileCheckOutput{
-				"/usr/bin/greeting": {CheckOutput: dalec.CheckOutput{Equals: "hello from dh_overrides.mk\n"}},
+				"/usr/bin/greeting": {CheckOutput: dalec.CheckOutput{Equals: "hello from dh_overrides.mk"}},
 			},
 		},
 	}
