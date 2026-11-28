@@ -376,9 +376,10 @@ Build sources are considered to be "directory" sources.
 
 #### Cross-compiling in a build source
 
-When the target platform differs from the platform of the build machine, the [build steps](spec.md#build-section) run under emulation, which is slow for compilers.
+For Linux package targets, when the target platform differs from the platform of the build machine, the [build steps](spec.md#build-section) run under emulation, which is slow for compilers.
 A build source can do the compiling instead.
 Dalec builds the Dockerfile for the target platform, so the [platform build args](https://docs.docker.com/reference/dockerfile/#automatic-platform-args-in-the-global-scope) are set in it.
+A build source takes one `--platform` per build, so a request such as `--platform linux/amd64,linux/arm64` fails and each platform has to be built separately.
 A stage that starts with `FROM --platform=$BUILDPLATFORM` runs natively and can cross-compile for `TARGETOS` and `TARGETARCH`:
 
 ```dockerfile
@@ -408,7 +409,7 @@ artifacts:
 ```
 
 With this spec, `docker build --platform linux/arm64` on an amd64 machine compiles `hello` for arm64 without emulation.
-The spec's build steps still run on the target platform, so keep them light.
+For Linux package targets, the spec's build steps still run on the target platform, so keep them light.
 This works for toolchains that can cross-compile on their own, such as Go with `CGO_ENABLED=0`.
 
 ## Generators
